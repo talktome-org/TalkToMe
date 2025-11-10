@@ -101,6 +101,8 @@ struct TherAIApp: App {
                                         sessionsViewModel.startObserving()
                                     }
                                     await sessionsViewModel.bootstrapInitialData()
+                                    // Ensure my avatar image is cached before dismissing loading screen
+                                    await sessionsViewModel.ensureProfilePictureCached()
                                 }
                                 group.addTask {
                                     await MainActor.run {

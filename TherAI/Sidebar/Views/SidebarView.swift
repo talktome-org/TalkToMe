@@ -261,14 +261,7 @@ extension SlidebarView {
             }
 
             LazyVStack(spacing: 6) {
-                if sessionsViewModel.isLoadingSessions {
-                    VStack(spacing: 16) {
-                        ProgressView()
-                        Text("Loading sessions…")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(.secondary)
-                    }
-                } else if !filteredSessions.isEmpty {
+                if !filteredSessions.isEmpty {
                     ForEach(filteredSessions, id: \.id) { session in
                         Button(action: {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.8, blendDuration: 0)) {

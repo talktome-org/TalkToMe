@@ -75,6 +75,15 @@ class ChatSessionsViewModel: ObservableObject {
     init() {
         loadCachedSessions()
         loadCachedUnread()
+        // Warm my avatar URL from persisted cache to avoid flicker on cold start
+        if let storedMyAvatar = UserDefaults.standard.string(forKey: PreferenceKeys.myAvatarURL),
+           !storedMyAvatar.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            self.myAvatarURL = storedMyAvatar
+            // Warm memory/disk cache without network if possible on MainActor
+            Task { @MainActor in
+                _ = avatarCacheManager.getImageIfCached(urlString: storedMyAvatar)
+            }
+        }
     }
 
     deinit {
@@ -533,6 +542,12 @@ class ChatSessionsViewModel: ObservableObject {
             await MainActor.run {
                 self.myAvatarURL = res.me.url
                 self.partnerAvatarURL = res.partner.url
+                // Persist my avatar URL for future launches
+                if let myURL = res.me.url, !myURL.isEmpty {
+                    UserDefaults.standard.set(myURL, forKey: PreferenceKeys.myAvatarURL)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: PreferenceKeys.myAvatarURL)
+                }
             }
         } catch {
             print("Failed to load avatars: \(error)")
