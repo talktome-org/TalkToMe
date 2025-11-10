@@ -20,8 +20,8 @@ Backend/.env
 Secrets.plist
 
 # iOS project (not needed in the image)
-TherAI/
-TherAI.xcodeproj
+TalkToMe/
+TalkToMe.xcodeproj
 **/xcuserdata/
 **/*.xcuserstate
 

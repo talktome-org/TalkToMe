@@ -1,6 +1,6 @@
 //
 //  ContentView.swift
-//  TherAI
+//  TalkToMe
 //
 //  Created by Stephan  on 29.08.2025.
 //

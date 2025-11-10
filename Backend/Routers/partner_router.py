@@ -245,7 +245,7 @@ async def accept_request_endpoint(request_id: uuid.UUID, background_tasks: Backg
 
             partner_text = req.get("content", "")
             annotated = json.dumps({
-                "_therai": {"type": "partner_received", "text": partner_text},
+                "_talktome": {"type": "partner_received", "text": partner_text},
                 "body": ""
             })
             print(f"[PartnerAccept] Saving partner message with annotation: {annotated[:100]}...")
@@ -417,7 +417,7 @@ async def partner_request_stream(body: PartnerRequestBody, current_user: dict = 
                     except Exception:
                         pass
                     annotated = json.dumps({
-                        "_therai": {"type": "partner_received", "text": final_content},
+                        "_talktome": {"type": "partner_received", "text": final_content},
                         "body": ""
                     })
                     created = asyncio.run(save_message(
@@ -454,7 +454,7 @@ async def partner_request_stream(body: PartnerRequestBody, current_user: dict = 
                 # Direct insert into recipient's personal session
                 try:
                     annotated = json.dumps({
-                        "_therai": {"type": "partner_received", "text": final_content},
+                        "_talktome": {"type": "partner_received", "text": final_content},
                         "body": ""
                     })
                     print(f"[PartnerStream] DIRECT MODE: Saving with annotation: {annotated[:100]}...")

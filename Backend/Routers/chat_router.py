@@ -113,7 +113,7 @@ async def chat_message_stream(request: ChatRequest, current_user: dict = Depends
                                             continue
                                         raw = r.get("content") or ""
                                         obj = json.loads(raw)
-                                        meta = (obj or {}).get("_therai") if isinstance(obj, dict) else None
+                                        meta = (obj or {}).get("_talktome") if isinstance(obj, dict) else None
                                         if not meta or meta.get("type") != "partner_received":
                                             continue
                                         text = meta.get("text") or ""
@@ -178,7 +178,7 @@ async def chat_message_stream(request: ChatRequest, current_user: dict = Depends
                 segments = state.get("segments") or []
                 if segments:
                     try:
-                        annotation_obj = {"_therai": {"type": "segments", "segments": segments}}
+                        annotation_obj = {"_talktome": {"type": "segments", "segments": segments}}
                         annotation = json.dumps(annotation_obj, ensure_ascii=False)
                         await save_message(user_id=user_uuid, session_id=session_uuid, role="assistant", content=annotation)
                         return
@@ -187,7 +187,7 @@ async def chat_message_stream(request: ChatRequest, current_user: dict = Depends
                 # Fallback: persist plain text as a single text segment
                 if final_text:
                     try:
-                        annotation_obj = {"_therai": {"type": "segments", "segments": [{"type": "text", "content": final_text}]}}
+                        annotation_obj = {"_talktome": {"type": "segments", "segments": [{"type": "text", "content": final_text}]}}
                         annotation = json.dumps(annotation_obj, ensure_ascii=False)
                         await save_message(user_id=user_uuid, session_id=session_uuid, role="assistant", content=annotation)
                     except Exception:

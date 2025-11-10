@@ -1,6 +1,6 @@
 //
-//  TherAIApp.swift
-//  TherAI
+//  TalkToMeApp.swift
+//  TalkToMe
 //
 //  Created by Stephan  on 29.08.2025.
 //
@@ -11,7 +11,7 @@ import Supabase
 import BackgroundTasks
 
 @main
-struct TherAIApp: App {
+struct TalkToMeApp: App {
 
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 

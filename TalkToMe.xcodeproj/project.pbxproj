@@ -16,26 +16,26 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		04C84DFD2E6259BA00206037 /* TherAI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TherAI.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		04C84DFD2E6259BA00206037 /* TalkToMe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = TalkToMe.app; path = "/Users/mac/Documents/Xcode/TalkToMe/build/Debug-iphoneos/TalkToMe.app"; sourceTree = "<absolute>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		0481A6522E63BEF100A6358E /* Exceptions for "TherAI" folder in "TherAI" target */ = {
+		0481A6522E63BEF100A6358E /* Exceptions for "TalkToMe" folder in "TalkToMe" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = 04C84DFC2E6259BA00206037 /* TherAI */;
+			target = 04C84DFC2E6259BA00206037 /* TalkToMe */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		04C84DFF2E6259BA00206037 /* TherAI */ = {
+		04C84DFF2E6259BA00206037 /* TalkToMe */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				0481A6522E63BEF100A6358E /* Exceptions for "TherAI" folder in "TherAI" target */,
+				0481A6522E63BEF100A6358E /* Exceptions for "TalkToMe" folder in "TalkToMe" target */,
 			);
-			path = TherAI;
+			path = TalkToMe;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -60,25 +60,16 @@
 		04C84DF42E6259BA00206037 = {
 			isa = PBXGroup;
 			children = (
-				04C84DFE2E6259BA00206037 /* Products */,
-				04C84DFF2E6259BA00206037 /* TherAI */,
+				04C84DFF2E6259BA00206037 /* TalkToMe */,
 			);
-			sourceTree = "<group>";
-		};
-		04C84DFE2E6259BA00206037 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				04C84DFD2E6259BA00206037 /* TherAI.app */,
-			);
-			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		04C84DFC2E6259BA00206037 /* TherAI */ = {
+		04C84DFC2E6259BA00206037 /* TalkToMe */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 04C84E082E6259BB00206037 /* Build configuration list for PBXNativeTarget "TherAI" */;
+			buildConfigurationList = 04C84E082E6259BB00206037 /* Build configuration list for PBXNativeTarget "TalkToMe" */;
 			buildPhases = (
 				04C84DF92E6259BA00206037 /* Sources */,
 				04C84DFA2E6259BA00206037 /* Frameworks */,
@@ -89,9 +80,9 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				04C84DFF2E6259BA00206037 /* TherAI */,
+				04C84DFF2E6259BA00206037 /* TalkToMe */,
 			);
-			name = TherAI;
+			name = TalkToMe;
 			packageProductDependencies = (
 				0481A5EE2E63A6FC00A6358E /* Auth */,
 				0481A5F02E63A6FC00A6358E /* Functions */,
@@ -100,8 +91,8 @@
 				0481A5F62E63A6FC00A6358E /* Storage */,
 				0481A5F92E63A80A00A6358E /* Supabase */,
 			);
-			productName = TherAI;
-			productReference = 04C84DFD2E6259BA00206037 /* TherAI.app */;
+			productName = TalkToMe;
+			productReference = 04C84DFD2E6259BA00206037 /* TalkToMe.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -119,7 +110,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 04C84DF82E6259BA00206037 /* Build configuration list for PBXProject "TherAI" */;
+			buildConfigurationList = 04C84DF82E6259BA00206037 /* Build configuration list for PBXProject "TalkToMe" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -132,11 +123,11 @@
 				0481A5ED2E63A6FC00A6358E /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
-			productRefGroup = 04C84DFE2E6259BA00206037 /* Products */;
+			productRefGroup = 04C84DF42E6259BA00206037;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				04C84DFC2E6259BA00206037 /* TherAI */,
+				04C84DFC2E6259BA00206037 /* TalkToMe */,
 			);
 		};
 /* End PBXProject section */
@@ -290,15 +281,15 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = TherAI/TherAI.entitlements;
+				CODE_SIGN_ENTITLEMENTS = TalkToMe/TalkToMe.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 7VS44S3CU5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = TherAI/Info.plist;
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "TherAI needs the microphone to record your voice during voice chats. Recording starts only when you begin a voice session.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "TherAI uses speech recognition to transcribe your voice to text so the assistant can respond. Transcription may be processed by Apple’s servers.";
+				INFOPLIST_FILE = TalkToMe/Info.plist;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "TalkToMe needs the microphone to record your voice during voice chats. Recording starts only when you begin a voice session.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "TalkToMe uses speech recognition to transcribe your voice to text so the assistant can respond. Transcription may be processed by Apple’s servers.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -323,15 +314,15 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = TherAI/TherAI.entitlements;
+				CODE_SIGN_ENTITLEMENTS = TalkToMe/TalkToMe.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 7VS44S3CU5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = TherAI/Info.plist;
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "TherAI needs the microphone to record your voice during voice chats. Recording starts only when you begin a voice session.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "TherAI uses speech recognition to transcribe your voice to text so the assistant can respond. Transcription may be processed by Apple’s servers.";
+				INFOPLIST_FILE = TalkToMe/Info.plist;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "TalkToMe needs the microphone to record your voice during voice chats. Recording starts only when you begin a voice session.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "TalkToMe uses speech recognition to transcribe your voice to text so the assistant can respond. Transcription may be processed by Apple’s servers.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -354,7 +345,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		04C84DF82E6259BA00206037 /* Build configuration list for PBXProject "TherAI" */ = {
+		04C84DF82E6259BA00206037 /* Build configuration list for PBXProject "TalkToMe" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				04C84E062E6259BB00206037 /* Debug */,
@@ -363,7 +354,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		04C84E082E6259BB00206037 /* Build configuration list for PBXNativeTarget "TherAI" */ = {
+		04C84E082E6259BB00206037 /* Build configuration list for PBXNativeTarget "TalkToMe" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				04C84E092E6259BB00206037 /* Debug */,

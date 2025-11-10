@@ -220,7 +220,7 @@ struct SettingsCardView: View {
         case "Privacy & Data":
             return "Clearing chat history removes your local conversation history."
         case "About":
-            return "TherAI helps you reflect and communicate more clearly using AI."
+            return "TalkToMe helps you reflect and communicate more clearly using AI."
         default:
             return ""
         }

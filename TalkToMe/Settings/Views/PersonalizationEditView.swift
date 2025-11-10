@@ -214,7 +214,7 @@ struct PersonalizationEditView: View {
                                     .lineLimit(3...6)
 
                                 // Helper text
-                                Text("This will help TherAI understand you better and provide more personalized responses.")
+                                Text("This will help TalkToMe understand you better and provide more personalized responses.")
                                     .font(.system(size: 13))
                                     .foregroundColor(.secondary)
                                     .frame(maxWidth: .infinity, alignment: .leading)

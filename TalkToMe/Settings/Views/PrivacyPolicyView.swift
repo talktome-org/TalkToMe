@@ -5,7 +5,7 @@ struct PrivacyPolicyView: View {
     Privacy Policy
     Effective: October 14, 2025
 
-    This Privacy Policy explains how TherAI ("we", "us", or "our") collects, uses, and shares information when you use the TherAI iOS application (the "App"). By using the App, you agree to this Policy.
+    This Privacy Policy explains how TalkToMe ("we", "us", or "our") collects, uses, and shares information when you use the TalkToMe iOS application (the "App"). By using the App, you agree to this Policy.
 
     1) Information We Collect
     - Account and Authentication: We use Supabase for authentication (Apple/Google sign-in). We process your Supabase user ID, basic profile metadata provided by your identity provider (e.g., name, picture), and session tokens.
