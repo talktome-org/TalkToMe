@@ -108,11 +108,11 @@ struct ChatScreenView: View {
                 .transition(.opacity)
             } else if chatViewModel.messages.isEmpty && !chatViewModel.isLoadingHistory && !chatViewModel.isLoading {
                 VStack {
-                    Text("Hey, I'm here to listen\nand help you write a message\nto your partner. What happened?")
+                    Text("Hey, I'm here to listen - tell me\n what happened and what's on your mind, and I'll help you write\n the right message")
                         .font(.system(size: 20, weight: .semibold))
                         .foregroundColor(Color.gray)
                         .multilineTextAlignment(.center)
-                        .lineLimit(3)
+                        .lineLimit(nil)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 28)
                 }

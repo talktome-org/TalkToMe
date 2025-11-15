@@ -16,7 +16,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		04C84DFD2E6259BA00206037 /* TalkToMe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = TalkToMe.app; path = "/Users/mac/Documents/Xcode/TalkToMe/build/Debug-iphoneos/TalkToMe.app"; sourceTree = "<absolute>"; };
+		040FB6E02EC2B03C00D10E16 /* TalkToMe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TalkToMe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -61,6 +61,7 @@
 			isa = PBXGroup;
 			children = (
 				04C84DFF2E6259BA00206037 /* TalkToMe */,
+				040FB6E02EC2B03C00D10E16 /* TalkToMe.app */,
 			);
 			sourceTree = "<group>";
 		};
@@ -92,7 +93,7 @@
 				0481A5F92E63A80A00A6358E /* Supabase */,
 			);
 			productName = TalkToMe;
-			productReference = 04C84DFD2E6259BA00206037 /* TalkToMe.app */;
+			productReference = 040FB6E02EC2B03C00D10E16 /* TalkToMe.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -282,12 +283,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = TalkToMe/TalkToMe.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 7VS44S3CU5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = TalkToMe/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = TalkToMe;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "TalkToMe needs the microphone to record your voice during voice chats. Recording starts only when you begin a voice session.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "TalkToMe uses speech recognition to transcribe your voice to text so the assistant can respond. Transcription may be processed by Apple’s servers.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -303,6 +306,7 @@
 				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.Stephan.TalkToMe;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -315,12 +319,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = TalkToMe/TalkToMe.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 7VS44S3CU5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = TalkToMe/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = TalkToMe;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "TalkToMe needs the microphone to record your voice during voice chats. Recording starts only when you begin a voice session.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "TalkToMe uses speech recognition to transcribe your voice to text so the assistant can respond. Transcription may be processed by Apple’s servers.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -336,6 +342,7 @@
 				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.Stephan.TalkToMe;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

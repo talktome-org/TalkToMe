@@ -117,13 +117,13 @@ struct PartnerDraftBlockView: View {
                                 }
                                 .transition(.scale.combined(with: .opacity))
                             } else if isConfirmingNormalSend {
-                                Text("Confirm")
+                                Text("Confirm sending")
                                     .font(.subheadline)
                                     .foregroundColor(Color.accentColor)
                                     .transition(.scale.combined(with: .opacity))
                             } else {
                                 HStack(spacing: 6) {
-                                    Text("Send")
+                                    Text("Send now")
                                         .font(.subheadline)
                                         .foregroundColor(Color.accentColor)
                                     Image(systemName: "arrow.turn.up.right")

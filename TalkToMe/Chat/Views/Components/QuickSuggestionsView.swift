@@ -47,6 +47,7 @@ struct QuickSuggestionsView: View {
                                     .strokeBorder(Color.black.opacity(0.06), lineWidth: 1)
                             }
                         }
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
                     .buttonStyle(.plain)
                 }

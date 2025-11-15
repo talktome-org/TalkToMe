@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct OnboardingFlowView: View {
     @ObservedObject var viewModel: OnboardingViewModel
@@ -41,11 +42,11 @@ struct OnboardingFlowView: View {
             .padding(20)
             .frame(maxWidth: 460)
             .background(
-                LinearGradient(colors: [Color.white, Color.white.opacity(0.98)], startPoint: .top, endPoint: .bottom)
+                LinearGradient(colors: [Color(UIColor.systemBackground), Color(UIColor.systemBackground).opacity(0.98)], startPoint: .top, endPoint: .bottom)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .shadow(color: Color.black.opacity(0.18), radius: 24, x: 0, y: 12)
@@ -90,10 +91,10 @@ struct OnboardingFlowView: View {
                         .padding(.vertical, 12)
                         .background(
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Color.white)
+                                .fill(Color(UIColor.secondarySystemBackground))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                                 )
                         )
                         .submitLabel(.continue)
@@ -124,10 +125,10 @@ struct OnboardingFlowView: View {
                         .padding(.vertical, 12)
                         .background(
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Color.white)
+                                .fill(Color(UIColor.secondarySystemBackground))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                                 )
                         )
                         .submitLabel(.continue)
@@ -176,8 +177,8 @@ struct OnboardingFlowView: View {
                                         .frame(width: 36, height: 36)
                                         .background(
                                             Circle()
-                                                .fill(Color.white)
-                                                .overlay(Circle().stroke(Color.black.opacity(0.06), lineWidth: 1))
+                                    .fill(Color(UIColor.systemBackground))
+                                    .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 1))
                                         )
                                 }
                             }
@@ -196,10 +197,10 @@ struct OnboardingFlowView: View {
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.white)
+                            .fill(Color(UIColor.secondarySystemBackground))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                             )
                     )
 
@@ -247,9 +248,9 @@ struct OnboardingFlowView: View {
         VStack(spacing: 10) {
             ZStack {
                 Circle()
-                    .fill(Color.white)
+                    .fill(Color(UIColor.secondarySystemBackground))
                     .frame(width: 56, height: 56)
-                    .overlay(Circle().stroke(Color.black.opacity(0.06), lineWidth: 1))
+                    .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 1))
                 Image(systemName: headerSymbol)
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundColor(.purple)

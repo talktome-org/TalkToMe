@@ -127,7 +127,7 @@ struct SlideOutSidebarContainerView<Content: View>: View {
         .onChange(of: navigationViewModel.isOpen, initial: false) { _, open in
             if open {
                 // Broadcast a notification to clear any chat input focus if needed
-                NotificationCenter.default.post(name: .init("TalkToMe_ClearChatInputFocus"), object: nil)
+                NotificationCenter.default.post(name: .init("TalToMe_ClearChatInputFocus"), object: nil)
             }
         }
     }
