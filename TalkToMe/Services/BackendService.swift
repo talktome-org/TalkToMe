@@ -336,8 +336,6 @@ struct ChatMessageDTO: Codable {
     let content: String
 }
 
-
-
 private struct MessagesResponseBody: Codable {
     let messages: [ChatMessageDTO]
 }
@@ -350,6 +348,39 @@ struct ChatSessionDTO: Codable {
 }
 
 extension BackendService {
+    struct DailyCheckinsStatus: Codable { let enabled: Bool; let hour: Int?; let minute: Int? }
+
+    func getDailyCheckins(accessToken: String) async throws -> DailyCheckinsStatus {
+        let url = baseURL
+            .appendingPathComponent("notifications")
+            .appendingPathComponent("daily-checkins")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let serverMessage = decodeSimpleDetail(from: data) ?? String(data: data, encoding: .utf8) ?? "Unknown server error"
+            throw NSError(domain: "Backend", code: (response as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: serverMessage])
+        }
+        return try jsonDecoder.decode(DailyCheckinsStatus.self, from: data)
+    }
+
+    func setDailyCheckins(enabled: Bool, hour: Int? = nil, minute: Int? = nil, timezone: String? = nil, accessToken: String) async throws {
+        let url = baseURL
+            .appendingPathComponent("notifications")
+            .appendingPathComponent("daily-checkins")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        struct Body: Codable { let enabled: Bool; let hour: Int?; let minute: Int?; let timezone: String? }
+        request.httpBody = try jsonEncoder.encode(Body(enabled: enabled, hour: hour, minute: minute, timezone: timezone))
+        let (data, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let serverMessage = decodeSimpleDetail(from: data) ?? String(data: data, encoding: .utf8) ?? "Unknown server error"
+            throw NSError(domain: "Backend", code: (response as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: serverMessage])
+        }
+    }
     func uploadAvatar(imageData: Data, contentType: String, accessToken: String) async throws -> (path: String, url: String?) {
         let url = baseURL
             .appendingPathComponent("profile")

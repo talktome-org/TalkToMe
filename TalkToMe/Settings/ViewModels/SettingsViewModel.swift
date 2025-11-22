@@ -31,6 +31,7 @@ class SettingsViewModel: ObservableObject {
         }
         setupSettingsSections()
         loadCachedPartnerConnection()
+        loadDailyCheckinsFromBackend()
     }
 
     private func loadSettings() {
@@ -44,6 +45,13 @@ class SettingsViewModel: ObservableObject {
         if let storedVoice = UserDefaults.standard.string(forKey: PreferenceKeys.ttsVoiceIdentifier) {
             settingsData.ttsVoiceIdentifier = storedVoice
         }
+
+        if UserDefaults.standard.object(forKey: PreferenceKeys.dailyCheckinsEnabled) != nil {
+            settingsData.dailyCheckinsEnabled = UserDefaults.standard.bool(forKey: PreferenceKeys.dailyCheckinsEnabled)
+        } else {
+            settingsData.dailyCheckinsEnabled = false
+            UserDefaults.standard.set(false, forKey: PreferenceKeys.dailyCheckinsEnabled)
+        }
     }
 
     private func setupSettingsSections() {
@@ -55,6 +63,7 @@ class SettingsViewModel: ObservableObject {
                 settings: [
                     SettingItem(title: "Appearance", subtitle: nil, type: .picker(["Light", "Dark", "System"]), icon: "circle.lefthalf.filled"),
                     SettingItem(title: "Notifications", subtitle: nil, type: .toggle(PushNotificationManager.shared.isPushEnabled), icon: "bell"),
+                    SettingItem(title: "Check-In Notifications", subtitle: nil, type: .toggle(settingsData.dailyCheckinsEnabled), icon: "sun.max"),
                     SettingItem(title: "Haptics", subtitle: nil, type: .toggle(settingsData.hapticFeedbackEnabled), icon: "iphone.radiowaves.left.and.right")
                 ]
             ),
@@ -107,6 +116,22 @@ class SettingsViewModel: ObservableObject {
             let newValue = !current
             PushNotificationManager.shared.setPushEnabled(newValue)
             DispatchQueue.main.async { self.setupSettingsSections() }
+        case ("App Settings", "Check-In Notifications"):
+            let newValue = !settingsData.dailyCheckinsEnabled
+            settingsData.dailyCheckinsEnabled = newValue
+            UserDefaults.standard.set(newValue, forKey: PreferenceKeys.dailyCheckinsEnabled)
+            Task {
+                if let token = await AuthService.shared.getAccessToken() {
+                    let tz = TimeZone.current.identifier
+                    try? await BackendService.shared.setDailyCheckins(
+                        enabled: newValue,
+                        hour: 10,
+                        minute: 00,
+                        timezone: tz,
+                        accessToken: token
+                    )
+                }
+            }
         case ("Chat Settings", "Auto Scroll"):
             break
         default:
@@ -114,6 +139,20 @@ class SettingsViewModel: ObservableObject {
         }
 
         setupSettingsSections()
+    }
+
+    private func loadDailyCheckinsFromBackend() {
+        Task { @MainActor in
+            guard let token = await AuthService.shared.getAccessToken() else { return }
+            do {
+                let status = try await BackendService.shared.getDailyCheckins(accessToken: token)
+                self.settingsData.dailyCheckinsEnabled = status.enabled
+                UserDefaults.standard.set(status.enabled, forKey: PreferenceKeys.dailyCheckinsEnabled)
+                self.setupSettingsSections()
+            } catch {
+                // Silent failure; keep local default
+            }
+        }
     }
 
     func handleSettingAction(for sectionIndex: Int, settingIndex: Int) {

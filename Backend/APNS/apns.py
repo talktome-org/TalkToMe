@@ -12,6 +12,7 @@ from ..Database.device_tokens_repo import list_tokens_for_user, disable_token_by
 
 _cached_jwt_token: Optional[str] = None
 _cached_jwt_exp: float = 0.0
+DAILY_CHECKIN_TITLE = "Check-In"
 
 
 def _load_apns_auth_key_pem() -> str:
@@ -256,6 +257,33 @@ async def send_partner_message_notification_to_user(
                 print(f"[APNs] skip token entry enabled={enabled} keys={list(t.keys()) if isinstance(t, dict) else 'n/a'}")
             except Exception:
                 pass
+            continue
+
+
+async def send_daily_checkin_notification_to_user(
+    *,
+    recipient_user_id: uuid.UUID,
+    body: str,
+) -> None:
+    """Send a friendly daily check-in APNs alert to all active tokens for the recipient user."""
+    tokens = await list_tokens_for_user(user_id=recipient_user_id)
+    if not tokens:
+        return
+
+    aps = {
+        "alert": {"title": DAILY_CHECKIN_TITLE, "body": body},
+        "sound": "default",
+        "category": "DAILY_CHECKIN",
+    }
+    payload = {
+        "aps": aps,
+        "kind": "daily_checkin",
+    }
+
+    for t in tokens:
+        token_val = t.get("token") if isinstance(t, dict) else None
+        enabled = (t.get("enabled", True) if isinstance(t, dict) else True)
+        if not token_val or not enabled:
             continue
         try:
             status, resp_text = await _post_apns(device_token=token_val, payload=payload)

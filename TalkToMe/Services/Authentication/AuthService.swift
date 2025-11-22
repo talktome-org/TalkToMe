@@ -65,6 +65,7 @@ class AuthService: ObservableObject {
                     // Don't set loading state for existing sessions
                     self.isLoadingInitialData = false
                 }
+                await enableDailyCheckinsByDefaultIfFirstTime()
             } catch {
                 await MainActor.run {
                     self.isAuthenticated = false
@@ -83,6 +84,7 @@ class AuthService: ObservableObject {
                 self.isAuthenticated = true
                 self.currentUser = session.user
             }
+            await enableDailyCheckinsByDefaultIfFirstTime()
         } catch {
             print("Google sign-in error: \(error)")
         }
@@ -96,6 +98,7 @@ class AuthService: ObservableObject {
                 self.isAuthenticated = true
                 self.currentUser = session.user
             }
+            await enableDailyCheckinsByDefaultIfFirstTime()
         } catch {
             print("Apple sign-in error: \(error)")
         }
@@ -106,6 +109,16 @@ class AuthService: ObservableObject {
         await MainActor.run {
             self.isAuthenticated = false
             self.currentUser = nil
+        }
+
+        // Best-effort: unregister current push token server-side to prevent further pushes after sign-out
+        do {
+            if let token = PushNotificationManager.shared.currentDeviceToken,
+               let access = try? await client.auth.session.accessToken {
+                try await BackendService.shared.unregisterPushToken(token: token, accessToken: access)
+            }
+        } catch {
+            // ignore
         }
 
         // Then perform the actual sign out
@@ -132,6 +145,33 @@ class AuthService: ObservableObject {
     func setInitialDataLoaded() {
         Task { @MainActor in
             self.isLoadingInitialData = false
+        }
+    }
+
+    // MARK: - Defaults
+    private func enableDailyCheckinsByDefaultIfFirstTime() async {
+        // Per-user initialization so new accounts default-on even on shared devices
+        guard let userId = self.currentUser?.id.uuidString, !userId.isEmpty else { return }
+        let perUserInitKey = "\(PreferenceKeys.dailyCheckinsInitialized)_\(userId)"
+        if UserDefaults.standard.bool(forKey: perUserInitKey) { return }
+        guard let token = await self.getAccessToken() else { return }
+        do {
+            // Enable by default only if backend shows disabled/missing
+            let status = try await BackendService.shared.getDailyCheckins(accessToken: token)
+            if !status.enabled {
+                let tz = TimeZone.current.identifier
+                try await BackendService.shared.setDailyCheckins(
+                    enabled: true,
+                    hour: 10,
+                    minute: 00,
+                    timezone: tz,
+                    accessToken: token
+                )
+                UserDefaults.standard.set(true, forKey: PreferenceKeys.dailyCheckinsEnabled)
+            }
+            UserDefaults.standard.set(true, forKey: perUserInitKey)
+        } catch {
+            // ignore; user can enable later
         }
     }
 }

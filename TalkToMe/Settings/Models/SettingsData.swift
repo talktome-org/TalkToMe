@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsData: Codable {
     var emailNotifications: Bool = true
     var pushNotifications: Bool = true
+    var dailyCheckinsEnabled: Bool = false
     var darkModeEnabled: Bool = false
     var hapticFeedbackEnabled: Bool = true
     var saveChatsEnabled: Bool = true
