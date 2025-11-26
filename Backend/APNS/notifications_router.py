@@ -11,7 +11,7 @@ from ..Database.preferences_repo import (
 from ..Database.supabase_client import supabase
 from .apns import send_daily_checkin_notification_to_user
 import random
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from zoneinfo import ZoneInfo  # Python 3.9+
 
 
@@ -117,16 +117,21 @@ async def send_daily_checkins_for_now() -> int:
         return 0
 
     # Default time if user-specific hour/minute not set
-    default_hour = 10
-    default_minute = 0
+    # Note: Daily check-ins are enabled by default for ALL users (NULL = enabled)
+    default_hour = 17
+    default_minute = 00
 
-    def _get_full_name_for_user(user_id: str) -> str:
+    def _get_first_name_for_user(user_id: str) -> str:
+        """Get only the first name for more personal, casual notifications."""
         try:
             res = supabase.table("profiles").select("full_name").eq("user_id", user_id).limit(1).execute()
             if not getattr(res, "error", None) and res.data:
                 name = (res.data[0].get("full_name") or "").strip()
                 if name:
-                    return name
+                    # Use only first name for notifications
+                    first = name.split()[0].strip()
+                    if first:
+                        return first
         except Exception:
             pass
         try:
@@ -145,6 +150,8 @@ async def send_daily_checkins_for_now() -> int:
         return "there"
 
     sent = 0
+    # TESTING: Uncomment to limit to specific user
+    # enabled_rows = [r for r in enabled_rows if r.get("user_id") == "YOUR_USER_ID_HERE"]
     for row in enabled_rows:
         try:
             uid_str = row.get("user_id")
@@ -163,7 +170,7 @@ async def send_daily_checkins_for_now() -> int:
             if not (local_now.hour == target_hour and local_now.minute == target_minute):
                 continue
             # Idempotency (relaxed): if already sent today, skip; otherwise send then update best-effort
-            today_str = date.today().isoformat()
+            today_str = local_now.date().isoformat()
             try:
                 sel = (
                     supabase
@@ -182,17 +189,30 @@ async def send_daily_checkins_for_now() -> int:
                 # If we can't read, proceed to send to avoid silent drops
                 pass
             user_uuid = uuid.UUID(uid_str)
-            name = _get_full_name_for_user(uid_str)
+            name = _get_first_name_for_user(uid_str)
             template = random.choice(messages)
             body = template.replace("[person_name]", name)
             await send_daily_checkin_notification_to_user(recipient_user_id=user_uuid, body=body)
             # Best-effort: mark as sent today (do not block send outcome)
             try:
+                upsert_data = {
+                    "user_id": uid_str,
+                    "last_checkin_sent_date": today_str,
+                    "daily_checkins_enabled": True,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }
+                # Preserve user's time preferences if they were used
+                if isinstance(user_hour, (int, float)):
+                    upsert_data["daily_checkin_hour"] = int(user_hour)
+                if isinstance(user_minute, (int, float)):
+                    upsert_data["daily_checkin_minute"] = int(user_minute)
+                if tz_name and tz_name != "America/Los_Angeles":
+                    upsert_data["timezone"] = tz_name
+
                 _ = (
                     supabase
                     .table("user_preferences")
-                    .update({"last_checkin_sent_date": today_str})
-                    .eq("user_id", uid_str)
+                    .upsert(upsert_data, on_conflict="user_id")
                     .execute()
                 )
             except Exception:

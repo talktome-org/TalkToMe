@@ -176,7 +176,7 @@ class AuthService: ObservableObject {
                 let tz = TimeZone.current.identifier
                 try await BackendService.shared.setDailyCheckins(
                     enabled: true,
-                    hour: 10,
+                    hour: 17,
                     minute: 00,
                     timezone: tz,
                     accessToken: token
