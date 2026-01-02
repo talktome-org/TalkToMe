@@ -348,7 +348,7 @@ struct ChatSessionDTO: Codable {
 }
 
 extension BackendService {
-    struct DailyCheckinsStatus: Codable { let enabled: Bool; let hour: Int?; let minute: Int? }
+    struct DailyCheckinsStatus: Codable { let enabled: Bool; let hour: Int?; let minute: Int?; let timezone: String? }
 
     func getDailyCheckins(accessToken: String) async throws -> DailyCheckinsStatus {
         let url = baseURL

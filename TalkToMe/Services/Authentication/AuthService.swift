@@ -114,7 +114,15 @@ class AuthService: ObservableObject {
             }
             await enableDailyCheckinsByDefaultIfFirstTime()
         } catch {
-            print("Apple sign-in error: \(error)")
+            let nsErr = error as NSError
+            print("[Auth][Apple] error domain: \(nsErr.domain), code: \(nsErr.code)")
+            print("[Auth][Apple] description: \(nsErr.localizedDescription)")
+            if !nsErr.userInfo.isEmpty {
+                print("[Auth][Apple] userInfo: \(nsErr.userInfo)")
+            }
+            if let underlying = nsErr.userInfo[NSUnderlyingErrorKey] as? NSError {
+                print("[Auth][Apple] underlying: domain=\(underlying.domain) code=\(underlying.code) desc=\(underlying.localizedDescription)")
+            }
         }
     }
 
@@ -164,15 +172,13 @@ class AuthService: ObservableObject {
 
     // MARK: - Defaults
     private func enableDailyCheckinsByDefaultIfFirstTime() async {
-        // Per-user initialization so new accounts default-on even on shared devices
-        guard let userId = self.currentUser?.id.uuidString, !userId.isEmpty else { return }
-        let perUserInitKey = "\(PreferenceKeys.dailyCheckinsInitialized)_\(userId)"
-        if UserDefaults.standard.bool(forKey: perUserInitKey) { return }
+        // Ensure timezone is set for daily check-ins (runs on every sign-in, but only updates if needed)
         guard let token = await self.getAccessToken() else { return }
         do {
-            // Enable by default only if backend shows disabled/missing
+            // Check if timezone is already set in backend
             let status = try await BackendService.shared.getDailyCheckins(accessToken: token)
-            if !status.enabled {
+            if status.timezone == nil || status.timezone?.isEmpty == true {
+                // Timezone not set - save preferences with user's actual timezone
                 let tz = TimeZone.current.identifier
                 try await BackendService.shared.setDailyCheckins(
                     enabled: true,
@@ -182,10 +188,14 @@ class AuthService: ObservableObject {
                     accessToken: token
                 )
                 UserDefaults.standard.set(true, forKey: PreferenceKeys.dailyCheckinsEnabled)
+                print("[Auth] Daily check-ins initialized: enabled=true, hour=17, tz=\(tz)")
+            } else {
+                // Already configured, just sync local state
+                UserDefaults.standard.set(status.enabled, forKey: PreferenceKeys.dailyCheckinsEnabled)
+                print("[Auth] Daily check-ins already configured: enabled=\(status.enabled), tz=\(status.timezone ?? "nil")")
             }
-            UserDefaults.standard.set(true, forKey: perUserInitKey)
         } catch {
-            // ignore; user can enable later
+            print("[Auth] Failed to initialize daily check-ins: \(error)")
         }
     }
 }

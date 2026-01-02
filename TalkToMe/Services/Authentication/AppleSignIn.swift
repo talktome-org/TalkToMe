@@ -26,7 +26,12 @@ final class AppleSignIn: NSObject {
 
         guard let tokenData = credential.identityToken,
               let idToken = String(data: tokenData, encoding: .utf8) else {
-            throw NSError(domain: "Auth", code: -2, userInfo: [NSLocalizedDescriptionKey: "Missing identity token"])
+            // Provide a clearer error to help diagnose common simulator/device issues
+            let userInfo: [String: Any] = [
+                NSLocalizedDescriptionKey: "Missing identity token",
+                "hint": "Ensure the device/simulator is signed into an Apple ID and that 'Sign in with Apple' is enabled for this app/bundle. On Simulator, sign into Settings > Apple ID.",
+            ]
+            throw NSError(domain: "Auth", code: -2, userInfo: userInfo)
         }
 
         let session = try await client.auth.signInWithIdToken(

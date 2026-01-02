@@ -49,8 +49,9 @@ class SettingsViewModel: ObservableObject {
         if UserDefaults.standard.object(forKey: PreferenceKeys.dailyCheckinsEnabled) != nil {
             settingsData.dailyCheckinsEnabled = UserDefaults.standard.bool(forKey: PreferenceKeys.dailyCheckinsEnabled)
         } else {
-            settingsData.dailyCheckinsEnabled = false
-            UserDefaults.standard.set(false, forKey: PreferenceKeys.dailyCheckinsEnabled)
+            // Default to ON - matches backend default
+            settingsData.dailyCheckinsEnabled = true
+            UserDefaults.standard.set(true, forKey: PreferenceKeys.dailyCheckinsEnabled)
         }
     }
 
@@ -125,7 +126,7 @@ class SettingsViewModel: ObservableObject {
                     let tz = TimeZone.current.identifier
                     try? await BackendService.shared.setDailyCheckins(
                         enabled: newValue,
-                        hour: 10,
+                        hour: 17,
                         minute: 00,
                         timezone: tz,
                         accessToken: token

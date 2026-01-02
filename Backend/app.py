@@ -22,13 +22,17 @@ app.include_router(chat_router)
 # In-app scheduler to run daily check-ins automatically
 @app.on_event("startup")
 async def _start_daily_checkins_scheduler():
+    print("[Scheduler] Daily check-ins scheduler starting...")
+
     async def _runner():
         # Run every minute, aligned to minute boundaries
         while True:
             try:
-                await send_daily_checkins_for_now()
-            except Exception:
-                pass
+                sent = await send_daily_checkins_for_now()
+                if sent > 0:
+                    print(f"[Scheduler] Sent {sent} daily check-in notification(s)")
+            except Exception as e:
+                print(f"[Scheduler] Error in daily check-ins: {e}")
             # Sleep until next minute boundary
             try:
                 loop = asyncio.get_event_loop()
