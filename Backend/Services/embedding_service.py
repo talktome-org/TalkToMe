@@ -38,3 +38,5 @@ class EmbeddingService:
     def get_dimension(self) -> int:
         return self.dimension_map.get(self.model, 1536)
 
+
+
