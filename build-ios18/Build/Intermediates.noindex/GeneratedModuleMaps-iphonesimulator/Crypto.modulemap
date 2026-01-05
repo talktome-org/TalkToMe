@@ -1,4 +1,0 @@
-module Crypto {
-header "Crypto-Swift.h"
-export *
-}

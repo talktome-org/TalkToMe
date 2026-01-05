@@ -2,6 +2,7 @@
 xcuserdata/
 *.xcuserstate
 Secrets.plist
+/build-ios18/
 
 # Python venv
 venv/

@@ -1,4 +1,0 @@
-module XCTestDynamicOverlay {
-header "XCTestDynamicOverlay-Swift.h"
-export *
-}

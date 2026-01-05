@@ -1,4 +1,0 @@
-module Helpers {
-header "Helpers-Swift.h"
-export *
-}

@@ -1,4 +1,0 @@
-module Clocks {
-header "Clocks-Swift.h"
-export *
-}

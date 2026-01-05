@@ -1,4 +1,0 @@
-module ConcurrencyExtras {
-header "ConcurrencyExtras-Swift.h"
-export *
-}

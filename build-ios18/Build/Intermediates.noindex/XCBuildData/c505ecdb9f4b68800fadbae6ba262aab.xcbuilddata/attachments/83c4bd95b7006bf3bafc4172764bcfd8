@@ -1,4 +1,0 @@
-module PostgREST {
-header "PostgREST-Swift.h"
-export *
-}

@@ -1,4 +1,0 @@
-module Auth {
-header "Auth-Swift.h"
-export *
-}
