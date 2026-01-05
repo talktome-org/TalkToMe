@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import jwt
 from jwt import PyJWKClient
 from typing import Optional
@@ -6,7 +7,11 @@ from dotenv import load_dotenv
 from fastapi import HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-load_dotenv()
+def _backend_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+load_dotenv(dotenv_path=_backend_root() / ".env")
 
 security = HTTPBearer()
 
@@ -20,6 +25,7 @@ class SupabaseAuth:
         self.issuer: str = f"{base_url}/auth/v1"
         self.jwks_url: str = os.getenv("SUPABASE_JWKS_URL", f"{self.issuer}/keys")  # Allow override via SUPABASE_JWKS_URL, else derive from issuer
         self.leeway_seconds = int(os.getenv("JWT_LEEWAY_SECONDS", "60"))  # Small clock skew leeway (seconds)
+        self.algorithms = [a.strip() for a in os.getenv("JWT_ALGORITHMS", "RS256,ES256").split(",") if a.strip()]
 
         try:
             self.jwk_client = PyJWKClient(self.jwks_url)
@@ -38,7 +44,7 @@ class SupabaseAuth:
             payload = jwt.decode(
                 token,
                 public_key,
-                algorithms = ["ES256"],
+                algorithms=self.algorithms,
                 audience = "authenticated",
                 issuer = self.issuer,
                 options = {"require": ["exp", "iat", "iss", "sub"]},
