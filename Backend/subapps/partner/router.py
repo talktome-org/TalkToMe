@@ -33,7 +33,7 @@ from ...crud.session_repo import (
     touch_session,
 )
 from ...db.supabase_client import supabase as _sp
-from ...schemas.requests import (
+from ...schemas.partner_models import (
     PartnerPendingRequestDTO,
     PartnerPendingRequestsResponse,
     PartnerRequestBody,

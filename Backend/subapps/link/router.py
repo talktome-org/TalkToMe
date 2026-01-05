@@ -12,7 +12,7 @@ from ...crud.link_repo import (
     unlink_relationship_for_user,
 )
 from ...db.supabase_client import supabase
-from ...schemas.requests import (
+from ...schemas.link_models import (
     AcceptLinkInviteRequest,
     AcceptLinkInviteResponse,
     CreateLinkInviteResponse,

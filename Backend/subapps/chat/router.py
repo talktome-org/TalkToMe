@@ -25,7 +25,7 @@ from ...crud.session_repo import (
     list_sessions_for_user,
     update_session_title,
 )
-from ...schemas.requests import ChatRequest, MessageDTO, MessagesResponse, SessionDTO, SessionsResponse
+from ...schemas.chat_models import ChatRequest, MessageDTO, MessagesResponse, SessionDTO, SessionsResponse
 from ...services.ai.chat_service import ChatService
 from ...services.ai.chat_title_service import ChatTitleService
 
