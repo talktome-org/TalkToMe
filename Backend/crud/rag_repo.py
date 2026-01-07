@@ -2,10 +2,19 @@ import hashlib
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
+import sys
+from pathlib import Path
 
 from starlette.concurrency import run_in_threadpool
 
-from ..db.supabase_client import supabase
+# Support execution both as package and as script runner
+try:
+    from ..db.supabase_client import supabase  # type: ignore
+except ImportError:
+    # Fallback when relative import fails (script execution)
+    ROOT = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(ROOT))
+    from db.supabase_client import supabase  # type: ignore
 
 CHUNKS_TABLE = "therapy_book_chunks"
 DOCUMENTS_TABLE = "documents"
