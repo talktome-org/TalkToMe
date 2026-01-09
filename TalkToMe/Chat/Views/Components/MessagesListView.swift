@@ -11,27 +11,13 @@ struct MessagesListView: View {
     let isAssistantTyping: Bool
     let initialJumpToken: Int
 
-    init(
-        messages: [ChatMessage],
-        chatViewModel: ChatViewModel,
-        isInputFocused: Bool,
-        isAssistantTyping: Bool = false,
-        initialJumpToken: Int = 0
-    ) {
-        self.messages = messages
-        self.chatViewModel = chatViewModel
-        self.isInputFocused = isInputFocused
-        self.isAssistantTyping = isAssistantTyping
-        self.initialJumpToken = initialJumpToken
-    }
-
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 18) {
                     ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
                         MessageBubbleView(chatViewModel: chatViewModel, message: message, onSendToPartner: { text in
-                            NotificationCenter.default.post(name: .init("SendPartnerMessageFromBubble"), object: nil, userInfo: ["content": text])
+                            NotificationCenter.default.post(name: .sendPartnerMessageFromBubble, object: nil, userInfo: ["content": text])
                         })
                             .id(message.id)
                             .padding(.top, index > 0 && (messages[index - 1].isFromUser != message.isFromUser) ? 4 : 0)

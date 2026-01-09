@@ -8,40 +8,24 @@ struct ChatView: View {
     @StateObject private var viewModel: ChatViewModel
 
     @FocusState private var isInputFocused: Bool
+
     @State private var showNotLinkedAlert: Bool = false
-    // Partner accepted banner state (shows when app opened via partner link)
     @State private var showPartnerAddedBanner: Bool = false
     @State private var partnerAddedName: String = ""
+
+    private var isPartnerLinked: Bool {
+        sessionsViewModel.partnerInfo?.linked == true ||
+        UserDefaults.standard.bool(forKey: PreferenceKeys.partnerConnected) == true
+    }
 
     init(sessionId: UUID? = nil) {
         _viewModel = StateObject(wrappedValue: ChatViewModel(sessionId: sessionId))
     }
 
     var body: some View {
-        let handleSendToPartner: () -> Void = {
-            guard sessionsViewModel.partnerInfo?.linked == true || UserDefaults.standard.bool(forKey: PreferenceKeys.partnerConnected) == true else {
-                Haptics.notification(.error)
-                showNotLinkedAlert = true
-                return
-            }
-            let latestPartnerText = findLatestPartnerMessage()
-            let inputTextTrimmed = viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-            let textToSend = latestPartnerText ?? (inputTextTrimmed.isEmpty ? nil : inputTextTrimmed)
-            guard let text = textToSend, !text.isEmpty else { return }
-            if latestPartnerText == nil { viewModel.inputText = "" }
-            Task {
-                await viewModel.sendToPartner(sessionsViewModel: sessionsViewModel, customMessage: text)
-                // Only mark as sent after successful dispatch attempt (guarded inside sendToPartner)
-                if sessionsViewModel.partnerInfo?.linked == true || UserDefaults.standard.bool(forKey: PreferenceKeys.partnerConnected) == true {
-                    viewModel.partnerDrafts.markPartnerDraftAsSent(sessionId: viewModel.sessionId, messageContent: text)
-                }
-            }
-        }
-
-        return NavigationStack {
+        NavigationStack {
             ChatScreenView(
                 chatViewModel: viewModel,
-                onSendToPartner: handleSendToPartner,
                 isInputFocused: $isInputFocused
             )
             .overlay(alignment: .top) { partnerAddedBannerOverlay }
@@ -97,7 +81,9 @@ struct ChatView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .onAppear {
-            // Do not focus input when sidebar is open
+            Task { await sessionsViewModel.loadPendingRequests() }
+            sessionsViewModel.chatViewModel = viewModel
+
             if navigationViewModel.isOpen {
                 isInputFocused = false
             } else {
@@ -108,19 +94,21 @@ struct ChatView: View {
                 }
             }
         }
-        .onChange(of: navigationViewModel.dragOffset, initial: false) { _, newValue in ChatSidebarViewModel.shared.handleSidebarDragChanged(newValue, setInputFocused: { isInputFocused = $0 }) }
-        .onChange(of: navigationViewModel.isOpen, initial: false) { _, newValue in ChatSidebarViewModel.shared.handleSidebarIsOpenChanged(newValue, setInputFocused: { isInputFocused = $0 }) }
-        .onAppear {
-            Task { await sessionsViewModel.loadPendingRequests() }
-            // Register this ChatViewModel with SessionsViewModel so it can preload cache
-            sessionsViewModel.chatViewModel = viewModel
+        .onChange(of: navigationViewModel.dragOffset, initial: false) { _, newValue in
+            if abs(newValue) > 10 { isInputFocused = false }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .init("SendPartnerMessageFromBubble"))) { note in
-            if let text = note.userInfo?["content"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                if sessionsViewModel.partnerInfo?.linked == true || UserDefaults.standard.bool(forKey: PreferenceKeys.partnerConnected) == true {
+        .onChange(of: navigationViewModel.isOpen, initial: false) { _, newValue in
+            if newValue { isInputFocused = false }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .sendPartnerMessageFromBubble)) { note in
+            if let text = note.userInfo?["content"] as? String {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+
+                if isPartnerLinked {
                     Task {
-                        await viewModel.sendToPartner(sessionsViewModel: sessionsViewModel, customMessage: text)
-                        viewModel.partnerDrafts.markPartnerDraftAsSent(sessionId: viewModel.sessionId, messageContent: text)
+                        await viewModel.sendToPartner(sessionsViewModel: sessionsViewModel, customMessage: trimmed)
+                        viewModel.partnerDrafts.markPartnerDraftAsSent(sessionId: viewModel.sessionId, messageContent: trimmed)
                     }
                 } else {
                     Haptics.notification(.error)
@@ -128,53 +116,38 @@ struct ChatView: View {
                 }
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .partnerLinkOpened)) { note in
-            // Use helper function that prioritizes user-entered partner_display_name
+        .onReceive(NotificationCenter.default.publisher(for: .partnerLinkOpened)) { _ in
             partnerAddedName = PreferenceKeys.getPartnerDisplayName()
             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                 showPartnerAddedBanner = true
             }
-            // Auto-dismiss after 3 seconds
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                 if showPartnerAddedBanner {
                     withAnimation(.easeInOut(duration: 0.35)) { showPartnerAddedBanner = false }
                 }
             }
         }
-        .onChange(of: sessionsViewModel.partnerInfo?.partner?.name ?? "", initial: false) { _, newName in
-            // If banner is visible and we don't have a name yet, update once name arrives
-            // Use helper function that prioritizes user-entered partner_display_name
+        .onChange(of: sessionsViewModel.partnerInfo?.partner?.name ?? "", initial: false) { _, _ in
             if showPartnerAddedBanner && partnerAddedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 partnerAddedName = PreferenceKeys.getPartnerDisplayName()
             }
         }
-        // SkipPartnerDraftRequested no-op removed; feature not in use
         .onChange(of: sessionsViewModel.chatViewKey, initial: false) { _, _ in
             if sessionsViewModel.activeSessionId == nil {
                 viewModel.sessionId = nil
                 Task { await viewModel.loadHistory() }
             } else {
-                ChatSidebarViewModel.shared.handleActiveSessionChanged(sessionsViewModel.activeSessionId, viewModel: viewModel)
+                if let sessionId = sessionsViewModel.activeSessionId {
+                    Task { await viewModel.presentSession(sessionId) }
+                }
             }
         }
-        // Disable implicit animations related to this state change
         .animation(nil, value: viewModel.messages.isEmpty)
         .alert("Not connected", isPresented: $showNotLinkedAlert) {
             Button("OK", role: .cancel) { }
         } message: {
             Text("Your account is not connected to a partner.")
         }
-    }
-
-    private func findLatestPartnerMessage() -> String? {
-        for msg in viewModel.messages.reversed() {
-            if let content = (msg as ChatMessage).partnerMessageContent,
-               (msg as ChatMessage).isPartnerMessage,
-               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return content
-            }
-        }
-        return nil
     }
 
     @ViewBuilder
@@ -229,8 +202,6 @@ struct ChatView: View {
             )
             .animation(.easeInOut(duration: 0.35), value: showPartnerAddedBanner)
             .zIndex(20)
-        } else {
-            EmptyView()
         }
     }
 }

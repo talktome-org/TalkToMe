@@ -6,7 +6,6 @@ struct PartnerDraftBlockView: View {
 
     @State private var text: String
     @State private var measuredTextHeight: CGFloat = 0
-    @State private var isSending: Bool = false
     @State private var isConfirmingNormalSend: Bool = false
     @State private var showSentLocally: Bool = false
 
@@ -80,7 +79,7 @@ struct PartnerDraftBlockView: View {
 
                 HStack(spacing: 8) {
                     Button(action: {
-                        guard !isSent && !isSending else { return }
+                        guard !(isLinked && (isSent || showSentLocally)) else { return }
                         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !trimmed.isEmpty else { return }
 
@@ -88,7 +87,6 @@ struct PartnerDraftBlockView: View {
 
                         if isConfirmingNormalSend {
                             if isLinked {
-                                isSending = true
                                 withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
                                     showSentLocally = true
                                     isConfirmingNormalSend = false
@@ -133,7 +131,7 @@ struct PartnerDraftBlockView: View {
                             }
                         }
                     }
-                    .disabled((isLinked && (isSent || isSending)))
+                    .disabled(isLinked && (isSent || showSentLocally))
                 }
             }
         }
@@ -146,9 +144,6 @@ struct PartnerDraftBlockView: View {
                 )
         )
         .onAppear {
-            if self.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                self.text = self.initialText
-            }
             isConfirmingNormalSend = false
             showSentLocally = false
         }

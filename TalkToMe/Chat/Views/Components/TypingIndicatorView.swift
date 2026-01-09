@@ -2,8 +2,8 @@ import SwiftUI
 
 struct TypingIndicatorView: View {
 
-    @State private var isVisible: Bool = false
     @State private var animate: Bool = false
+    @State private var startTask: Task<Void, Never>?
 
     let showAfter: Double
 
@@ -24,17 +24,27 @@ struct TypingIndicatorView: View {
             }
         }
         .onAppear {
-            if showAfter <= 0 {
-                isVisible = true
+            startTask?.cancel()
+            animate = false
+
+            let delay = max(0, showAfter)
+            if delay == 0 {
                 animate = true
-            } else {
-                DispatchQueue.main.asyncAfter(deadline: .now() + showAfter) {
-                    isVisible = true
-                    animate = true
-                }
+                return
+            }
+
+            startTask = Task {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                await MainActor.run { animate = true }
             }
         }
-        .opacity(isVisible ? 1 : 0)
+        .onDisappear {
+            startTask?.cancel()
+            startTask = nil
+            animate = false
+        }
+        .opacity(animate ? 1 : 0)
     }
 }
 

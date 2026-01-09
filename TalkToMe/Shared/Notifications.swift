@@ -12,6 +12,7 @@ extension Notification.Name {
     static let partnerMessageReceived = Notification.Name("partner.message.received")
     static let partnerRequestAccepted = Notification.Name("partner.request.accepted")
     static let partnerLinkOpened = Notification.Name("partner.link.opened")
+    static let sendPartnerMessageFromBubble = Notification.Name("chat.partner.send.from.bubble")
 }
 
 private var _hasPendingAcceptanceSeed: Bool = false

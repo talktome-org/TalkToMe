@@ -1,30 +1,24 @@
 import SwiftUI
-import UIKit
-import AVFoundation
-import Speech
 
 struct InputAreaView: View {
-
     @StateObject private var voiceService = VoiceRecordingService()
 
     @Binding var inputText: String
     @Binding var isLoading: Bool
     @Binding var focusSnippet: String?
 
-    @Namespace private var actionButtonNamespace
-
     let isInputFocused: FocusState<Bool>.Binding
     let send: () -> Void
     let stop: () -> Void
-    let onSendToPartner: () -> Void
     let onVoiceRecordingStart: () -> Void
-    let onVoiceRecordingStop: (String) -> Void
 
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
 
         let sendSize: CGFloat = 34
+        let trimmedInput = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isInputEmpty = trimmedInput.isEmpty
 
         VStack(alignment: .leading, spacing: 8) {
             if let snippet = focusSnippet, !snippet.isEmpty {
@@ -86,7 +80,7 @@ struct InputAreaView: View {
                 .frame(minHeight: 36)
 
                 Button(action: {
-                    if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    if isInputEmpty {
                         if voiceService.isRecording {
                             Haptics.impact(.medium)
                             voiceService.stopRecording()
@@ -114,7 +108,7 @@ struct InputAreaView: View {
                             .shadow(color: Color(red: 0.4, green: 0.2, blue: 0.6).opacity(0.3), radius: 4, x: 0, y: 2)
 
                         ZStack {
-                            if inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            if isInputEmpty {
                                 Image(systemName: voiceService.isRecording ? "stop.fill" : "mic.fill")
                                     .font(.system(size: 14, weight: .semibold))
                                     .foregroundColor(.white)
@@ -134,7 +128,7 @@ struct InputAreaView: View {
                         }
                     }
                 }
-                .scaleEffect(voiceService.isRecording && inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 1.1 : 1.0)
+                .scaleEffect(voiceService.isRecording && isInputEmpty ? 1.1 : 1.0)
                 .animation(.spring(response: 0.3, dampingFraction: 0.7), value: voiceService.isRecording)
                 .animation(.spring(response: 0.35, dampingFraction: 0.85, blendDuration: 0.2), value: inputText)
             }
@@ -185,9 +179,7 @@ struct InputAreaView: View {
         isInputFocused: $isFocused,
         send: {},
         stop: {},
-        onSendToPartner: {},
-        onVoiceRecordingStart: {},
-        onVoiceRecordingStop: { _ in }
+        onVoiceRecordingStart: {}
     )
 }
 

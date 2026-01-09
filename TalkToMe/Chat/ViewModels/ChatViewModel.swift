@@ -468,8 +468,6 @@ class ChatViewModel: ObservableObject {
                                     return newMessages.count - 1
                                 }()
                                 let last = newMessages[idx]
-                                var drafts = last.partnerDrafts
-                                drafts.append(text)
                                 let updated = ChatMessage(
                                     id: last.id,
                                     segments: currentSegments,
@@ -493,8 +491,6 @@ class ChatViewModel: ObservableObject {
                                     return newMessages.count - 1
                                 }()
                                 let last = newMessages[idx]
-                                var drafts = last.partnerDrafts
-                                drafts.append(text)
                                 let updated = ChatMessage(
                                     id: last.id,
                                     segments: currentSegments,

@@ -349,34 +349,6 @@
 			};
 			name = Release;
 		};
-/* End XCBuildConfiguration section */
-
-/* Begin XCConfigurationList section */
-		04C84DF82E6259BA00206037 /* Build configuration list for PBXProject "TalkToMe" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				04C84E062E6259BB00206037 /* Debug */,
-				04C84E072E6259BB00206037 /* Release */,
-				04C84E0B2E6259BB00206037 /* Debug iOS18 */,
-				04C84E0C2E6259BB00206037 /* Release iOS18 */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		04C84E082E6259BB00206037 /* Build configuration list for PBXNativeTarget "TalkToMe" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				04C84E092E6259BB00206037 /* Debug */,
-				04C84E0A2E6259BB00206037 /* Release */,
-				04C84E0D2E6259BB00206037 /* Debug iOS18 */,
-				04C84E0E2E6259BB00206037 /* Release iOS18 */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-/* End XCConfigurationList section */
-
-/* Begin XCBuildConfiguration section (iOS18 additional) */
 		04C84E0B2E6259BB00206037 /* Debug iOS18 */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -572,7 +544,32 @@
 			};
 			name = "Release iOS18";
 		};
-/* End XCBuildConfiguration section (iOS18 additional) */
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		04C84DF82E6259BA00206037 /* Build configuration list for PBXProject "TalkToMe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				04C84E062E6259BB00206037 /* Debug */,
+				04C84E072E6259BB00206037 /* Release */,
+				04C84E0B2E6259BB00206037 /* Debug iOS18 */,
+				04C84E0C2E6259BB00206037 /* Release iOS18 */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		04C84E082E6259BB00206037 /* Build configuration list for PBXNativeTarget "TalkToMe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				04C84E092E6259BB00206037 /* Debug */,
+				04C84E0A2E6259BB00206037 /* Release */,
+				04C84E0D2E6259BB00206037 /* Debug iOS18 */,
+				04C84E0E2E6259BB00206037 /* Release iOS18 */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
 		0481A5ED2E63A6FC00A6358E /* XCRemoteSwiftPackageReference "supabase-swift" */ = {

@@ -4,6 +4,8 @@ struct QuickSuggestion: Identifiable, Hashable {
     let id = UUID()
     let title: String
     let subtitle: String
+
+    var combinedText: String { "\(title) \(subtitle)" }
 }
 
 struct QuickSuggestionsView: View {
@@ -16,7 +18,7 @@ struct QuickSuggestionsView: View {
             HStack(spacing: 12) {
                 ForEach(suggestions) { item in
                     Button(action: {
-                        onTap("\(item.title) \(item.subtitle)")
+                        onTap(item.combinedText)
                     }) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.title)
@@ -41,7 +43,7 @@ struct QuickSuggestionsView: View {
                         }
                         .overlay {
                             if #available(iOS 26.0, *) {
-                                Color.clear
+                                EmptyView()
                             } else {
                                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                                     .strokeBorder(Color.black.opacity(0.06), lineWidth: 1)

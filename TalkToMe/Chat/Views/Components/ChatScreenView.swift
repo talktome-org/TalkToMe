@@ -8,11 +8,9 @@ struct ChatScreenView: View {
     @State private var inputBarHeight: CGFloat = 0
     @State private var suggestionsHeight: CGFloat = 0
     @State private var bottomSafeInset: CGFloat = 0
-    @State private var keyboardScrollToken: Int = 0
     @State private var showSuggestionsDelayed: Bool = false
     @State private var suggestionsDelayWorkItem: DispatchWorkItem?
 
-    let onSendToPartner: () -> Void
     let isInputFocused: FocusState<Bool>.Binding
 
     private var quickSuggestions: [QuickSuggestion] {
@@ -38,8 +36,8 @@ struct ChatScreenView: View {
         VStack(spacing: 0) {
 
             MessagesListView(
-                messages: chatViewModel.messages,
                 chatViewModel: chatViewModel,
+                messages: chatViewModel.messages,
                 isInputFocused: isInputFocused.wrappedValue,
                 isAssistantTyping: chatViewModel.isAssistantTyping,
                 initialJumpToken: chatViewModel.initialJumpToken
@@ -90,9 +88,7 @@ struct ChatScreenView: View {
                     isInputFocused: isInputFocused,
                     send: { chatViewModel.sendMessage() },
                     stop: { chatViewModel.stopGeneration() },
-                    onSendToPartner: onSendToPartner,
-                    onVoiceRecordingStart: { },
-                    onVoiceRecordingStop: { _ in }
+                    onVoiceRecordingStart: { }
                 )
                 .background(
                     GeometryReader { proxy in
@@ -121,7 +117,7 @@ struct ChatScreenView: View {
                         .padding(.horizontal, 28)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                .padding(.bottom, inputBarHeight + ((isNewChatReadyForSuggestions && showSuggestionsDelayed) ? suggestionsHeight : 0) + bottomSafeInset + 36)
+                .padding(.bottom, inputBarHeight + (canShowSuggestions ? suggestionsHeight : 0) + bottomSafeInset + 36)
                 .transition(.opacity)
             }
         }
@@ -135,28 +131,14 @@ struct ChatScreenView: View {
         .onAppear {
             bottomSafeInset = currentBottomSafeInset()
             if isNewChatReadyForSuggestions {
-                suggestionsDelayWorkItem?.cancel()
-                let work = DispatchWorkItem {
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.9)) {
-                        showSuggestionsDelayed = true
-                    }
-                }
-                suggestionsDelayWorkItem = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
+                scheduleSuggestionsDelay()
             } else {
                 showSuggestionsDelayed = false
             }
         }
         .onChange(of: isNewChatReadyForSuggestions, initial: false) { _, ready in
             if ready {
-                suggestionsDelayWorkItem?.cancel()
-                let work = DispatchWorkItem {
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.9)) {
-                        showSuggestionsDelayed = true
-                    }
-                }
-                suggestionsDelayWorkItem = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
+                scheduleSuggestionsDelay()
             } else {
                 suggestionsDelayWorkItem?.cancel()
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.95)) {
@@ -164,13 +146,17 @@ struct ChatScreenView: View {
                 }
             }
         }
-        .onChange(of: isInputFocused.wrappedValue, initial: false) { _, isFocused in
-            if isFocused && !chatViewModel.messages.isEmpty {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    keyboardScrollToken &+= 1
-                }
+    }
+
+    private func scheduleSuggestionsDelay() {
+        suggestionsDelayWorkItem?.cancel()
+        let work = DispatchWorkItem {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.9)) {
+                showSuggestionsDelayed = true
             }
         }
+        suggestionsDelayWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
     }
 }
 
@@ -202,7 +188,6 @@ private struct SuggestionsHeightPreferenceKey: PreferenceKey {
         var body: some View {
             ChatScreenView(
                 chatViewModel: vm,
-                onSendToPartner: { },
                 isInputFocused: $isFocused
             )
             .environmentObject(SidebarNavigationViewModel())

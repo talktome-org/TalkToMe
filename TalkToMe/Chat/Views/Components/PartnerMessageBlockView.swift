@@ -2,8 +2,6 @@ import SwiftUI
 
 struct PartnerMessageBlockView: View {
 
-    @State private var showCheck: Bool = false
-
     let text: String
 
     var body: some View {
@@ -16,28 +14,8 @@ struct PartnerMessageBlockView: View {
 
                     AvatarCacheManager.shared.cachedAsyncImage(
                         urlString: avatarURL,
-                        placeholder: {
-                            AnyView(
-                                Circle()
-                                    .fill(Color.gray.opacity(0.2))
-                                    .overlay(
-                                        Image(systemName: "person.fill")
-                                            .font(.system(size: 10, weight: .medium))
-                                            .foregroundColor(.gray)
-                                    )
-                            )
-                        },
-                        fallback: {
-                            AnyView(
-                                Circle()
-                                    .fill(Color.gray.opacity(0.2))
-                                    .overlay(
-                                        Image(systemName: "person.fill")
-                                            .font(.system(size: 10, weight: .medium))
-                                            .foregroundColor(.gray)
-                                    )
-                            )
-                        }
+                        placeholder: avatarPlaceholder,
+                        fallback: avatarPlaceholder
                     )
                     .frame(width: 16, height: 16)
                     .clipShape(Circle())
@@ -71,6 +49,18 @@ struct PartnerMessageBlockView: View {
                 .strokeBorder(Color(.separator), lineWidth: 1)
                 .background(
                     RoundedRectangle(cornerRadius: 16).fill(Color(.secondarySystemBackground))
+                )
+        )
+    }
+
+    private func avatarPlaceholder() -> AnyView {
+        AnyView(
+            Circle()
+                .fill(Color.gray.opacity(0.2))
+                .overlay(
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.gray)
                 )
         )
     }

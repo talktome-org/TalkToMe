@@ -1,7 +1,7 @@
 import SwiftUI
 
+@MainActor
 class ChatSessionsViewModel: ObservableObject {
-
     @Published var sessions: [ChatSession] = []
     @Published var isLoadingSessions: Bool = false
     @Published var pendingRequests: [BackendService.PartnerPendingRequest] = []
@@ -21,23 +21,21 @@ class ChatSessionsViewModel: ObservableObject {
     @Published var partnerInfo: BackendService.PartnerInfo? = nil
     @Published var isBootstrapping: Bool = false
     @Published var isBootstrapComplete: Bool = false
-    @Published private(set) var unreadPartnerSessionIds: Set<UUID> = []
+    @Published var unreadPartnerSessionIds: Set<UUID> = []
 
-    private var suppressUnreadSessionIds: Set<UUID> = []
-    private var observers: [NSObjectProtocol] = []
-    private var handlingPartnerRequestIds: Set<UUID> = []
+    var suppressUnreadSessionIds: Set<UUID> = []
+    var handlingPartnerRequestIds: Set<UUID> = []
     private var hasStartedObserving: Bool = false
-    private var linkStatusPollingTask: Task<Void, Never>? = nil
-    private var unlinkStatusPollingTask: Task<Void, Never>? = nil
-    private let avatarCacheManager = AvatarCacheManager.shared
+    private let linkStatusPoller = PartnerLinkStatusPoller()
+    private let eventRouter = ChatSessionsEventRouter()
+    let avatarCacheManager = AvatarCacheManager.shared
     private weak var navigationViewModel: SidebarNavigationViewModel?
     private weak var linkViewModel: LinkViewModel?
     weak var chatViewModel: ChatViewModel?
     private var currentUserId: String?
     private var pendingAcceptancePreviewBySession: [UUID: String] = [:]
 
-    @MainActor
-    private func findNavigationViewModel() -> SidebarNavigationViewModel? {
+    func findNavigationViewModel() -> SidebarNavigationViewModel? {
         return navigationViewModel
     }
 
@@ -75,11 +73,9 @@ class ChatSessionsViewModel: ObservableObject {
     init() {
         loadCachedSessions()
         loadCachedUnread()
-        // Warm my avatar URL from persisted cache to avoid flicker on cold start
         if let storedMyAvatar = UserDefaults.standard.string(forKey: PreferenceKeys.myAvatarURL),
            !storedMyAvatar.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             self.myAvatarURL = storedMyAvatar
-            // Warm memory/disk cache without network if possible on MainActor
             Task { @MainActor in
                 _ = avatarCacheManager.getImageIfCached(urlString: storedMyAvatar)
             }
@@ -87,7 +83,11 @@ class ChatSessionsViewModel: ObservableObject {
     }
 
     deinit {
-        for ob in observers { NotificationCenter.default.removeObserver(ob) }
+        // `deinit` is nonisolated; schedule MainActor cleanup for actor-isolated helpers.
+        Task { @MainActor [eventRouter, linkStatusPoller] in
+            eventRouter.stop()
+            linkStatusPoller.stop()
+        }
     }
 
     func startNewChat() {
@@ -99,10 +99,8 @@ class ChatSessionsViewModel: ObservableObject {
         hasStartedObserving = false
         isBootstrapComplete = false
         isBootstrapping = false
-        linkStatusPollingTask?.cancel()
-        unlinkStatusPollingTask?.cancel()
-        linkStatusPollingTask = nil
-        unlinkStatusPollingTask = nil
+        linkStatusPoller.stop()
+        eventRouter.stop()
         sessions = []
         pendingRequests = []
         activeSessionId = nil
@@ -111,10 +109,7 @@ class ChatSessionsViewModel: ObservableObject {
         partnerInfo = nil
         unreadPartnerSessionIds.removeAll()
         suppressUnreadSessionIds.removeAll()
-        for observer in observers {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        observers.removeAll()
+        handlingPartnerRequestIds.removeAll()
     }
 
     @MainActor
@@ -185,7 +180,6 @@ class ChatSessionsViewModel: ObservableObject {
                 )
             }
 
-            // UI tweak: hide pre-created partner-request sessions until the request is accepted
             if !self.pendingRequests.isEmpty {
                 let hiddenIds = Set(self.pendingRequests.compactMap { $0.recipient_session_id })
                 if !hiddenIds.isEmpty {
@@ -198,16 +192,8 @@ class ChatSessionsViewModel: ObservableObject {
             }
 
             if self.partnerInfo?.linked == true {
-                var previousSessions: [ChatSession] = []
-                do {
-                    let url = self.cacheURL
-                    if FileManager.default.fileExists(atPath: url.path) {
-                        let data = try Data(contentsOf: url)
-                        previousSessions = try JSONDecoder().decode([ChatSession].self, from: data)
-                    }
-                } catch {
-                    previousSessions = self.sessions
-                }
+                let store = ChatSessionsCacheStore(userId: currentUserId)
+                let previousSessions = (try? store.loadSessions()) ?? self.sessions
 
                 for session in mapped {
                     if let lastMessage = session.lastMessageContent, !lastMessage.isEmpty {
@@ -318,178 +304,7 @@ class ChatSessionsViewModel: ObservableObject {
             await preloadAvatars()
             print("[SessionsVM] Initial data loaded. PartnerLinked=\(self.partnerInfo?.linked ?? false)")
         }
-
-        let created = NotificationCenter.default.addObserver(forName: .chatSessionCreated, object: nil, queue: .main) { [weak self] note in
-            guard let self = self else { return }
-            if let sid = note.userInfo?["sessionId"] as? UUID {
-                if !self.sessions.contains(where: { $0.id == sid }) {
-                    let rawTitle = (note.userInfo?["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let title = rawTitle
-                    let session = ChatSession(
-                        id: sid,
-                        title: title,
-                        lastUsedISO8601: note.userInfo?["lastUsedISO8601"] as? String,
-                        lastMessageContent: note.userInfo?["lastMessageContent"] as? String
-                    )
-                    self.sessions.insert(session, at: 0)
-                }
-            }
-        }
-        observers.append(created)
-
-        let sent = NotificationCenter.default.addObserver(forName: .chatMessageSent, object: nil, queue: .main) { [weak self] note in
-            guard let self = self else { return }
-            if let sid = note.userInfo?["sessionId"] as? UUID,
-               let messageContent = note.userInfo?["messageContent"] as? String,
-               let idx = self.sessions.firstIndex(where: { $0.id == sid }) {
-                var item = self.sessions.remove(at: idx)
-                item.lastMessageContent = messageContent
-                self.sessions.insert(item, at: 0)
-                self.suppressUnreadSessionIds.insert(sid)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
-                    self?.suppressUnreadSessionIds.remove(sid)
-                }
-                print("[SessionsVM] chatMessageSent by self; suppress unread for session=\(sid)")
-            }
-        }
-        observers.append(sent)
-
-        let needRefresh = NotificationCenter.default.addObserver(forName: .chatSessionsNeedRefresh, object: nil, queue: .main) { [weak self] _ in
-            guard let self = self else { return }
-            Task {
-                await self.refreshSessions()
-                await self.loadPartnerInfo()
-                await self.loadPairedAvatars()
-                await self.preloadAvatars()
-            }
-        }
-        observers.append(needRefresh)
-
-        let willEnterForeground = NotificationCenter.default.addObserver(
-            forName: UIApplication.willEnterForegroundNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self = self else { return }
-            Task {
-                await self.loadPartnerInfo()
-                await self.loadPairedAvatars()
-                await self.preloadAvatars()
-            }
-        }
-        observers.append(willEnterForeground)
-
-        let avatarChanged = NotificationCenter.default.addObserver(forName: .avatarChanged, object: nil, queue: .main) { [weak self] _ in
-            guard let self = self else { return }
-            Task {
-                await self.loadPairedAvatars()
-                await self.preloadAvatars()
-            }
-        }
-        observers.append(avatarChanged)
-
-        let partnerReceived = NotificationCenter.default.addObserver(forName: .partnerMessageReceived, object: nil, queue: .main) { [weak self] note in
-            guard let self = self else { return }
-            guard let sid = note.userInfo?["sessionId"] as? UUID else {
-                print("[SessionsVM] partnerMessageReceived but no sessionId in notification")
-                return
-            }
-
-            let sessionExists = self.sessions.contains(where: { $0.id == sid })
-            if !sessionExists {
-                print("[SessionsVM] ⚠️ Session \(sid) not in local list - likely for other account on same device")
-                return
-            }
-
-            // No longer refreshing LinkViewModel here to avoid clobbering prepared invite state
-
-            if self.activeSessionId != sid && self.partnerInfo?.linked == true {
-                self.unreadPartnerSessionIds.insert(sid)
-                print("[SessionsVM] ✅ Marked session \(sid) as unread, total unread: \(self.unreadPartnerSessionIds.count)")
-                self.saveCachedUnread()
-                self.objectWillChange.send()
-            } else {
-                print("[SessionsVM] ❌ Not marking unread: isActive=\(self.activeSessionId == sid), linked=\(self.partnerInfo?.linked ?? false)")
-            }
-
-            if let idx = self.sessions.firstIndex(where: { $0.id == sid }) {
-                var item = self.sessions.remove(at: idx)
-                if let preview = note.userInfo?["messagePreview"] as? String {
-                    item.lastMessageContent = preview
-                }
-                self.sessions.insert(item, at: 0)
-                print("[SessionsVM] partnerMessageReceived → lifted session; wasIdx=\(idx)")
-            }
-        }
-        observers.append(partnerReceived)
-
-        let pushTapped = NotificationCenter.default.addObserver(forName: .partnerRequestOpen, object: nil, queue: .main) { [weak self] note in
-            guard let self = self else { return }
-            guard let requestId = note.userInfo?["requestId"] as? UUID else { return }
-            guard AuthService.shared.isAuthenticated else { return }
-            if self.handlingPartnerRequestIds.contains(requestId) { return }
-            self.handlingPartnerRequestIds.insert(requestId)
-            Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                do {
-                    if self.pendingRequests.isEmpty { await self.loadPendingRequests() }
-                    let req = self.pendingRequests.first(where: { $0.id == requestId })
-                    let messageContent = req?.content ?? ""
-
-                    let session = try await AuthService.shared.client.auth.session
-                    let accessToken = session.accessToken
-                    // If we already have a recipient session id from the pending request, open instantly
-                    if let sid = req?.recipient_session_id {
-                        self.activeSessionId = sid
-                        self.chatViewKey = UUID()
-                        if !messageContent.isEmpty { ChatMessagesViewModel.preCachePartnerMessage(sessionId: sid, text: messageContent) }
-                        await self.chatViewModel?.loadHistory(force: true)
-                    }
-                    let partnerSessionId = try await BackendService.shared.acceptPartnerRequest(requestId: requestId, accessToken: accessToken)
-                    await self.loadSessions()
-                    if !messageContent.isEmpty { ChatMessagesViewModel.preCachePartnerMessage(sessionId: partnerSessionId, text: messageContent) }
-                    self.activeSessionId = partnerSessionId
-                    self.chatViewKey = UUID()
-                    if let navVM = self.findNavigationViewModel() {
-                        navVM.closeSidebar()
-                    }
-                    await self.loadPendingRequests()
-                } catch {
-                    print("Failed to accept partner request: \(error)")
-                    await self.loadSessions()
-                    if let existingSession = self.sessions.first {
-                        self.activeSessionId = existingSession.id
-                        self.chatViewKey = UUID()
-                        if let navVM = self.findNavigationViewModel() {
-                            navVM.closeSidebar()
-                        }
-                    }
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
-                    self?.handlingPartnerRequestIds.remove(requestId)
-                }
-            }
-        }
-        observers.append(pushTapped)
-
-        let partnerMessageTapped = NotificationCenter.default.addObserver(forName: .partnerMessageOpen, object: nil, queue: .main) { [weak self] note in
-            guard let self = self else { return }
-            guard let sessionId = note.userInfo?["sessionId"] as? UUID else { return }
-            guard AuthService.shared.isAuthenticated else { return }
-            Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                if self.partnerInfo?.linked == true && sessionId != self.activeSessionId {
-                    self.unreadPartnerSessionIds.insert(sessionId)
-                }
-                await self.loadSessions()
-                self.activeSessionId = sessionId
-                self.chatViewKey = UUID()
-                if let navVM = self.findNavigationViewModel() {
-                    navVM.closeSidebar()
-                }
-            }
-        }
-        observers.append(partnerMessageTapped)
+        eventRouter.start(self)
 
         maybeStartLinkStatusPolling()
     }
@@ -534,50 +349,6 @@ class ChatSessionsViewModel: ObservableObject {
         }
     }
 
-    func loadPairedAvatars() async {
-        do {
-            let session = try await AuthService.shared.client.auth.session
-            let accessToken = session.accessToken
-            let res = try await BackendService.shared.fetchPairedAvatars(accessToken: accessToken)
-            await MainActor.run {
-                self.myAvatarURL = res.me.url
-                self.partnerAvatarURL = res.partner.url
-                // Persist my avatar URL for future launches
-                if let myURL = res.me.url, !myURL.isEmpty {
-                    UserDefaults.standard.set(myURL, forKey: PreferenceKeys.myAvatarURL)
-                } else {
-                    UserDefaults.standard.removeObject(forKey: PreferenceKeys.myAvatarURL)
-                }
-            }
-        } catch {
-            print("Failed to load avatars: \(error)")
-        }
-    }
-
-    func preloadAvatars() async {
-        var avatarURLs: [String] = []
-        if let myAvatar = myAvatarURL, !myAvatar.isEmpty {
-            avatarURLs.append(myAvatar)
-        }
-        if let partnerAvatar = partnerAvatarURL, !partnerAvatar.isEmpty {
-            avatarURLs.append(partnerAvatar)
-        }
-        if !avatarURLs.isEmpty {
-            await avatarCacheManager.preloadAvatars(urls: avatarURLs)
-        }
-    }
-
-    func ensureProfilePictureCached() async {
-        if let myAvatar = myAvatarURL, !myAvatar.isEmpty {
-            _ = await avatarCacheManager.getCachedImage(urlString: myAvatar)
-        }
-    }
-
-    func getCachedAvatar(urlString: String?) async -> UIImage? {
-        guard let urlString = urlString, !urlString.isEmpty else { return nil }
-        return await avatarCacheManager.getCachedImage(urlString: urlString)
-    }
-
     func loadPartnerInfo() async {
         do {
             let session = try await AuthService.shared.client.auth.session
@@ -613,14 +384,8 @@ class ChatSessionsViewModel: ObservableObject {
                 await avatarCacheManager.preloadAvatars(urls: [url])
             }
             if res.linked {
-                // Stop link-acceptance polling; start unlink polling
-                linkStatusPollingTask?.cancel()
-                linkStatusPollingTask = nil
                 maybeStartUnlinkStatusPolling()
             } else {
-                // Stop unlink polling; ensure link polling continues
-                unlinkStatusPollingTask?.cancel()
-                unlinkStatusPollingTask = nil
                 maybeStartLinkStatusPolling()
             }
         } catch {
@@ -658,28 +423,12 @@ class ChatSessionsViewModel: ObservableObject {
 }
 
 extension ChatSessionsViewModel {
-    private var cacheURL: URL {
-        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        if let userId = currentUserId {
-            return dir.appendingPathComponent("chat_sessions_cache_\(userId).json")
-        }
-        return dir.appendingPathComponent("chat_sessions_cache.json")
-    }
-    private var unreadCacheURL: URL {
-        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        if let userId = currentUserId {
-            return dir.appendingPathComponent("chat_unread_cache_\(userId).json")
-        }
-        return dir.appendingPathComponent("chat_unread_cache.json")
-    }
-
     private func loadCachedSessions() {
         do {
-            let url = cacheURL
-            guard FileManager.default.fileExists(atPath: url.path) else { return }
-            let data = try Data(contentsOf: url)
-            let decoded = try JSONDecoder().decode([ChatSession].self, from: data)
-            self.sessions = decoded
+            let store = ChatSessionsCacheStore(userId: currentUserId)
+            if let decoded = try store.loadSessions() {
+                self.sessions = decoded
+            }
         } catch {
             print("⚠️ Failed to load cached sessions: \(error)")
         }
@@ -687,33 +436,29 @@ extension ChatSessionsViewModel {
 
     private func saveCachedSessions() {
         do {
-            let data = try JSONEncoder().encode(self.sessions)
-            try data.write(to: cacheURL, options: .atomic)
+            let store = ChatSessionsCacheStore(userId: currentUserId)
+            try store.saveSessions(self.sessions)
         } catch {
             print("⚠️ Failed to save cached sessions: \(error)")
         }
     }
 
-    private struct UnreadCache: Codable { let unread: [UUID] }
-
-    private func loadCachedUnread() {
+    func loadCachedUnread() {
         do {
-            let url = unreadCacheURL
-            guard FileManager.default.fileExists(atPath: url.path) else { return }
-            let data = try Data(contentsOf: url)
-            let decoded = try JSONDecoder().decode(UnreadCache.self, from: data)
-            self.unreadPartnerSessionIds = Set(decoded.unread)
-            print("[SessionsVM] Loaded unread cache; count=\(decoded.unread.count)")
+            let store = ChatSessionsCacheStore(userId: currentUserId)
+            if let unread = try store.loadUnread() {
+                self.unreadPartnerSessionIds = unread
+                print("[SessionsVM] Loaded unread cache; count=\(unread.count)")
+            }
         } catch {
             print("⚠️ Failed to load unread cache: \(error)")
         }
     }
 
-    private func saveCachedUnread() {
+    func saveCachedUnread() {
         do {
-            let body = UnreadCache(unread: Array(self.unreadPartnerSessionIds))
-            let data = try JSONEncoder().encode(body)
-            try data.write(to: unreadCacheURL, options: .atomic)
+            let store = ChatSessionsCacheStore(userId: currentUserId)
+            try store.saveUnread(self.unreadPartnerSessionIds)
             print("[SessionsVM] Saved unread cache; count=\(self.unreadPartnerSessionIds.count)")
         } catch {
             print("⚠️ Failed to save unread cache: \(error)")
@@ -721,36 +466,20 @@ extension ChatSessionsViewModel {
     }
 
     private func maybeStartLinkStatusPolling() {
-        // Start a lightweight poll while not linked to detect acceptance quickly
-        if linkStatusPollingTask != nil { return }
-        linkStatusPollingTask = Task { [weak self] in
+        linkStatusPoller.startLinkPolling(isLinked: { [weak self] in
+            self?.partnerInfo?.linked == true
+        }) { [weak self] in
             guard let self = self else { return }
-            var attempts = 0
-            while !Task.isCancelled {
-                if self.partnerInfo?.linked == true { break }
-                attempts += 1
-                do { await self.loadPartnerInfo() }
-                // Poll every 5 seconds for up to ~2 minutes
-                if attempts >= 24 { break }
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-            }
+            await self.loadPartnerInfo()
         }
     }
 
     private func maybeStartUnlinkStatusPolling() {
-        // Start a lightweight poll while linked to detect unlink quickly
-        if unlinkStatusPollingTask != nil { return }
-        unlinkStatusPollingTask = Task { [weak self] in
+        linkStatusPoller.startUnlinkPolling(isLinked: { [weak self] in
+            self?.partnerInfo?.linked == true
+        }) { [weak self] in
             guard let self = self else { return }
-            var attempts = 0
-            while !Task.isCancelled {
-                if self.partnerInfo?.linked != true { break }
-                attempts += 1
-                do { await self.loadPartnerInfo() }
-                // Poll every 5 seconds for up to ~2 minutes
-                if attempts >= 24 { break }
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-            }
+            await self.loadPartnerInfo()
         }
     }
 }

@@ -1,5 +1,11 @@
 import Foundation
 
+enum MessageSegment: Equatable {
+    case text(String)
+    case partnerMessage(String)
+    case partnerReceived(String)
+}
+
 struct ChatMessage: Identifiable {
     let id: UUID
     let segments: [MessageSegment]
@@ -16,24 +22,34 @@ struct ChatMessage: Identifiable {
     }
 
     var partnerMessageContent: String? {
-        if let draft = partnerDrafts.first { return draft }
+        var firstDraft: String? = nil
+        var firstReceived: String? = nil
+
         for segment in segments {
-            if case .partnerReceived(let text) = segment { return text }
+            switch segment {
+            case .partnerMessage(let text):
+                if firstDraft == nil, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    firstDraft = text
+                }
+            case .partnerReceived(let text):
+                if firstReceived == nil, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    firstReceived = text
+                }
+            default:
+                break
+            }
         }
-        return nil
+
+        if let draft = firstDraft { return draft }
+        return firstReceived
     }
 
-    var isPartnerMessage: Bool {
-        if !partnerDrafts.isEmpty { return true }
-        return segments.contains { seg in
-            if case .partnerReceived(_) = seg { return true }
-            return false
-        }
-    }
+    var isPartnerMessage: Bool { partnerMessageContent != nil }
+
 
     static func text(_ text: String, isFromUser: Bool, timestamp: Date = Date()) -> ChatMessage {
         return ChatMessage(
-            segments: text.isEmpty ? [] : [.text(text)],
+            segments: text.isEmpty ? (isFromUser ? [] : [.text("")]) : [.text(text)],
             isFromUser: isFromUser,
             isFromPartnerUser: false,
             timestamp: timestamp,
@@ -66,6 +82,7 @@ struct ChatMessage: Identifiable {
         self.isFromUser = isOwnUserRole
         self.isFromPartnerUser = (dto.user_id != currentUserId) && dto.role == "user"
         self.timestamp = Date()
+        self.isToolLoading = false
 
         if let obj = ChatMessage.tryDecodeJSONDictionary(from: dto.content) {
             let talktome = (obj["_talktome"] as? [String: Any]) ?? ChatMessage.tryDecodeJSONDictionary(from: obj["_talktome"]) ?? [:]
@@ -73,7 +90,6 @@ struct ChatMessage: Identifiable {
             if type == "segments" {
                 let segmentsArr = (talktome["segments"] as? [Any]) ?? (obj["segments"] as? [Any]) ?? []
                 var segs: [MessageSegment] = []
-                var partnerTexts: [String] = []
                 for item in segmentsArr {
                     if let dict = item as? [String: Any], let t = dict["type"] as? String {
                         if t == "text" {
@@ -83,7 +99,6 @@ struct ChatMessage: Identifiable {
                             let txt = (dict["text"] as? String) ?? ""
                             if !txt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                 segs.append(.partnerMessage(txt))
-                                partnerTexts.append(txt)
                             }
                         } else if t == "partner_received" {
                             let txt = (dict["text"] as? String) ?? ""
@@ -94,7 +109,6 @@ struct ChatMessage: Identifiable {
                     }
                 }
                 self.segments = segs.isEmpty ? [.text("")] : segs
-                self.isToolLoading = false
                 return
             } else if type == "partner_received" {
                 if let text = talktome["text"] as? String {
@@ -107,13 +121,11 @@ struct ChatMessage: Identifiable {
                         segs.append(.partnerReceived(text))
                     }
                     self.segments = segs.isEmpty ? [.text("")] : segs
-                    self.isToolLoading = false
                     return
                 }
             }
         }
         self.segments = dto.content.isEmpty ? [] : [.text(dto.content)]
-        self.isToolLoading = false
     }
 
     private static func tryDecodeJSONDictionary(from value: Any?) -> [String: Any]? {

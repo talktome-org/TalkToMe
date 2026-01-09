@@ -1,27 +1,17 @@
 import Foundation
 
 struct ChatSession: Identifiable, Hashable, Equatable, Codable {
-
     static let defaultTitle = "New Chat"
     let id: UUID
     var title: String
     var lastUsedISO8601: String?
     var lastMessageContent: String?
-    var displayTitle: String { title }
 
     enum CodingKeys: String, CodingKey {
         case id
         case title
         case lastUsedISO8601
         case lastMessageContent
-    }
-
-    init(dto: ChatSessionDTO) {
-        self.id = dto.id
-        let trimmedTitle = dto.title?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.title = (trimmedTitle?.isEmpty == false) ? trimmedTitle! : Self.defaultTitle
-        self.lastUsedISO8601 = dto.last_message_at
-        self.lastMessageContent = nil
     }
 
     init(from decoder: Decoder) throws {

@@ -36,13 +36,7 @@ struct MessageBubbleView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     if message.isFromPartnerUser {
                         PartnerMessageBlockView(text: plainText(from: message.segments))
-                    }
-                    if !message.segments.isEmpty {
-                        let _ = message.segments.forEach { seg in
-                            if case .partnerReceived(let text) = seg {
-                                print("[MessageBubble] Found partnerReceived segment: \(text.prefix(50))")
-                            }
-                        }
+                    } else if !message.segments.isEmpty {
                         ForEach(Array(message.segments.enumerated()), id: \.offset) { _, segment in
                             switch segment {
                             case .text(let text):

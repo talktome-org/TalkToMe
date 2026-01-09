@@ -44,15 +44,20 @@ struct WaveformPlaceholderView: View {
             let advance = scrollSpeed * dt
             phaseOffset += advance
             distanceAccumulator += advance
+            let clamped = max(0, min(1, currentLevel))
             while distanceAccumulator >= unit {
                 distanceAccumulator -= unit
-                let clamped = max(0, min(1, currentLevel))
                 bars.append(clamped)
                 if bars.count > maxBars { bars.removeFirst(bars.count - maxBars) }
             }
         }
         .accessibilityHidden(true)
-        .onAppear { bars = [] ; phaseOffset = 0 ; distanceAccumulator = 0 ; lastTick = 0 }
+        .onAppear {
+            bars = []
+            phaseOffset = 0
+            distanceAccumulator = 0
+            lastTick = 0
+        }
     }
 }
 

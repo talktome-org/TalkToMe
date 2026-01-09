@@ -65,10 +65,6 @@ final class ChatMessagesViewModel: ObservableObject {
         )
     }
 
-    static func preCacheMessages(sessionId: UUID, messages: [ChatMessage]) {
-        Self.sharedMessagesCache[sessionId] = MessagesCacheEntry(messages: messages, lastLoaded: Date())
-    }
-
     func presentSession(_ id: UUID) async {
         self.sessionId = id
         if let entry = Self.sharedMessagesCache[id], !entry.messages.isEmpty {
@@ -111,15 +107,25 @@ final class ChatMessagesViewModel: ObservableObject {
             guard let userId = AuthService.shared.currentUser?.id else { self.isLoadingHistory = false; return }
             var mapped = dtos.map { ChatMessage(dto: $0, currentUserId: userId) }
 
-            if let optimistic = self.messages.last, let optimisticText = optimistic.partnerMessageContent,
-               optimistic.segments.contains(where: { if case .partnerReceived(let t) = $0 { return !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } else { return false } }) {
-                let existsInMapped: Bool = mapped.contains(where: { msg in
-                    msg.segments.contains { seg in
-                        if case .partnerReceived(let t) = seg { return t == optimisticText } else { return false }
+            if let optimistic = self.messages.last {
+                let optimisticPartnerReceivedText: String? = optimistic.segments.compactMap { seg in
+                    if case .partnerReceived(let t) = seg {
+                        let trimmed = t.trimmingCharacters(in: .whitespacesAndNewlines)
+                        return trimmed.isEmpty ? nil : t
                     }
-                })
-                if !existsInMapped {
-                    mapped.append(optimistic)
+                    return nil
+                }.first
+
+                if let optimisticText = optimisticPartnerReceivedText {
+                    let existsInMapped = mapped.contains { msg in
+                        msg.segments.contains { seg in
+                            if case .partnerReceived(let t) = seg { return t == optimisticText }
+                            return false
+                        }
+                    }
+                    if !existsInMapped {
+                        mapped.append(optimistic)
+                    }
                 }
             }
             self.messages = mapped
