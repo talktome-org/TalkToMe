@@ -157,7 +157,6 @@ class AuthService: ObservableObject {
         do {
             let session = try await client.auth.session
             let token = session.accessToken
-            print("ACCESS_TOKEN: \(token)")
             return token
         } catch {
             return nil

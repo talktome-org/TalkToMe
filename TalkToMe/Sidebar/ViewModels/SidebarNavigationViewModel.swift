@@ -12,10 +12,7 @@ class SidebarNavigationViewModel: ObservableObject {
     @Published var isOpen = false
     @Published var selectedTab: SidebarTab = .chat
     @Published var dragOffset: CGFloat = 0
-
     @Published var showSettingsSheet: Bool = false
-    @Published var showLinkSheet: Bool = false
-
     @Published var isNotificationsExpanded: Bool = false
     @Published var isChatsExpanded: Bool = false
 
