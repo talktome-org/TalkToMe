@@ -7,10 +7,9 @@ struct SettingsView: View {
 
     @EnvironmentObject private var linkVM: LinkViewModel
     @EnvironmentObject private var sessionsVM: ChatSessionsViewModel
+    @EnvironmentObject private var viewModel: SettingsViewModel
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(PreferenceKeys.appearancePreference) private var appearance: String = "System"
-
-    @StateObject private var viewModel = SettingsViewModel()
 
     @Binding var isPresented: Bool
 
@@ -159,34 +158,11 @@ struct SettingsView: View {
                     }
                 }
             }
-            .navigationDestination(for: SettingsDestination.self) { dest in
-                switch dest {
-                case .contactSupport:
-                    ContactSupportView()
-                        .navigationTitle("Contact Support")
-                        .navigationBarTitleDisplayMode(.inline)
-                case .privacyPolicy:
-                    PrivacyPolicyView()
-                        .navigationTitle("Privacy Policy")
-                        .navigationBarTitleDisplayMode(.inline)
-                }
-            }
-            .navigationDestination(item: $viewModel.destination) { dest in
-                switch dest {
-                case .contactSupport:
-                    ContactSupportView()
-                        .navigationTitle("Contact Support")
-                        .navigationBarTitleDisplayMode(.inline)
-                case .privacyPolicy:
-                    PrivacyPolicyView()
-                        .navigationTitle("Privacy Policy")
-                        .navigationBarTitleDisplayMode(.inline)
-                }
-            }
             .sheet(isPresented: $viewModel.showPersonalizationEdit) {
                 PersonalizationEditView(
                     isPresented: $viewModel.showPersonalizationEdit,
-                    profileNamespace: profileNamespace
+                    profileNamespace: profileNamespace,
+                    viewModel: viewModel
                 )
                 .environmentObject(sessionsVM)
                 .presentationDetents([.large])
@@ -258,4 +234,5 @@ struct SettingsView: View {
         return "mock-access-token"
     }))
     .environmentObject(ChatSessionsViewModel())
+    .environmentObject(SettingsViewModel())
 }

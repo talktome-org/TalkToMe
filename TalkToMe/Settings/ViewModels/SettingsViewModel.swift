@@ -7,7 +7,6 @@ class SettingsViewModel: ObservableObject {
 
     @Published var settingsData = SettingsData()
     @Published var settingsSections: [SettingsSection] = []
-    @Published var destination: SettingsDestination? = nil
     @Published var isUploadingAvatar: Bool = false
     @Published var avatarURL: String? = nil
     @Published var isConnectedToPartner: Bool = false
@@ -161,14 +160,6 @@ class SettingsViewModel: ObservableObject {
         let setting = section.settings[settingIndex]
 
         switch setting.title {
-        case "Link Your Partner":
-            break
-        case "Notifications":
-            break
-        case "Contact Support":
-            destination = .contactSupport
-        case "Privacy Policy":
-            destination = .privacyPolicy
         case "Sign Out":
             Task {
                 await AuthService.shared.signOut()

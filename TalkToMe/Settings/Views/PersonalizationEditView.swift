@@ -5,7 +5,7 @@ struct PersonalizationEditView: View {
     @Binding var isPresented: Bool
     let profileNamespace: Namespace.ID
 
-    @StateObject private var viewModel = SettingsViewModel()
+    @ObservedObject var viewModel: SettingsViewModel
     @EnvironmentObject private var sessionsVM: ChatSessionsViewModel
     @Environment(\.colorScheme) private var colorScheme
 
@@ -636,7 +636,8 @@ struct PersonalizationEditView: View {
 
     PersonalizationEditView(
         isPresented: $isPresented,
-        profileNamespace: namespace
+        profileNamespace: namespace,
+        viewModel: SettingsViewModel()
     )
     .environmentObject(ChatSessionsViewModel())
 }

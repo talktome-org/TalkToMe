@@ -14,17 +14,3 @@ extension Notification.Name {
     static let partnerLinkOpened = Notification.Name("partner.link.opened")
     static let sendPartnerMessageFromBubble = Notification.Name("chat.partner.send.from.bubble")
 }
-
-private var _hasPendingAcceptanceSeed: Bool = false
-
-extension NotificationCenter {
-    static var hasPendingAcceptanceSeed: Bool { _hasPendingAcceptanceSeed }
-    static func withPendingAcceptanceSeed<T>(_ body: () -> T) -> T {
-        _hasPendingAcceptanceSeed = true
-        let result = body()
-        _hasPendingAcceptanceSeed = false
-        return result
-    }
-}
-
-

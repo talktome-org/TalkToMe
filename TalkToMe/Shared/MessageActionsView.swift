@@ -2,7 +2,6 @@ import SwiftUI
 import AVFoundation
 
 struct MessageActionsView: View {
-
     let text: String
 
     @State private var showCopyCheck: Bool = false

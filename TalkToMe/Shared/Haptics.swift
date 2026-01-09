@@ -2,7 +2,6 @@ import Foundation
 import UIKit
 
 enum Haptics {
-
     private static var isEnabled: Bool {
         if UserDefaults.standard.object(forKey: PreferenceKeys.hapticsEnabled) == nil {
             return true

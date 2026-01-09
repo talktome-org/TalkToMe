@@ -36,17 +36,3 @@ enum SettingType {
     case picker([String])
     case linkPartner
 }
-
-enum SettingsDestination: Hashable, Identifiable {
-    case contactSupport
-    case privacyPolicy
-
-    var id: String {
-        switch self {
-        case .contactSupport:
-            return "contactSupport"
-        case .privacyPolicy:
-            return "privacyPolicy"
-        }
-    }
-}

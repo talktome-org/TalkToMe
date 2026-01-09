@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct MarkdownRendererView: View {
-
     let markdown: String
 
     private let dividerTopSpacing: CGFloat = 30

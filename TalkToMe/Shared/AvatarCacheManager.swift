@@ -4,10 +4,10 @@ import UIKit
 
 @MainActor
 class AvatarCacheManager: ObservableObject {
-
     @Published var cachedAvatars: [String: UIImage] = [:]
 
     private let memoryCache = NSCache<NSString, UIImage>()
+
     nonisolated private let urlSession: URLSession
     nonisolated static let shared = AvatarCacheManager()
 
