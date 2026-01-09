@@ -8,8 +8,8 @@
 import SwiftUI
 
 struct MainAppView: View {
-    @EnvironmentObject private var navigationViewModel: SidebarNavigationViewModel
     @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
+
     @StateObject private var onboardingVM = OnboardingViewModel()
 
     var body: some View {

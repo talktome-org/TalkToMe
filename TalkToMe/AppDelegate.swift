@@ -2,10 +2,8 @@ import Foundation
 import UIKit
 import UserNotifications
 
-// AppDelegate to handle push notification callbacks
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
-        // Ensure notification delegate is set as early as possible so taps from terminated state are delivered
         UNUserNotificationCenter.current().delegate = PushNotificationManager.shared
         return true
     }

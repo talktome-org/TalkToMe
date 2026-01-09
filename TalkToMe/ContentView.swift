@@ -9,8 +9,6 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject private var authService = AuthService.shared
-    @EnvironmentObject private var navigationViewModel: SidebarNavigationViewModel
-    @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
 
     var body: some View {
         ZStack {

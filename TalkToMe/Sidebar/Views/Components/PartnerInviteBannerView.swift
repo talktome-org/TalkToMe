@@ -8,7 +8,6 @@ struct PartnerInviteBannerView: View {
     @State private var copied: Bool = false
 
     private var accentGradient: LinearGradient {
-        // Soft two-tone purple accent used primarily for the badge
         LinearGradient(
             colors: [
                 Color(red: 0.84, green: 0.66, blue: 1.00),
@@ -128,7 +127,6 @@ struct PartnerInviteBannerView: View {
             }
         )
         .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.18 : 0.08), radius: 14, x: 0, y: 8)
-        // Removed auto ensure on appear; invite is prepared during app bootstrap loading.
     }
 
     @ViewBuilder
