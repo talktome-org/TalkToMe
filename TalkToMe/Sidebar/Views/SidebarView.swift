@@ -234,6 +234,7 @@ struct SidebarView: View {
                                 .font(.system(size: 18, weight: .semibold))
                                 .foregroundStyle(.primary)
                                 .frame(width: 44, height: 44)
+                                .offset(y: -1.5)
                                 .background {
                                     if #available(iOS 26.0, *) {
                                         Circle()
