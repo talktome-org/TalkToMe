@@ -12,6 +12,7 @@ struct ChatScreenView: View {
     @State private var inputBarHeight: CGFloat = 0
     @State private var suggestionsHeight: CGFloat = 0
     @State private var bottomSafeInset: CGFloat = 0
+    @State private var keyboardOverlap: CGFloat = 0
     @State private var showSuggestionsDelayed: Bool = false
     @State private var suggestionsDelayWorkItem: DispatchWorkItem?
     @State private var isMediaPanelVisible: Bool = false
@@ -47,8 +48,14 @@ struct ChatScreenView: View {
             if Self.cachedKeyboardHeight > 0 { return Self.cachedKeyboardHeight }
             return mediaPanelFallbackHeight
         }()
-        let mediaPanelHeight: CGFloat = isMediaPanelVisible ? keyboardExactHeight : 0
+        // While the keyboard is still on-screen, SwiftUI already reserves `keyboardOverlap` via safe-area.
+        // Only reserve the *additional* height that becomes visible as the keyboard slides away.
+        let mediaPanelHeight: CGFloat = isMediaPanelVisible ? max(0, keyboardExactHeight - keyboardOverlap) : 0
         let extraBottomInset: CGFloat = isMediaPanelVisible ? 0 : bottomSafeInset
+        // While the keyboard is animating away, SwiftUI moves the whole overlay down to the bottom,
+        // then the media panel pushes it back up (causing the "down then up" jump).
+        // Offsetting by the current keyboard overlap keeps the overlay visually locked in place.
+        let overlayKeyboardOffset: CGFloat = isMediaPanelVisible ? keyboardOverlap : 0
 
         VStack(spacing: 0) {
             MessagesListView(
@@ -142,6 +149,7 @@ struct ChatScreenView: View {
                 }
             }
             .ignoresSafeArea(edges: .bottom)
+            .offset(y: overlayKeyboardOffset)
         }
         .overlay {
             if chatViewModel.isLoadingHistory && chatViewModel.messages.isEmpty {
@@ -206,6 +214,23 @@ struct ChatScreenView: View {
                   let window = windowScene.windows.first(where: { $0.isKeyWindow }) else { return }
             let endFrameInWindow = window.convert(frame, from: nil)
             let overlap = max(0, window.bounds.maxY - endFrameInWindow.minY)
+
+            let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+            let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int) ?? UIView.AnimationCurve.easeInOut.rawValue
+            let curve = UIView.AnimationCurve(rawValue: curveRaw) ?? .easeInOut
+            let animation: Animation = {
+                switch curve {
+                case .easeInOut: return .easeInOut(duration: duration)
+                case .easeIn: return .easeIn(duration: duration)
+                case .easeOut: return .easeOut(duration: duration)
+                case .linear: return .linear(duration: duration)
+                @unknown default: return .easeInOut(duration: duration)
+                }
+            }()
+
+            withAnimation(animation) {
+                keyboardOverlap = overlap
+            }
             if overlap > 0 {
                 lastNonZeroKeyboardHeight = overlap
                 Self.cachedKeyboardHeight = overlap

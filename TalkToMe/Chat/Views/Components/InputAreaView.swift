@@ -100,10 +100,10 @@ struct InputAreaView: View {
                 isInputFocused.wrappedValue = true
             } else {
                 // Switch to media panel
-                isInputFocused.wrappedValue = false
                 withAnimation(.easeInOut(duration: 0.22)) {
                     isMediaPanelVisible = true
                 }
+                isInputFocused.wrappedValue = false
             }
         }) {
             ZStack {
