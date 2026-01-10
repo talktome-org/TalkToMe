@@ -30,7 +30,29 @@ struct BackendService {
         case error(String)
     }
 
-    func streamChatMessage(_ message: String, sessionId: UUID?, chatHistory: [ChatHistoryMessage]?, accessToken: String, focusSnippet: String? = nil, previousResponseId: String? = nil) -> AsyncStream<StreamEvent> {
+    struct ChatAttachment: Codable, Equatable {
+        let type: String
+        let path: String
+        let filename: String?
+        let contentType: String?
+
+        enum CodingKeys: String, CodingKey {
+            case type
+            case path
+            case filename
+            case contentType = "content_type"
+        }
+    }
+
+    func streamChatMessage(
+        _ message: String,
+        sessionId: UUID?,
+        chatHistory: [ChatHistoryMessage]?,
+        attachments: [ChatAttachment]? = nil,
+        accessToken: String,
+        focusSnippet: String? = nil,
+        previousResponseId: String? = nil
+    ) -> AsyncStream<StreamEvent> {
         var request = URLRequest(url: baseURL
             .appendingPathComponent("chat")
             .appendingPathComponent("sessions")
@@ -40,7 +62,13 @@ struct BackendService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        let payload = ChatRequestBody(message: message, session_id: sessionId, chat_history: chatHistory, previous_response_id: previousResponseId)
+        let payload = ChatRequestBody(
+            message: message,
+            session_id: sessionId,
+            chat_history: chatHistory,
+            previous_response_id: previousResponseId,
+            attachments: attachments
+        )
         request.httpBody = try? jsonEncoder.encode(payload)
 
         return SSEService.shared.stream(request: request)
@@ -320,6 +348,7 @@ private struct ChatRequestBody: Codable {
     let session_id: UUID?
     let chat_history: [ChatHistoryMessage]?
     let previous_response_id: String?
+    let attachments: [BackendService.ChatAttachment]?
 }
 
 private struct ChatResponseBody: Codable {
@@ -397,6 +426,37 @@ extension BackendService {
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
         body.append("Content-Type: \(contentType)\r\n\r\n".data(using: .utf8)!)
         body.append(imageData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        request.httpBody = body
+
+        let (data, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw NSError(domain: "Backend", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response from server"])
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let serverMessage = decodeSimpleDetail(from: data) ?? String(data: data, encoding: .utf8) ?? "Unknown server error"
+            throw NSError(domain: "Backend", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: serverMessage])
+        }
+        struct UploadRes: Codable { let path: String?; let url: String? }
+        let decoded = try jsonDecoder.decode(UploadRes.self, from: data)
+        return (decoded.path ?? "", decoded.url)
+    }
+
+    func uploadChatAttachment(fileData: Data, filename: String, contentType: String, accessToken: String) async throws -> (path: String, url: String?) {
+        let url = baseURL
+            .appendingPathComponent("chat")
+            .appendingPathComponent("attachments")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        let boundary = "Boundary-\(UUID().uuidString)"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: \(contentType)\r\n\r\n".data(using: .utf8)!)
+        body.append(fileData)
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
         request.httpBody = body
 

@@ -10,6 +10,7 @@ class ChatViewModel: ObservableObject {
     @Published var messages: [ChatMessage] = []
     @Published var inputText: String = ""
     @Published var focusSnippet: String? = nil
+    @Published var pendingAttachments: [PendingAttachment] = []
     @Published var focusTopMessageId: UUID? = nil
     @Published var assistantScrollTargetId: UUID? = nil
     @Published var streamingScrollToken: Int = 0
@@ -141,15 +142,34 @@ class ChatViewModel: ObservableObject {
     }
 
     func sendMessage() {
-        guard !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let trimmedMessage = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let attachmentsToSend = pendingAttachments
+        guard !(trimmedMessage.isEmpty && attachmentsToSend.isEmpty) else { return }
         guard !isStreaming else { return }
 
-        let trimmedMessage = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let userMessage = ChatMessage.text(trimmedMessage, isFromUser: true)
+        var userSegments: [MessageSegment] = []
+        if !trimmedMessage.isEmpty {
+            userSegments.append(.text(trimmedMessage))
+        }
+        for att in attachmentsToSend {
+            switch att.kind {
+            case .image(let data, _):
+                userSegments.append(.imageData(data))
+            case .file(let data, let filename, _):
+                userSegments.append(.fileData(name: filename, data: data))
+            }
+        }
+
+        let userMessage = ChatMessage(segments: userSegments, isFromUser: true)
         messages.append(userMessage)
 
-        let messageToSend = trimmedMessage
+        let messageToSend: String = {
+            if !trimmedMessage.isEmpty { return trimmedMessage }
+            if attachmentsToSend.contains(where: { $0.isImage }) { return "User sent a photo." }
+            return "User sent an attachment."
+        }()
         inputText = ""
+        pendingAttachments = []
         isLoading = true
         isAssistantTyping = false
         receivedAnyAssistantOutput = false
@@ -185,6 +205,16 @@ class ChatViewModel: ObservableObject {
                 print("ACCESS_TOKEN: <nil>")
                 return
             }
+
+            // If we're sending attachments (or this is a brand new chat), we need a session ID before streaming.
+            if self.sessionId == nil || !attachmentsToSend.isEmpty {
+                _ = await self.ensureSessionId()
+                if let sid = self.sessionId {
+                    await MainActor.run {
+                        self.assistantMessageIdBySession[sid] = placeholderMessage.id
+                    }
+                }
+            }
             await MainActor.run { self.isStreaming = true }
             await MainActor.run { if let sid = self.sessionId { self.currentStreamingSessionId = sid } }
             let bgName = await MainActor.run { "chat_stream_" + (self.sessionId?.uuidString ?? "unknown") }
@@ -200,22 +230,65 @@ class ChatViewModel: ObservableObject {
                 }
             }
             print("[ChatVM] stream starting (manager); sessionId=\(String(describing: self.sessionId)) messagesCount=\(self.messages.count)")
-            if self.sessionId == nil {
-                do {
-                    let dto = try await self.backend.createEmptySession(accessToken: accessToken)
-                    await MainActor.run {
-                        self.sessionId = dto.id
-                        let currentTime = ISO8601DateFormatter().string(from: Date())
-                        NotificationCenter.default.post(name: .chatSessionCreated, object: nil, userInfo: [
-                            "sessionId": dto.id,
-                            "title": ChatSession.defaultTitle,
-                            "lastUsedISO8601": currentTime,
-                            "lastMessageContent": messageToSend
-                        ])
+
+            var uploaded: [BackendService.ChatAttachment] = []
+            if !attachmentsToSend.isEmpty {
+                for att in attachmentsToSend {
+                    let data: Data
+                    let filename: String
+                    let contentType: String
+                    let type: String
+                    switch att.kind {
+                    case .image(let d, let ct):
+                        data = d
+                        contentType = ct
+                        let ext: String = {
+                            if ct == "image/png" { return "png" }
+                            if ct == "image/webp" { return "webp" }
+                            return "jpg"
+                        }()
+                        filename = "image.\(ext)"
+                        type = "image"
+                    case .file(let d, let name, let ct):
+                        data = d
+                        contentType = ct
+                        filename = name
+                        type = "file"
                     }
-                    print("[ChatVM] Pre-created personal session id=\(dto.id) before streaming send")
-                } catch {
-                    print("[ChatVM] Failed to pre-create session: \(error)")
+
+                    do {
+                        let res = try await self.backend.uploadChatAttachment(
+                            fileData: data,
+                            filename: filename,
+                            contentType: contentType,
+                            accessToken: accessToken
+                        )
+                        uploaded.append(
+                            BackendService.ChatAttachment(
+                                type: type,
+                                path: res.path,
+                                filename: filename,
+                                contentType: contentType
+                            )
+                        )
+                    } catch {
+                        print("[ChatVM] Attachment upload failed: \(error)")
+                        await MainActor.run {
+                            if !self.messages.isEmpty {
+                                self.messages[self.messages.count - 1] = ChatMessage.text(
+                                    "Error: Failed to upload attachment.",
+                                    isFromUser: false
+                                )
+                            }
+                            self.isLoading = false
+                            self.isAssistantTyping = false
+                            self.isStreaming = false
+                            self.currentStreamingSessionId = nil
+                            self.updateCacheForCurrentSession()
+                        }
+                        BackgroundTaskManager.shared.end(bgTask)
+                        return
+                    }
                 }
             }
 
@@ -248,6 +321,7 @@ class ChatViewModel: ObservableObject {
                     message: messageToSend,
                     sessionId: self.sessionId,
                     chatHistory: Array(chatHistory),
+                    attachments: uploaded.isEmpty ? nil : uploaded,
                     accessToken: accessToken,
                     focusSnippet: self.focusSnippet,
                     previousResponseId: prevId

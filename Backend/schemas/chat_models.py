@@ -11,11 +11,19 @@ class ChatHistoryMessage(BaseModel):
     content: str
 
 
+class ChatAttachment(BaseModel):
+    type: str  # "image" | "file"
+    path: str
+    filename: Optional[str] = None
+    content_type: Optional[str] = None
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[UUID] = None
     chat_history: Optional[list[ChatHistoryMessage]] = None
     previous_response_id: Optional[str] = None
+    attachments: Optional[list[ChatAttachment]] = None
 
 
 class ChatResponse(BaseModel):

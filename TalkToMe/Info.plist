@@ -23,6 +23,10 @@
 	<string>This app uses the microphone to record your voice for composing messages.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>This app uses speech recognition to transcribe your voice into text.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>TalkToMe uses the camera so you can take photos to include in your messages.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>TalkToMe uses your photo library so you can pick photos to include in your messages.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>TalkToMe uses your contacts so you can invite friends to connect with you.</string>
 </dict>

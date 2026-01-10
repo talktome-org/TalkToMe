@@ -4,6 +4,10 @@ enum MessageSegment: Equatable {
     case text(String)
     case partnerMessage(String)
     case partnerReceived(String)
+    case imageData(Data)
+    case imageURL(String)
+    case fileData(name: String, data: Data)
+    case fileURL(name: String, url: String)
 }
 
 struct ChatMessage: Identifiable {
@@ -95,6 +99,17 @@ struct ChatMessage: Identifiable {
                         if t == "text" {
                             let c = (dict["content"] as? String) ?? ""
                             if !c.isEmpty { segs.append(.text(c)) }
+                        } else if t == "image" {
+                            let url = (dict["url"] as? String) ?? ""
+                            if !url.isEmpty {
+                                segs.append(.imageURL(url))
+                            }
+                        } else if t == "file" {
+                            let name = (dict["filename"] as? String) ?? "File"
+                            let url = (dict["url"] as? String) ?? ""
+                            if !url.isEmpty {
+                                segs.append(.fileURL(name: name, url: url))
+                            }
                         } else if t == "partner_draft" {
                             let txt = (dict["text"] as? String) ?? ""
                             if !txt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

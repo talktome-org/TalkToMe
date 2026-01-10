@@ -66,6 +66,7 @@ struct SlideOutSidebarContainerView<Content: View>: View {
                         containerViewModel.handleDragChanged(
                             dx: value.translation.width,
                             dy: value.translation.height,
+                            startX: value.startLocation.x,
                             width: width,
                             navigationViewModel: navigationViewModel
                         )
@@ -75,6 +76,7 @@ struct SlideOutSidebarContainerView<Content: View>: View {
                             dx: value.translation.width,
                             dy: value.translation.height,
                             velocityX: value.velocity.width,
+                            startX: value.startLocation.x,
                             width: width,
                             navigationViewModel: navigationViewModel
                         )

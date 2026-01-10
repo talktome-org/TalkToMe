@@ -3,7 +3,7 @@ import traceback
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 from starlette.concurrency import iterate_in_threadpool
@@ -28,11 +28,100 @@ from ...crud.session_repo import (
 from ...schemas.chat_models import ChatRequest, MessageDTO, MessagesResponse, SessionDTO, SessionsResponse
 from ...services.ai.chat_service import ChatService
 from ...services.ai.chat_title_service import ChatTitleService
+from ...db.supabase_client import supabase
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 chat_service = ChatService()
 chat_title_service = ChatTitleService()
+
+def _inject_signed_urls_into_content(content: str) -> str:
+    try:
+        obj = json.loads(content or "")
+        if not isinstance(obj, dict):
+            return content
+        talktome = obj.get("_talktome")
+        if isinstance(talktome, str):
+            try:
+                talktome = json.loads(talktome)
+            except Exception:
+                talktome = None
+        if not isinstance(talktome, dict):
+            return content
+        if talktome.get("type") != "segments":
+            return content
+        segments = talktome.get("segments")
+        if not isinstance(segments, list):
+            return content
+        changed = False
+        for seg in segments:
+            if not isinstance(seg, dict):
+                continue
+            if seg.get("type") not in ("image", "file"):
+                continue
+            path_value = seg.get("path")
+            if not isinstance(path_value, str) or "/" not in path_value:
+                continue
+            bucket, key = path_value.split("/", 1)
+            try:
+                signed = supabase.storage.from_(bucket).create_signed_url(key, 60 * 60 * 24 * 7)
+                url_value = signed.get("signedURL") if isinstance(signed, dict) else None
+                if url_value:
+                    seg["url"] = url_value
+                    changed = True
+            except Exception:
+                continue
+        if not changed:
+            return content
+        obj["_talktome"] = talktome
+        return json.dumps(obj, ensure_ascii=False)
+    except Exception:
+        return content
+
+
+@router.post("/attachments")
+async def upload_chat_attachment(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    try:
+        try:
+            user_id = uuid.UUID(current_user.get("sub"))
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid user ID in token")
+
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="Empty upload")
+
+        content_type = file.content_type or "application/octet-stream"
+        name = (file.filename or "upload").strip()
+        ext = ""
+        if "." in name:
+            ext = "." + name.split(".")[-1].lower()
+        if not ext:
+            if content_type == "image/jpeg":
+                ext = ".jpg"
+            elif content_type == "image/png":
+                ext = ".png"
+            elif content_type == "image/webp":
+                ext = ".webp"
+
+        key = f"{user_id}/{uuid.uuid4().hex}{ext}"
+        bucket = "chat_attachments"
+        res = supabase.storage.from_(bucket).upload(
+            path=key,
+            file=data,
+            file_options={"contentType": content_type, "upsert": "false"},
+        )
+        if getattr(res, "error", None):
+            raise HTTPException(status_code=500, detail=f"Storage upload failed: {res.error}")
+
+        path_value = f"{bucket}/{key}"
+        signed = supabase.storage.from_(bucket).create_signed_url(key, 60 * 60 * 24 * 7)
+        url_value = signed.get("signedURL") if isinstance(signed, dict) else None
+        return {"path": path_value, "url": url_value}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/sessions/message/stream")
@@ -53,8 +142,46 @@ async def chat_message_stream(request: ChatRequest, current_user: dict = Depends
             session_row = await create_session(user_id=user_uuid, title=None)
             session_uuid = uuid.UUID(session_row["id"])
 
-        await save_message(user_id=user_uuid, session_id=session_uuid, role="user", content=request.message)
-        await update_session_last_message(session_id=session_uuid, content=request.message)
+        store_as_segments = bool(request.attachments)
+        if store_as_segments:
+            segs = []
+            msg = (request.message or "").strip()
+            if msg:
+                segs.append({"type": "text", "content": msg})
+            for a in request.attachments or []:
+                try:
+                    t = getattr(a, "type", None) or (a.get("type") if isinstance(a, dict) else None)
+                    p = getattr(a, "path", None) or (a.get("path") if isinstance(a, dict) else None)
+                    fn = getattr(a, "filename", None) or (a.get("filename") if isinstance(a, dict) else None)
+                    ct = getattr(a, "content_type", None) or (a.get("content_type") if isinstance(a, dict) else None)
+                    if not t or not p:
+                        continue
+                    seg_obj = {"type": t, "path": p}
+                    if fn:
+                        seg_obj["filename"] = fn
+                    if ct:
+                        seg_obj["content_type"] = ct
+                    segs.append(seg_obj)
+                except Exception:
+                    continue
+            content_to_store = json.dumps({"_talktome": {"type": "segments", "segments": segs}}, ensure_ascii=False)
+        else:
+            content_to_store = request.message
+
+        await save_message(user_id=user_uuid, session_id=session_uuid, role="user", content=content_to_store)
+        last_preview = (request.message or "").strip()
+        if not last_preview and request.attachments:
+            has_image = False
+            try:
+                for a in request.attachments or []:
+                    t = getattr(a, "type", None) or (a.get("type") if isinstance(a, dict) else None)
+                    if t == "image":
+                        has_image = True
+                        break
+            except Exception:
+                has_image = False
+            last_preview = "Sent a photo." if has_image else "Sent an attachment."
+        await update_session_last_message(session_id=session_uuid, content=last_preview)
         user_message_count = await count_user_messages(session_id=session_uuid)
 
         if user_message_count in (1, 2):
@@ -397,7 +524,7 @@ async def get_messages(session_id: uuid.UUID, current_user: dict = Depends(get_c
                 user_id=uuid.UUID(r["user_id"]),
                 session_id=uuid.UUID(r["session_id"]),
                 role=r["role"],
-                content=r["content"],
+                content=_inject_signed_urls_into_content(r["content"]),
             )
             for r in rows
         ]

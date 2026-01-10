@@ -12,6 +12,7 @@ final class ChatStreamManager {
         let message: String
         let sessionId: UUID?
         let chatHistory: [ChatHistoryMessage]?
+        let attachments: [BackendService.ChatAttachment]?
         let accessToken: String
         let focusSnippet: String?
         let previousResponseId: String?
@@ -30,6 +31,7 @@ final class ChatStreamManager {
                 params.message,
                 sessionId: params.sessionId,
                 chatHistory: params.chatHistory,
+                attachments: params.attachments,
                 accessToken: params.accessToken,
                 focusSnippet: params.focusSnippet,
                 previousResponseId: params.previousResponseId

@@ -5,11 +5,17 @@ struct ChatScreenView: View {
 
     @ObservedObject var chatViewModel: ChatViewModel
 
+    // Cache the last known keyboard height across ChatScreenView instances.
+    // This fixes the "panel too short" case when opening a chat and tapping + before the keyboard is shown.
+    private static var cachedKeyboardHeight: CGFloat = 0
+
     @State private var inputBarHeight: CGFloat = 0
     @State private var suggestionsHeight: CGFloat = 0
     @State private var bottomSafeInset: CGFloat = 0
     @State private var showSuggestionsDelayed: Bool = false
     @State private var suggestionsDelayWorkItem: DispatchWorkItem?
+    @State private var isMediaPanelVisible: Bool = false
+    @State private var lastNonZeroKeyboardHeight: CGFloat = 0
 
     let isInputFocused: FocusState<Bool>.Binding
 
@@ -32,9 +38,19 @@ struct ChatScreenView: View {
 
     var body: some View {
         let canShowSuggestions = isNewChatReadyForSuggestions && showSuggestionsDelayed
+        // MARK: - Media panel sizing (keyboard-exact)
+        // There is no fixed keyboard height constant (it varies). We reuse the last measured keyboard overlap height.
+        // If the keyboard hasn't been shown yet, we fall back to a reasonable default.
+        let mediaPanelFallbackHeight: CGFloat = 290
+        let keyboardExactHeight: CGFloat = {
+            if lastNonZeroKeyboardHeight > 0 { return lastNonZeroKeyboardHeight }
+            if Self.cachedKeyboardHeight > 0 { return Self.cachedKeyboardHeight }
+            return mediaPanelFallbackHeight
+        }()
+        let mediaPanelHeight: CGFloat = isMediaPanelVisible ? keyboardExactHeight : 0
+        let extraBottomInset: CGFloat = isMediaPanelVisible ? 0 : bottomSafeInset
 
         VStack(spacing: 0) {
-
             MessagesListView(
                 chatViewModel: chatViewModel,
                 messages: chatViewModel.messages,
@@ -48,7 +64,10 @@ struct ChatScreenView: View {
             }
             .padding(
                 .bottom,
-                inputBarHeight + (canShowSuggestions ? suggestionsHeight : 0) + bottomSafeInset
+                inputBarHeight
+                    + (canShowSuggestions ? suggestionsHeight : 0)
+                    + mediaPanelHeight
+                    + extraBottomInset
             )
             .contentShape(Rectangle())
             .onTapGesture {
@@ -85,6 +104,11 @@ struct ChatScreenView: View {
                     inputText: $chatViewModel.inputText,
                     isLoading: $chatViewModel.isLoading,
                     focusSnippet: $chatViewModel.focusSnippet,
+                    pendingAttachments: Binding(
+                        get: { chatViewModel.pendingAttachments },
+                        set: { chatViewModel.pendingAttachments = $0 }
+                    ),
+                    isMediaPanelVisible: $isMediaPanelVisible,
                     isInputFocused: isInputFocused,
                     send: { chatViewModel.sendMessage() },
                     stop: { chatViewModel.stopGeneration() },
@@ -96,6 +120,26 @@ struct ChatScreenView: View {
                     }
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
+
+                if isMediaPanelVisible {
+                    MediaPickerPanelView(
+                        attachments: Binding(
+                            get: { chatViewModel.pendingAttachments },
+                            set: { chatViewModel.pendingAttachments = $0 }
+                        ),
+                        height: keyboardExactHeight,
+                        horizontalPadding: -1,
+                        cornerRadius: 28
+                    )
+                    // Push the panel down into the home-indicator area WITHOUT changing the visible gap
+                    // between the input bar and the panel.
+                    .padding(.top, -(bottomSafeInset + 1))
+                    .offset(y: bottomSafeInset + 1)
+                    .ignoresSafeArea(edges: .horizontal)
+                    .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    Color.clear.frame(height: 0)
+                }
             }
             .ignoresSafeArea(edges: .bottom)
         }
@@ -130,10 +174,20 @@ struct ChatScreenView: View {
         }
         .onAppear {
             bottomSafeInset = currentBottomSafeInset()
+            if lastNonZeroKeyboardHeight == 0, Self.cachedKeyboardHeight > 0 {
+                lastNonZeroKeyboardHeight = Self.cachedKeyboardHeight
+            }
             if isNewChatReadyForSuggestions {
                 scheduleSuggestionsDelay()
             } else {
                 showSuggestionsDelayed = false
+            }
+        }
+        .onChange(of: isInputFocused.wrappedValue, initial: false) { _, focused in
+            if focused && isMediaPanelVisible {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.92)) {
+                    isMediaPanelVisible = false
+                }
             }
         }
         .onChange(of: isNewChatReadyForSuggestions, initial: false) { _, ready in
@@ -144,6 +198,17 @@ struct ChatScreenView: View {
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.95)) {
                     showSuggestionsDelayed = false
                 }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+            guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                  let window = windowScene.windows.first(where: { $0.isKeyWindow }) else { return }
+            let endFrameInWindow = window.convert(frame, from: nil)
+            let overlap = max(0, window.bounds.maxY - endFrameInWindow.minY)
+            if overlap > 0 {
+                lastNonZeroKeyboardHeight = overlap
+                Self.cachedKeyboardHeight = overlap
             }
         }
     }
