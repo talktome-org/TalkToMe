@@ -2,7 +2,6 @@ import Foundation
 import SwiftUI
 import UIKit
 import Combine
-import Supabase
 
 @MainActor
 class ChatViewModel: ObservableObject {
@@ -42,6 +41,12 @@ class ChatViewModel: ObservableObject {
     private var refreshTimer: Timer?
     private var cancellables: Set<AnyCancellable> = []
 
+    private nonisolated func debugLog(_ message: @autoclosure () -> String) {
+#if DEBUG
+        print(message())
+#endif
+    }
+
     init(sessionId: UUID? = nil) {
         self.sessionId = sessionId
         self.chatMessagesVM = ChatMessagesViewModel(sessionId: sessionId)
@@ -77,9 +82,9 @@ class ChatViewModel: ObservableObject {
                 guard let self = self else { return }
                 guard let notificationSessionId = note.userInfo?["sessionId"] as? UUID else { return }
                 let currentSessionId = self.sessionId
-                print("[ChatVM] Received partnerMessageReceived for session \(notificationSessionId), current session: \(String(describing: currentSessionId))")
+                self.debugLog("[ChatVM] Received partnerMessageReceived for session \(notificationSessionId), current session: \(String(describing: currentSessionId))")
                 if notificationSessionId == currentSessionId {
-                    print("[ChatVM] Refreshing messages for partner message in session \(notificationSessionId)")
+                    self.debugLog("[ChatVM] Refreshing messages for partner message in session \(notificationSessionId)")
                     await self.loadHistory(force: true)
                 }
             }
@@ -109,7 +114,7 @@ class ChatViewModel: ObservableObject {
             }
             return dto.id
         } catch {
-            print("[ChatVM] ensureSessionId failed: \(error)")
+            self.debugLog("[ChatVM] ensureSessionId failed: \(error)")
             return nil
         }
     }
@@ -198,11 +203,10 @@ class ChatViewModel: ObservableObject {
         }
 		updateCacheForCurrentSession()
 
-        let _ = (self.sessionId == nil)
         Task { [weak self] in
             guard let self = self else { return }
             guard let accessToken = await authService.getAccessToken() else {
-                print("ACCESS_TOKEN: <nil>")
+                self.debugLog("[ChatVM] ACCESS_TOKEN: <nil>")
                 return
             }
 
@@ -229,7 +233,7 @@ class ChatViewModel: ObservableObject {
                     self.updateCacheForCurrentSession()
                 }
             }
-            print("[ChatVM] stream starting (manager); sessionId=\(String(describing: self.sessionId)) messagesCount=\(self.messages.count)")
+            self.debugLog("[ChatVM] stream starting (manager); sessionId=\(String(describing: self.sessionId)) messagesCount=\(self.messages.count)")
 
             var uploaded: [BackendService.ChatAttachment] = []
             if !attachmentsToSend.isEmpty {
@@ -272,7 +276,7 @@ class ChatViewModel: ObservableObject {
                             )
                         )
                     } catch {
-                        print("[ChatVM] Attachment upload failed: \(error)")
+                        self.debugLog("[ChatVM] Attachment upload failed: \(error)")
                         await MainActor.run {
                             if !self.messages.isEmpty {
                                 self.messages[self.messages.count - 1] = ChatMessage.text(
@@ -386,11 +390,11 @@ class ChatViewModel: ObservableObject {
                                 newMessages[idx] = updated
                                 self.chatMessagesVM.setCachedMessages(newMessages, for: sid)
                             }
-                            print("[ChatVM] toolStart received; showing loader (manager)")
+                            self.debugLog("[ChatVM] toolStart received; showing loader (manager)")
                         }
                     case .toolArgs:
                         if !sawToolStart {
-                            print("[ChatVM] toolArgs before toolStart; loader may be delayed")
+                            self.debugLog("[ChatVM] toolArgs before toolStart; loader may be delayed")
                         }
                     case .toolDone:
                         Task { @MainActor in
@@ -440,7 +444,7 @@ class ChatViewModel: ObservableObject {
                                 newMessages[idx] = updated
                                 self.chatMessagesVM.setCachedMessages(newMessages, for: sid)
                             }
-                            print("[ChatVM] toolDone received; hiding loader (manager)")
+                            self.debugLog("[ChatVM] toolDone received; hiding loader (manager)")
                         }
                     case .session(let sid):
                         streamSessionId = sid
@@ -495,7 +499,7 @@ class ChatViewModel: ObservableObject {
                                 self.messages = newMessages
                                 if let id = self.currentAssistantMessageId { self.assistantScrollTargetId = id }
                                 self.streamingScrollToken &+= 1
-                                print("[ChatVM] token update length=\(accumulated.count)")
+                                self.debugLog("[ChatVM] token update length=\(accumulated.count)")
                             } else {
                                 var newMessages = self.chatMessagesVM.getCachedMessages(for: sid) ?? []
                                 let idx: Int = {
@@ -529,7 +533,7 @@ class ChatViewModel: ObservableObject {
                             }
                             sawPartnerMessage = true
                             currentSegments.append(.partnerMessage(text))
-                            print("[ChatVM] partner_message received len=\(text.count)")
+                            self.debugLog("[ChatVM] partner_message received len=\(text.count)")
                             if sid == self.sessionId {
                                 var newMessages = self.messages
                                 let idx: Int = {
@@ -553,7 +557,7 @@ class ChatViewModel: ObservableObject {
                                 self.messages = newMessages
                                 if let id = self.currentAssistantMessageId { self.assistantScrollTargetId = id }
                                 self.streamingScrollToken &+= 1
-                                print("[ChatVM] appended draft as segment; total segments=\(currentSegments.count)")
+                                self.debugLog("[ChatVM] appended draft as segment; total segments=\(currentSegments.count)")
                             } else {
                                 var newMessages = self.chatMessagesVM.getCachedMessages(for: sid) ?? []
                                 let idx: Int = {
@@ -577,7 +581,7 @@ class ChatViewModel: ObservableObject {
                             }
                         }
                     case .done:
-                        print("[ChatVM] stream done (manager); sawToolStart=\(sawToolStart) sawPartnerMessage=\(sawPartnerMessage) events=\(eventCounter)")
+                        self.debugLog("[ChatVM] stream done (manager); sawToolStart=\(sawToolStart) sawPartnerMessage=\(sawPartnerMessage) events=\(eventCounter)")
 
                         let targetSid = streamSessionId ?? self.sessionId
                         if let sid = targetSid, sid != self.sessionId {
@@ -664,7 +668,7 @@ class ChatViewModel: ObservableObject {
                 guard self.sessionId != nil else { return }
                 guard !self.isStreaming else { return }
 
-                print("[ChatVM] Polling for new partner messages...")
+                self.debugLog("[ChatVM] Polling for new partner messages...")
                 await self.loadHistory(force: true)
             }
         }
@@ -695,7 +699,7 @@ class ChatViewModel: ObservableObject {
                     case .token(_): break
                     case .done: return
                     case .error(let msg):
-                        print("[PartnerStream][iOS] error=\(msg)")
+                        self.debugLog("[PartnerStream][iOS] error=\(msg)")
                         return
                     case .session(_): break
                     case .partnerMessage(_): break

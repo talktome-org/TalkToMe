@@ -25,6 +25,14 @@ TalkToMe.xcodeproj
 **/xcuserdata/
 **/*.xcuserstate
 
+# Xcode build artifacts (very large, never needed in the image)
+build-*/
+DerivedData/
+*.xcarchive
+*.ipa
+*.dSYM
+*.dSYM.zip
+
 # Misc
 buildServer.json
 .vscode/

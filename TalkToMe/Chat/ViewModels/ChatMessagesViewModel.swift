@@ -15,6 +15,12 @@ final class ChatMessagesViewModel: ObservableObject {
     private let cacheFreshnessSeconds: TimeInterval = 300
     private static var sharedMessagesCache: [UUID: MessagesCacheEntry] = [:]
 
+    private func debugLog(_ message: @autoclosure () -> String) {
+#if DEBUG
+        print(message())
+#endif
+    }
+
     init(sessionId: UUID? = nil) {
         self.sessionId = sessionId
         if let sid = sessionId {
@@ -99,7 +105,7 @@ final class ChatMessagesViewModel: ObservableObject {
             if self.messages.isEmpty { self.isLoadingHistory = true }
 
             guard let accessToken = await AuthService.shared.getAccessToken() else {
-                print("ACCESS_TOKEN: <nil>")
+                debugLog("[ChatMessagesVM] ACCESS_TOKEN: <nil>")
                 self.isLoadingHistory = false
                 return
             }
@@ -132,7 +138,7 @@ final class ChatMessagesViewModel: ObservableObject {
             Self.sharedMessagesCache[sid] = MessagesCacheEntry(messages: mapped, lastLoaded: Date())
 
         } catch {
-            print("Failed to load history: \(error)")
+            debugLog("[ChatMessagesVM] Failed to load history: \(error)")
         }
         self.isLoadingHistory = false
     }

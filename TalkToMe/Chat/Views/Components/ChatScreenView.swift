@@ -5,10 +5,6 @@ struct ChatScreenView: View {
 
     @ObservedObject var chatViewModel: ChatViewModel
 
-    // Cache the last known keyboard height across ChatScreenView instances.
-    // This fixes the "panel too short" case when opening a chat and tapping + before the keyboard is shown.
-    private static var cachedKeyboardHeight: CGFloat = 0
-
     @State private var inputBarHeight: CGFloat = 0
     @State private var suggestionsHeight: CGFloat = 0
     @State private var bottomSafeInset: CGFloat = 0
@@ -17,6 +13,8 @@ struct ChatScreenView: View {
     @State private var suggestionsDelayWorkItem: DispatchWorkItem?
     @State private var isMediaPanelVisible: Bool = false
     @State private var lastNonZeroKeyboardHeight: CGFloat = 0
+
+    private static var cachedKeyboardHeight: CGFloat = 0
 
     let isInputFocused: FocusState<Bool>.Binding
 

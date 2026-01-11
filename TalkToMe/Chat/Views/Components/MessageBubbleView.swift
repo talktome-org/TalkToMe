@@ -119,9 +119,29 @@ struct MessageBubbleView: View {
 
     @ViewBuilder
     private func attachmentsView(segments: [MessageSegment], alignment: HorizontalAlignment) -> some View {
+        let isTrailing = (alignment == .trailing)
+
+        Group {
+            if segments.count == 1, let seg = segments.first {
+                // Special-case single attachment so it can be truly right/left aligned (ScrollView tends to "center-ish" single items).
+                attachmentView(seg)
+                    .frame(maxWidth: 320, alignment: isTrailing ? .trailing : .leading)
+            } else {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
                 ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
+                            attachmentView(seg)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .frame(maxWidth: 320, alignment: isTrailing ? .trailing : .leading)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func attachmentView(_ seg: MessageSegment) -> some View {
                     switch seg {
                     case .imageData(let data):
                         if let uiImage = UIImage(data: data) {
@@ -163,11 +183,6 @@ struct MessageBubbleView: View {
                     default:
                         EmptyView()
                     }
-                }
-            }
-            .padding(.vertical, 2)
-        }
-        .frame(maxWidth: 320, alignment: alignment == .trailing ? .trailing : .leading)
     }
 
     @ViewBuilder

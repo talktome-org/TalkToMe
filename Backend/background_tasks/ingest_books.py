@@ -1,25 +1,14 @@
-#!/usr/bin/env python3
-"""
-PDF/TXT -> text -> chunks -> embeddings -> Supabase
-
-Place files in Backend/books/ then run:
-python background_tasks/ingest_books.py --reingest
-"""
-
 import asyncio
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
-
 ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(dotenv_path=ROOT / ".env")
 
 sys.path.insert(0, str(ROOT))
 
-from services.documents.document_processor import DocumentProcessor
-from services.embeddings.embedding_service import EmbeddingService
-from crud.rag_repo import delete_chunks_by_source, insert_chunks_batch, upsert_document
+from Backend.services.document_service import DocumentProcessor
+from Backend.services.embedding_service import EmbeddingService
+from Backend.crud.books.rag_crud import delete_chunks_by_source, insert_chunks_batch, upsert_document
 
 
 async def ingest_books(
