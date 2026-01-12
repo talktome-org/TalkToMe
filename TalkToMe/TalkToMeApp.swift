@@ -82,47 +82,54 @@ struct TalkToMeApp: App {
                         }
                     }
                 }
-                .onChange(of: auth.isAuthenticated, initial: false) { _, isAuthed in
+                .onChange(of: auth.isAuthenticated, initial: true) { oldValue, isAuthed in
+                    // With `initial: true`, SwiftUI calls this once on first render.
+                    // We must NOT treat "initial false" as a logout event.
+                    let isInitialCallback = (oldValue == isAuthed)
+
                     if !isAuthed {
-                        // User logged out - reset session view model for fresh login
-                        sessionsViewModel.resetForLogout()
+                        if !isInitialCallback {
+                            // User logged out - reset session view model for fresh login
+                            sessionsViewModel.resetForLogout()
+                        }
+                        return
                     }
-                    if isAuthed, let token = linkVM.pendingInviteToken, !token.isEmpty {  // If user just signed in and we have a pending invite token, accept it
+
+                    if let token = linkVM.pendingInviteToken, !token.isEmpty {  // If user just signed in and we have a pending invite token, accept it
                         Task {
                             await linkVM.acceptInvite(using: token)
                             linkVM.pendingInviteToken = nil
                         }
                     }
-                    if isAuthed {
-                        Task {
-                            // Load all initial data in parallel
-                            await withTaskGroup(of: Void.self) { group in
-                                group.addTask {
-                                    await linkVM.ensureInviteReady()
+
+                    Task {
+                        // Load all initial data in parallel
+                        await withTaskGroup(of: Void.self) { group in
+                            group.addTask {
+                                await linkVM.ensureInviteReady()
+                            }
+                            group.addTask {
+                                await MainActor.run {
+                                    sessionsViewModel.startObserving()
                                 }
-                                group.addTask {
-                                    await MainActor.run {
-                                        sessionsViewModel.startObserving()
-                                    }
-                                    await sessionsViewModel.bootstrapInitialData()
-                                    // Ensure my avatar image is cached before dismissing loading screen
-                                    await sessionsViewModel.ensureProfilePictureCached()
-                                }
-                                group.addTask {
-                                    await MainActor.run {
-                                        settingsViewModel.loadProfileInfo()
-                                        settingsViewModel.preloadAvatar()
-                                    }
+                                await sessionsViewModel.bootstrapInitialData()
+                                // Ensure my avatar image is cached before dismissing loading screen
+                                await sessionsViewModel.ensureProfilePictureCached()
+                            }
+                            group.addTask {
+                                await MainActor.run {
+                                    settingsViewModel.loadProfileInfo()
+                                    settingsViewModel.preloadAvatar()
                                 }
                             }
-
-                            // All initial data loaded, hide loading screen
-                            auth.setInitialDataLoaded()
-
-                            // Handle push notifications
-                            PushNotificationManager.shared.tryUploadIfAuthenticated()
-                            PushNotificationManager.shared.consumePendingIfReady()
                         }
+
+                        // All initial data loaded, hide loading screen
+                        auth.setInitialDataLoaded()
+
+                        // Handle push notifications
+                        PushNotificationManager.shared.tryUploadIfAuthenticated()
+                        PushNotificationManager.shared.consumePendingIfReady()
                     }
                 }
                 .task {

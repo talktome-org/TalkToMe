@@ -13,7 +13,10 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             Group {
-                if authService.isAuthenticated {
+                if authService.isCheckingAuth {
+                    LoadingView()
+                        .transition(.opacity)
+                } else if authService.isAuthenticated {
                     if authService.isLoadingInitialData {
                         LoadingView()
                             .transition(.opacity)
@@ -31,6 +34,7 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 0.3), value: authService.isAuthenticated)
         .animation(.easeInOut(duration: 0.3), value: authService.isLoadingInitialData)
+        .animation(.easeInOut(duration: 0.3), value: authService.isCheckingAuth)
     }
 }
 

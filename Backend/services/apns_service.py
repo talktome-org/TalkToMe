@@ -12,7 +12,6 @@ from ..crud.apns.device_tokens_crud import disable_token_by_value, list_tokens_f
 
 _cached_jwt_token: Optional[str] = None
 _cached_jwt_exp: float = 0.0
-DAILY_CHECKIN_TITLE = "Check-In"
 
 
 def _load_apns_auth_key_pem() -> str:
@@ -155,27 +154,3 @@ async def send_partner_message_notification_to_user(
                 await disable_token_by_value(token=token_val)
         except Exception:
             continue
-
-
-async def send_daily_checkin_notification_to_user(*, recipient_user_id: uuid.UUID, body: str) -> None:
-    tokens = await list_tokens_for_user(user_id=recipient_user_id)
-    if not tokens:
-        return
-
-    aps = {"alert": {"title": DAILY_CHECKIN_TITLE, "body": body}, "sound": "default", "category": "DAILY_CHECKIN"}
-    payload = {"aps": aps, "kind": "daily_checkin"}
-
-    for t in tokens:
-        token_val = t.get("token") if isinstance(t, dict) else None
-        enabled = t.get("enabled", True) if isinstance(t, dict) else True
-        if not token_val or not enabled:
-            continue
-        try:
-            status, resp_text = await _post_apns(device_token=token_val, payload=payload)
-            if status != 200 and status in (400, 410) and (
-                "BadDeviceToken" in (resp_text or "") or "Unregistered" in (resp_text or "")
-            ):
-                await disable_token_by_value(token=token_val)
-        except Exception:
-            continue
-

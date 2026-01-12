@@ -4,7 +4,6 @@ import AuthenticationServices
 
 
 class AuthService: ObservableObject {
-
     static let shared = AuthService()
 
     let client: SupabaseClient
@@ -13,6 +12,7 @@ class AuthService: ObservableObject {
     @Published var isAuthenticated = false
     @Published var currentUser: User?
     @Published var isLoadingInitialData = false
+    @Published var isCheckingAuth = true
 
     private let redirectURL: URL
 
@@ -60,21 +60,25 @@ class AuthService: ObservableObject {
     }
 
     private func checkAuthStatus() {
+        Task { @MainActor in
+            self.isCheckingAuth = true
+        }
         Task {
             do {
                 let session = try await client.auth.session
                 await MainActor.run {
                     self.isAuthenticated = true
                     self.currentUser = session.user
-                    // Don't set loading state for existing sessions
-                    self.isLoadingInitialData = false
+                    // Show loading while app bootstraps initial data after restoring a session.
+                    self.isLoadingInitialData = true
+                    self.isCheckingAuth = false
                 }
-                await enableDailyCheckinsByDefaultIfFirstTime()
             } catch {
                 await MainActor.run {
                     self.isAuthenticated = false
                     self.currentUser = nil
                     self.isLoadingInitialData = false
+                    self.isCheckingAuth = false
                 }
             }
         }
@@ -90,7 +94,6 @@ class AuthService: ObservableObject {
                 self.isAuthenticated = true
                 self.currentUser = session.user
             }
-            await enableDailyCheckinsByDefaultIfFirstTime()
         } catch {
             let nsErr = error as NSError
             print("[Auth][Google] error domain: \(nsErr.domain), code: \(nsErr.code)")
@@ -112,7 +115,6 @@ class AuthService: ObservableObject {
                 self.isAuthenticated = true
                 self.currentUser = session.user
             }
-            await enableDailyCheckinsByDefaultIfFirstTime()
         } catch {
             let nsErr = error as NSError
             print("[Auth][Apple] error domain: \(nsErr.domain), code: \(nsErr.code)")
@@ -131,6 +133,8 @@ class AuthService: ObservableObject {
         await MainActor.run {
             self.isAuthenticated = false
             self.currentUser = nil
+            self.isLoadingInitialData = false
+            self.isCheckingAuth = false
         }
 
         // Best-effort: unregister current push token server-side to prevent further pushes after sign-out
@@ -143,12 +147,10 @@ class AuthService: ObservableObject {
             // ignore
         }
 
-        // Then perform the actual sign out
         do {
             try await client.auth.signOut()
         } catch {
             print("Sign out error: \(error)")
-            // If sign out fails, restore the auth state
             checkAuthStatus()
         }
     }
@@ -166,35 +168,6 @@ class AuthService: ObservableObject {
     func setInitialDataLoaded() {
         Task { @MainActor in
             self.isLoadingInitialData = false
-        }
-    }
-
-    // MARK: - Defaults
-    private func enableDailyCheckinsByDefaultIfFirstTime() async {
-        // Ensure timezone is set for daily check-ins (runs on every sign-in, but only updates if needed)
-        guard let token = await self.getAccessToken() else { return }
-        do {
-            // Check if timezone is already set in backend
-            let status = try await BackendService.shared.getDailyCheckins(accessToken: token)
-            if status.timezone == nil || status.timezone?.isEmpty == true {
-                // Timezone not set - save preferences with user's actual timezone
-                let tz = TimeZone.current.identifier
-                try await BackendService.shared.setDailyCheckins(
-                    enabled: true,
-                    hour: 17,
-                    minute: 00,
-                    timezone: tz,
-                    accessToken: token
-                )
-                UserDefaults.standard.set(true, forKey: PreferenceKeys.dailyCheckinsEnabled)
-                print("[Auth] Daily check-ins initialized: enabled=true, hour=17, tz=\(tz)")
-            } else {
-                // Already configured, just sync local state
-                UserDefaults.standard.set(status.enabled, forKey: PreferenceKeys.dailyCheckinsEnabled)
-                print("[Auth] Daily check-ins already configured: enabled=\(status.enabled), tz=\(status.timezone ?? "nil")")
-            }
-        } catch {
-            print("[Auth] Failed to initialize daily check-ins: \(error)")
         }
     }
 }
