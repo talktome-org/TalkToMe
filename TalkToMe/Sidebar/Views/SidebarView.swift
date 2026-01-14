@@ -10,6 +10,7 @@ struct SidebarView: View {
     @EnvironmentObject private var linkVM: LinkViewModel
     @ObservedObject private var authService = AuthService.shared
     @ObservedObject private var networkMonitor = NetworkMonitor.shared
+    @ObservedObject private var backendMonitor = BackendConnectionMonitor.shared
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -25,6 +26,7 @@ struct SidebarView: View {
     @State private var lastKnownOnline: Bool? = nil
     @State private var reconnectTask: Task<Void, Never>? = nil
     @State private var reconnectPhase: ReconnectPhase? = nil
+    @State private var lastBackendState: BackendConnectionMonitor.State? = nil
 
     let profileNamespace: Namespace.ID
 
@@ -365,6 +367,7 @@ struct SidebarView: View {
             .onAppear {
                 Task { await sessionsViewModel.ensureProfilePictureCached() }
                 lastKnownOnline = networkMonitor.isOnline
+                lastBackendState = backendMonitor.state
             }
             .onChange(of: networkMonitor.isOnline, initial: false) { _, online in
                 let wasOnline = lastKnownOnline
@@ -380,19 +383,29 @@ struct SidebarView: View {
                 // Only show Connecting/Updating when we *actually* transition from offline -> online.
                 guard wasOnline == false else { return }
 
+                // We only *display* Connecting here. The actual catch-up sync is triggered when the backend
+                // is confirmed reachable again (BackendConnectionMonitor: connecting -> connected).
                 reconnectTask?.cancel()
-                reconnectTask = Task { @MainActor in
-                    reconnectPhase = .connecting
-                    // Make "Connecting…" visible but only when it's real (after offline).
-                    try? await Task.sleep(nanoseconds: 200_000_000)
+                reconnectTask = nil
+                reconnectPhase = .connecting
 
-                    // After reconnect, reconcile local cache with server truth.
-                    reconnectPhase = .updating
-                    await sessionsViewModel.refreshSessions()
-                    await sessionsViewModel.loadPendingRequests()
-                    await sessionsViewModel.loadPartnerInfo()
+                // If the backend is already reachable immediately, run catch-up right away.
+                if backendMonitor.state == .connected {
+                    startCatchUpSync()
+                }
+            }
+            .onChange(of: backendMonitor.state, initial: false) { _, newState in
+                let old = lastBackendState
+                lastBackendState = newState
 
-                    reconnectPhase = nil
+                // If we're offline, SidebarStatus handles it already.
+                guard networkMonitor.isOnline else { return }
+                guard AuthService.shared.isAuthenticated else { return }
+
+                // When backend becomes reachable again after a "connecting" period (weak signal),
+                // run a catch-up sync, just like Telegram.
+                if old == .connecting && newState == .connected {
+                    startCatchUpSync()
                 }
             }
             .sheet(isPresented: $showRenameSheet) {
@@ -450,9 +463,32 @@ struct SidebarView: View {
         case updating
     }
 
+    private func startCatchUpSync() {
+        reconnectTask?.cancel()
+        reconnectTask = Task { @MainActor in
+            reconnectPhase = .updating
+            await AppSyncGate.shared.setSyncing(true)
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await sessionsViewModel.loadPartnerInfo(prefetchAvatars: false) }
+                group.addTask { await sessionsViewModel.loadPendingRequests() }
+                group.addTask { await sessionsViewModel.loadSessions(ensurePartnerInfo: false) }
+            }
+            await AppSyncGate.shared.setSyncing(false)
+            reconnectPhase = nil
+
+            // After sync finishes, do non-critical prefetch in the background.
+            Task { @MainActor in
+                await sessionsViewModel.loadPairedAvatars()
+                await sessionsViewModel.preloadAvatars()
+                await sessionsViewModel.ensureProfilePictureCached()
+            }
+        }
+    }
+
     private var sidebarStatus: SidebarStatus? {
         if networkMonitor.isOnline == false { return .offline }
         if authService.isCheckingAuth { return .connecting }
+        if backendMonitor.state == .connecting { return .connecting }
         if reconnectPhase == .connecting { return .connecting }
         // Only show Updating when we're doing an actual "sync/bootstrap".
         // Background refreshes shouldn't pin the status for a long time.

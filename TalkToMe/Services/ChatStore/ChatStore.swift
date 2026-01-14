@@ -204,7 +204,19 @@ final class ChatStore {
         return dir
     }
 
-    private func cacheAttachmentsIfNeeded(from dtos: [ChatMessageDTO]) async {
+    private func cacheAttachmentsIfNeeded(from dtos: [ChatMessageDTO], isRetry: Bool = false) async {
+        // During app "catch-up" sync, avoid competing with session/pending/partner fetches.
+        // We'll retry once shortly after syncing finishes.
+        if await AppSyncGate.shared.isSyncing() {
+            if !isRetry {
+                Task.detached { [dtos] in
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    await ChatStore.shared.cacheAttachmentsIfNeeded(from: dtos, isRetry: true)
+                }
+            }
+            return
+        }
+
         let extracted = dtos.flatMap { dto in
             extractRemoteAttachments(messageId: dto.id.uuidString, content: dto.content)
         }

@@ -169,7 +169,7 @@ class ChatSessionsViewModel: ObservableObject {
         return out.string(from: date)
     }
 
-    func loadSessions() async {
+    func loadSessions(ensurePartnerInfo: Bool = true) async {
         print("🔄 Loading sessions from backend...")
         do {
             await MainActor.run {
@@ -207,7 +207,7 @@ class ChatSessionsViewModel: ObservableObject {
                 }
             }
 
-            if self.partnerInfo == nil {
+            if ensurePartnerInfo, self.partnerInfo == nil {
                 await loadPartnerInfo()
             }
 
@@ -332,11 +332,13 @@ class ChatSessionsViewModel: ObservableObject {
         await MainActor.run { self.isBootstrapping = true }
 
         // Phase 1 (fast): get core data in place so the UI can update quickly.
+        await AppSyncGate.shared.setSyncing(true)
         await withTaskGroup(of: Void.self) { group in
-            group.addTask { await self.loadSessions() }
+            group.addTask { await self.loadSessions(ensurePartnerInfo: false) }
             group.addTask { await self.loadPendingRequests() }
-            group.addTask { await self.loadPartnerInfo() }
+            group.addTask { await self.loadPartnerInfo(prefetchAvatars: false) }
         }
+        await AppSyncGate.shared.setSyncing(false)
 
         await MainActor.run {
             self.isBootstrapping = false
@@ -371,7 +373,7 @@ class ChatSessionsViewModel: ObservableObject {
         }
     }
 
-    func loadPartnerInfo() async {
+    func loadPartnerInfo(prefetchAvatars: Bool = true) async {
         do {
             let session = try await AuthService.shared.client.auth.session
             let accessToken = session.accessToken
@@ -402,7 +404,7 @@ class ChatSessionsViewModel: ObservableObject {
                 }
 
             }
-            if res.linked, let url = res.partner?.avatar_url, !url.isEmpty {
+            if prefetchAvatars, res.linked, let url = res.partner?.avatar_url, !url.isEmpty {
                 await avatarCacheManager.preloadAvatars(urls: [url])
             }
             if res.linked {
