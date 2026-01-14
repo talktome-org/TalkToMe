@@ -8,6 +8,8 @@ struct SidebarView: View {
     @EnvironmentObject private var navigationViewModel: SidebarNavigationViewModel
     @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
     @EnvironmentObject private var linkVM: LinkViewModel
+    @ObservedObject private var authService = AuthService.shared
+    @ObservedObject private var networkMonitor = NetworkMonitor.shared
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -20,6 +22,9 @@ struct SidebarView: View {
     @State private var renameText: String = ""
     @State private var renameTargetId: UUID? = nil
     @State private var showAddFriendSheet: Bool = false
+    @State private var lastKnownOnline: Bool? = nil
+    @State private var reconnectTask: Task<Void, Never>? = nil
+    @State private var reconnectPhase: ReconnectPhase? = nil
 
     let profileNamespace: Namespace.ID
 
@@ -64,6 +69,9 @@ struct SidebarView: View {
                                     Text("Conversations")
                                         .font(.system(size: 14, weight: .semibold))
                                         .foregroundColor(.secondary)
+                                    if let status = sidebarStatus {
+                                        sidebarStatusView(status)
+                                    }
                                     Spacer()
                                     Button(action: {
                                         Haptics.impact(.light)
@@ -105,18 +113,6 @@ struct SidebarView: View {
                             }
 
                             LazyVStack(spacing: 6) {
-                                if term.isEmpty && sessionsViewModel.isLoadingSessions && !sessionsViewModel.sessions.isEmpty {
-                                    HStack(spacing: 10) {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                        Text("Updating…")
-                                            .font(.system(size: 13))
-                                            .foregroundStyle(.secondary)
-                                        Spacer()
-                                    }
-                                    .padding(.vertical, 6)
-                                }
-
                                 if term.isEmpty,
                                    let err = sessionsViewModel.sessionsLoadError,
                                    !err.isEmpty,
@@ -368,6 +364,36 @@ struct SidebarView: View {
             }
             .onAppear {
                 Task { await sessionsViewModel.ensureProfilePictureCached() }
+                lastKnownOnline = networkMonitor.isOnline
+            }
+            .onChange(of: networkMonitor.isOnline, initial: false) { _, online in
+                let wasOnline = lastKnownOnline
+                lastKnownOnline = online
+
+                if online == false {
+                    reconnectTask?.cancel()
+                    reconnectTask = nil
+                    reconnectPhase = nil
+                    return
+                }
+
+                // Only show Connecting/Updating when we *actually* transition from offline -> online.
+                guard wasOnline == false else { return }
+
+                reconnectTask?.cancel()
+                reconnectTask = Task { @MainActor in
+                    reconnectPhase = .connecting
+                    // Make "Connecting…" visible but only when it's real (after offline).
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+
+                    // After reconnect, reconcile local cache with server truth.
+                    reconnectPhase = .updating
+                    await sessionsViewModel.refreshSessions()
+                    await sessionsViewModel.loadPendingRequests()
+                    await sessionsViewModel.loadPartnerInfo()
+
+                    reconnectPhase = nil
+                }
             }
             .sheet(isPresented: $showRenameSheet) {
                 VStack(spacing: 16) {
@@ -411,6 +437,63 @@ struct SidebarView: View {
         let rawPreview = shouldShowLastMessage(session.lastMessageContent) ? (session.lastMessageContent ?? "") : "No messages yet"
         let clipped = wordBoundaryTruncated(rawPreview, previewTargetWidth)
         return clipped + (clipped.count < rawPreview.count ? "…" : "")
+    }
+
+    private enum SidebarStatus {
+        case offline
+        case connecting
+        case updating
+    }
+
+    private enum ReconnectPhase {
+        case connecting
+        case updating
+    }
+
+    private var sidebarStatus: SidebarStatus? {
+        if networkMonitor.isOnline == false { return .offline }
+        if authService.isCheckingAuth { return .connecting }
+        if reconnectPhase == .connecting { return .connecting }
+        // Only show Updating when we're doing an actual "sync/bootstrap".
+        // Background refreshes shouldn't pin the status for a long time.
+        if reconnectPhase == .updating { return .updating }
+        if sessionsViewModel.isBootstrapping { return .updating }
+        if sessionsViewModel.isLoadingSessions && sessionsViewModel.sessions.isEmpty { return .updating }
+        return nil
+    }
+
+    @ViewBuilder
+    private func sidebarStatusView(_ status: SidebarStatus) -> some View {
+        let pill = Capsule(style: .continuous)
+        HStack(spacing: 6) {
+            switch status {
+            case .offline:
+                Image(systemName: "wifi.slash")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text("Offline")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            case .connecting:
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Connecting…")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            case .updating:
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Updating…")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.thinMaterial, in: pill)
+        .overlay(
+            pill.stroke(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.14), lineWidth: 1)
+        )
     }
 
     private func shouldShowLastMessage(_ content: String?) -> Bool {

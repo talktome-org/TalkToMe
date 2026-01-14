@@ -80,6 +80,15 @@ class ChatSessionsViewModel: ObservableObject {
         }
     }
 
+    func preloadCachedSessionsIfNeeded() async {
+        if !self.sessions.isEmpty { return }
+        let local = await ChatStore.shared.loadSessions()
+        guard !local.isEmpty else { return }
+        await MainActor.run {
+            self.sessions = local
+        }
+    }
+
     deinit {
         // `deinit` is nonisolated; schedule MainActor cleanup for actor-isolated helpers.
         Task { @MainActor [eventRouter, linkStatusPoller] in
@@ -167,6 +176,17 @@ class ChatSessionsViewModel: ObservableObject {
                 self.sessionsLoadError = nil
                 self.isLoadingSessions = true
             }
+
+            // Load cached sessions first (best-effort) so sidebar is instant.
+            let local = await ChatStore.shared.loadSessions()
+            if !local.isEmpty {
+                await MainActor.run {
+                    if self.sessions.isEmpty {
+                        self.sessions = local
+                    }
+                }
+            }
+
             let session = try await AuthService.shared.client.auth.session
             let accessToken = session.accessToken
             self.currentUserId = session.user.id.uuidString
@@ -215,6 +235,9 @@ class ChatSessionsViewModel: ObservableObject {
                 self.isLoadingSessions = false
                 print("📱 Updated local sessions list with \(finalMapped.count) sessions")
             }
+            Task.detached {
+                await ChatStore.shared.upsertSessions(finalMapped)
+            }
         } catch {
             if let nsError = error as NSError?, nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
                 print("⏭️ Load sessions cancelled (expected during rapid refresh) — ignoring")
@@ -224,9 +247,10 @@ class ChatSessionsViewModel: ObservableObject {
             print("❌ Failed to load sessions: \(error)")
             await MainActor.run {
                 self.isLoadingSessions = false
+                // If we already have cached sessions, stay silent (don't show an error banner).
                 self.sessionsLoadError = self.sessions.isEmpty
                     ? "Couldn’t load conversations. Check your connection and pull to refresh."
-                    : "Couldn’t refresh conversations. Showing what’s already cached."
+                    : nil
             }
         }
     }
@@ -307,25 +331,29 @@ class ChatSessionsViewModel: ObservableObject {
         if isBootstrapComplete { return }
         await MainActor.run { self.isBootstrapping = true }
 
+        // Phase 1 (fast): get core data in place so the UI can update quickly.
         await withTaskGroup(of: Void.self) { group in
             group.addTask { await self.loadSessions() }
             group.addTask { await self.loadPendingRequests() }
             group.addTask { await self.loadPartnerInfo() }
-            group.addTask { await self.fetchAndCacheProfileName() }
-        }
-
-        await loadPairedAvatars()
-        await preloadAvatars()
-        await ensureProfilePictureCached()
-        if let cachedPartnerURL = UserDefaults.standard.string(forKey: PreferenceKeys.partnerAvatarURL),
-           !cachedPartnerURL.isEmpty,
-           (partnerAvatarURL == nil || partnerAvatarURL?.isEmpty == true) {
-            await avatarCacheManager.preloadAvatars(urls: [cachedPartnerURL])
         }
 
         await MainActor.run {
             self.isBootstrapping = false
             self.isBootstrapComplete = true
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.fetchAndCacheProfileName()
+            await self.loadPairedAvatars()
+            await self.preloadAvatars()
+            await self.ensureProfilePictureCached()
+            if let cachedPartnerURL = UserDefaults.standard.string(forKey: PreferenceKeys.partnerAvatarURL),
+               !cachedPartnerURL.isEmpty,
+               (self.partnerAvatarURL == nil || self.partnerAvatarURL?.isEmpty == true) {
+                await self.avatarCacheManager.preloadAvatars(urls: [cachedPartnerURL])
+            }
         }
     }
 

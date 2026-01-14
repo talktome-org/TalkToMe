@@ -38,6 +38,7 @@ class MessageDTO(BaseModel):
     session_id: UUID
     role: str
     content: str
+    created_at: Optional[str] = None
 
 
 class MessagesResponse(BaseModel):

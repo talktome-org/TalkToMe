@@ -607,6 +607,7 @@ async def get_messages(http_request: Request, session_id: uuid.UUID, current_use
                 session_id=_as_uuid(r["session_id"]),
                 role=r["role"],
                 content=_inject_signed_urls_into_content(base_url=base, content=r["content"]),
+                created_at=_as_iso8601(r.get("created_at")),
             )
             for r in rows
         ]

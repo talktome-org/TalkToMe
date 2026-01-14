@@ -85,7 +85,7 @@ struct ChatMessage: Identifiable {
         let isOwnUserRole = (dto.user_id == currentUserId) && dto.role == "user"
         self.isFromUser = isOwnUserRole
         self.isFromPartnerUser = (dto.user_id != currentUserId) && dto.role == "user"
-        self.timestamp = Date()
+        self.timestamp = ChatMessage.parseISO8601(dto.created_at) ?? Date()
         self.isToolLoading = false
 
         if let obj = ChatMessage.tryDecodeJSONDictionary(from: dto.content) {
@@ -141,6 +141,14 @@ struct ChatMessage: Identifiable {
             }
         }
         self.segments = dto.content.isEmpty ? [] : [.text(dto.content)]
+    }
+
+    private static func parseISO8601(_ iso: String?) -> Date? {
+        guard let raw = iso?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+        let f1 = ISO8601DateFormatter()
+        f1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f1.date(from: raw) { return d }
+        return ISO8601DateFormatter().date(from: raw)
     }
 
     private static func tryDecodeJSONDictionary(from value: Any?) -> [String: Any]? {

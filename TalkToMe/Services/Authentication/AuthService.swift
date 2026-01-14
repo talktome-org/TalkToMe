@@ -68,12 +68,14 @@ class AuthService: ObservableObject {
                 await MainActor.run {
                     self.isAuthenticated = true
                     self.currentUser = session.user
+                    UserDefaults.standard.set(session.user.id.uuidString, forKey: PreferenceKeys.currentUserId)
                     self.isCheckingAuth = false
                 }
             } catch {
                 await MainActor.run {
                     self.isAuthenticated = false
                     self.currentUser = nil
+                    UserDefaults.standard.removeObject(forKey: PreferenceKeys.currentUserId)
                     self.isCheckingAuth = false
                 }
             }
@@ -88,6 +90,7 @@ class AuthService: ObservableObject {
             await MainActor.run {
                 self.isAuthenticated = true
                 self.currentUser = session.user
+                UserDefaults.standard.set(session.user.id.uuidString, forKey: PreferenceKeys.currentUserId)
             }
         } catch {
             let nsErr = error as NSError
@@ -108,6 +111,7 @@ class AuthService: ObservableObject {
             await MainActor.run {
                 self.isAuthenticated = true
                 self.currentUser = session.user
+                UserDefaults.standard.set(session.user.id.uuidString, forKey: PreferenceKeys.currentUserId)
             }
         } catch {
             let nsErr = error as NSError
@@ -128,6 +132,7 @@ class AuthService: ObservableObject {
             self.isAuthenticated = false
             self.currentUser = nil
             self.isCheckingAuth = false
+            UserDefaults.standard.removeObject(forKey: PreferenceKeys.currentUserId)
         }
 
         // Best-effort: unregister current push token server-side to prevent further pushes after sign-out

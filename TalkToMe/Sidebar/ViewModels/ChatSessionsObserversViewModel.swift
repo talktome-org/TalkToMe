@@ -17,6 +17,32 @@ extension ChatSessionsViewModel {
         }
     }
 
+    func handleChatSessionRekeyed(_ note: Notification) async {
+        guard
+            let oldId = note.userInfo?["oldSessionId"] as? UUID,
+            let newId = note.userInfo?["newSessionId"] as? UUID
+        else { return }
+
+        if let idx = self.sessions.firstIndex(where: { $0.id == oldId }) {
+            var item = self.sessions[idx]
+            item = ChatSession(
+                id: newId,
+                title: item.title,
+                lastUsedISO8601: item.lastUsedISO8601,
+                lastMessageContent: item.lastMessageContent
+            )
+            self.sessions[idx] = item
+        }
+
+        if self.activeSessionId == oldId {
+            self.activeSessionId = newId
+            self.chatViewKey = UUID()
+        }
+
+        self.unreadPartnerSessionIds.remove(oldId)
+        self.suppressUnreadSessionIds.remove(oldId)
+    }
+
     func handleChatMessageSent(_ note: Notification) async {
         if let sid = note.userInfo?["sessionId"] as? UUID,
            let messageContent = note.userInfo?["messageContent"] as? String,

@@ -90,6 +90,25 @@ class ChatViewModel: ObservableObject {
             }
         }
         observers.append(partnerReceived)
+
+        let sessionRekeyed = NotificationCenter.default.addObserver(
+            forName: .chatSessionRekeyed,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            Task { @MainActor in
+                guard let self else { return }
+                guard
+                    let oldId = note.userInfo?["oldSessionId"] as? UUID,
+                    let newId = note.userInfo?["newSessionId"] as? UUID
+                else { return }
+                if self.sessionId == oldId {
+                    self.sessionId = newId
+                    await self.presentSession(newId)
+                }
+            }
+        }
+        observers.append(sessionRekeyed)
     }
 
     deinit {
@@ -151,6 +170,123 @@ class ChatViewModel: ObservableObject {
         let attachmentsToSend = pendingAttachments
         guard !(trimmedMessage.isEmpty && attachmentsToSend.isEmpty) else { return }
         guard !isStreaming else { return }
+
+        // Offline-first: enqueue to outbox and render immediately.
+        if NetworkMonitor.shared.isOnline == false {
+            let messageToSend: String = {
+                if !trimmedMessage.isEmpty { return trimmedMessage }
+                if attachmentsToSend.contains(where: { $0.isImage }) { return "User sent a photo." }
+                return "User sent an attachment."
+            }()
+
+            if self.sessionId == nil {
+                let localId = UUID()
+                self.sessionId = localId
+                self.chatMessagesVM.sessionId = localId
+                let currentTime = ISO8601DateFormatter().string(from: Date())
+                NotificationCenter.default.post(name: .chatSessionCreated, object: nil, userInfo: [
+                    "sessionId": localId,
+                    "title": ChatSession.defaultTitle,
+                    "lastUsedISO8601": currentTime,
+                    "lastMessageContent": ""
+                ])
+
+                // Persist the local-only session so it survives app restarts while offline.
+                Task.detached {
+                    await ChatStore.shared.upsertSessions([
+                        ChatSession(id: localId, title: ChatSession.defaultTitle, lastUsedISO8601: currentTime, lastMessageContent: "")
+                    ])
+                }
+            }
+
+            guard let sid = self.sessionId else { return }
+            guard let userId = AuthService.shared.currentUser?.id else { return }
+
+            // Persist attachments to disk now so we can upload later.
+            var outboxAttachments: [OutboxAttachment] = []
+            var segs: [[String: Any]] = []
+            if !trimmedMessage.isEmpty {
+                segs.append(["type": "text", "content": trimmedMessage])
+            }
+
+            let fm = FileManager.default
+            let baseDir: URL = {
+                let appSupport = (try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)) ?? fm.temporaryDirectory
+                let dir = appSupport.appendingPathComponent("TalkToMe/OutboxAttachments", isDirectory: true)
+                try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+                return dir
+            }()
+
+            for att in attachmentsToSend {
+                switch att.kind {
+                case .image(let data, let ct):
+                    let ext: String = {
+                        if ct == "image/png" { return "png" }
+                        if ct == "image/webp" { return "webp" }
+                        return "jpg"
+                    }()
+                    let filename = "image.\(ext)"
+                    let fileURL = baseDir.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
+                    try? data.write(to: fileURL, options: [.atomic])
+                    outboxAttachments.append(
+                        OutboxAttachment(type: "image", filename: filename, contentType: ct, localPath: fileURL.path)
+                    )
+                    segs.append(["type": "image", "url": fileURL.absoluteString, "filename": filename, "content_type": ct])
+                case .file(let data, let filename, let ct):
+                    let fileURL = baseDir.appendingPathComponent(UUID().uuidString + "_" + filename)
+                    try? data.write(to: fileURL, options: [.atomic])
+                    outboxAttachments.append(
+                        OutboxAttachment(type: "file", filename: filename, contentType: ct, localPath: fileURL.path)
+                    )
+                    segs.append(["type": "file", "url": fileURL.absoluteString, "filename": filename, "content_type": ct])
+                }
+            }
+
+            let jsonContent: String = {
+                let obj: [String: Any] = ["_talktome": ["type": "segments", "segments": segs]]
+                let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
+                return String(data: data, encoding: .utf8) ?? messageToSend
+            }()
+
+            let dto = ChatMessageDTO(
+                id: UUID(),
+                user_id: userId,
+                session_id: sid,
+                role: "user",
+                content: jsonContent,
+                created_at: ISO8601DateFormatter().string(from: Date())
+            )
+
+            // Render immediately in the current chat UI.
+            let localMessage = ChatMessage(dto: dto, currentUserId: userId)
+            self.messages.append(localMessage)
+            self.updateCacheForCurrentSession()
+
+            Task.detached {
+                await ChatStore.shared.upsertMessages([dto])
+                await ChatOutboxProcessor.shared.enqueueChatMessage(
+                    sessionId: sid,
+                    serverSessionId: nil,
+                    message: messageToSend,
+                    attachments: outboxAttachments
+                )
+            }
+
+            NotificationCenter.default.post(name: .chatMessageSent, object: nil, userInfo: [
+                "sessionId": sid,
+                "messageContent": messageToSend
+            ])
+            NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
+
+            // Keep current UI behavior (optimistic local message).
+            inputText = ""
+            pendingAttachments = []
+            isLoading = false
+            isAssistantTyping = false
+            isStreaming = false
+            currentStreamingSessionId = nil
+            return
+        }
 
         var userSegments: [MessageSegment] = []
         if !trimmedMessage.isEmpty {
@@ -683,12 +819,39 @@ class ChatViewModel: ObservableObject {
             }
             return
         }
+        let message = (customMessage ?? self.inputText).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return }
+
+        // Offline-first: queue partner request.
+        if NetworkMonitor.shared.isOnline == false {
+            if self.sessionId == nil {
+                let localId = UUID()
+                self.sessionId = localId
+                let currentTime = ISO8601DateFormatter().string(from: Date())
+                NotificationCenter.default.post(name: .chatSessionCreated, object: nil, userInfo: [
+                    "sessionId": localId,
+                    "title": ChatSession.defaultTitle,
+                    "lastUsedISO8601": currentTime,
+                    "lastMessageContent": ""
+                ])
+
+                Task.detached {
+                    await ChatStore.shared.upsertSessions([
+                        ChatSession(id: localId, title: ChatSession.defaultTitle, lastUsedISO8601: currentTime, lastMessageContent: "")
+                    ])
+                }
+            }
+            guard let sid = self.sessionId else { return }
+            await ChatOutboxProcessor.shared.enqueuePartnerRequest(sessionId: sid, message: message)
+            return
+        }
+
         let resolved = await ensureSessionId()
         let sessionId = resolved ?? sessionsViewModel.activeSessionId
         guard let sid = sessionId else { return }
         do {
             guard let accessToken = await AuthService.shared.getAccessToken() else { return }
-            let body = BackendService.PartnerRequestBody(message: customMessage ?? (self.inputText), session_id: sid)
+            let body = BackendService.PartnerRequestBody(message: message, session_id: sid)
             Task.detached {
                 let stream = BackendService.shared.streamPartnerRequest(body, accessToken: accessToken)
                 for await event in stream {

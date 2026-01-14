@@ -153,26 +153,34 @@ struct MessageBubbleView: View {
                         }
                     case .imageURL(let urlString):
                         if let url = URL(string: urlString) {
-                            AsyncImage(url: url) { phase in
-                                switch phase {
-                                case .empty:
-                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                        .fill(.thinMaterial)
-                                        .frame(width: 220, height: 160)
-                                        .overlay(ProgressView().progressViewStyle(.circular))
-                                case .success(let image):
-                                    image
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(width: 220, height: 160)
-                                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                case .failure:
-                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                        .fill(.thinMaterial)
-                                        .frame(width: 220, height: 160)
-                                        .overlay(Image(systemName: "photo").foregroundColor(.secondary))
-                                @unknown default:
-                                    EmptyView()
+                            if url.isFileURL, let uiImage = ChatImageCacheManager.shared.image(fileURL: url) {
+                                Image(uiImage: uiImage)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 220, height: 160)
+                                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            } else {
+                                AsyncImage(url: url) { phase in
+                                    switch phase {
+                                    case .empty:
+                                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                            .fill(.thinMaterial)
+                                            .frame(width: 220, height: 160)
+                                            .overlay(ProgressView().progressViewStyle(.circular))
+                                    case .success(let image):
+                                        image
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(width: 220, height: 160)
+                                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                    case .failure:
+                                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                            .fill(.thinMaterial)
+                                            .frame(width: 220, height: 160)
+                                            .overlay(Image(systemName: "photo").foregroundColor(.secondary))
+                                    @unknown default:
+                                        EmptyView()
+                                    }
                                 }
                             }
                         }

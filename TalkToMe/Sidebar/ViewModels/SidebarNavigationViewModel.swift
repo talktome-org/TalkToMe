@@ -9,7 +9,8 @@ enum SidebarTab: String, CaseIterable, Identifiable {
 
 class SidebarNavigationViewModel: ObservableObject {
 
-    @Published var isOpen = false
+    // Telegram-like default: land on the conversations list (sidebar) first.
+    @Published var isOpen = true
     @Published var selectedTab: SidebarTab = .chat
     @Published var dragOffset: CGFloat = 0
     @Published var showSettingsSheet: Bool = false

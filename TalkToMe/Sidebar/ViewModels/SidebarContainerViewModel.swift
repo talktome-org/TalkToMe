@@ -66,7 +66,6 @@ final class SidebarContainerViewModel: ObservableObject {
     ) {
         sessionsViewModel.setNavigationViewModel(navigationViewModel)
         sessionsViewModel.setLinkViewModel(linkViewModel)
-        sessionsViewModel.startObserving()
         navigationViewModel.dragOffset = 0
     }
 

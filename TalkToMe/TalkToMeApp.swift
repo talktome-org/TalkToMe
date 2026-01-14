@@ -121,6 +121,12 @@ struct TalkToMeApp: App {
                     }
                 }
                 .task {
+                    _ = NetworkMonitor.shared
+                    ChatOutboxProcessor.shared.start()
+                    // Telegram-like boot: show cached UI immediately while auth restores.
+                    Task { @MainActor in
+                        await sessionsViewModel.preloadCachedSessionsIfNeeded()
+                    }
                     if auth.isAuthenticated {
                         await linkVM.ensureInviteReady()
                         sessionsViewModel.startObserving()

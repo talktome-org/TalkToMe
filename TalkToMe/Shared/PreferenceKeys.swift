@@ -9,6 +9,7 @@ enum PreferenceKeys {
     static let partnerAvatarURL = "partner_avatar_url"
     static let partnerDisplayName = "partner_display_name"
     static let ttsVoiceIdentifier = "tts_voice_identifier"
+    static let currentUserId = "current_user_id"
 
     static func getPartnerDisplayName() -> String {
         if let displayName = UserDefaults.standard.string(forKey: PreferenceKeys.partnerDisplayName),

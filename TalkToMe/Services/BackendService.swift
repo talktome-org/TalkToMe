@@ -363,6 +363,7 @@ struct ChatMessageDTO: Codable {
     let session_id: UUID
     let role: String
     let content: String
+    let created_at: String?
 }
 
 private struct MessagesResponseBody: Codable {

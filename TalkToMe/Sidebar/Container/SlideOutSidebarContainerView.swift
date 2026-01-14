@@ -21,6 +21,12 @@ struct SlideOutSidebarContainerView<Content: View>: View {
     var body: some View {
         GeometryReader { proxy in
             let width: CGFloat = proxy.size.width
+            // Sidebar-only launch mode:
+            // If the sidebar is open and no chat is selected, don't render the chat UI behind it.
+            // This prevents the "main chat view in the background" feeling during cached boot.
+            let showSidebarOnly: Bool = navigationViewModel.isOpen
+                && sessionsViewModel.activeSessionId == nil
+                && !sessionsViewModel.sessions.isEmpty
             let blurIntensity: CGFloat = containerViewModel.blurIntensity(
                 width: width,
                 isOpen: navigationViewModel.isOpen,
@@ -28,12 +34,17 @@ struct SlideOutSidebarContainerView<Content: View>: View {
             )
 
             ZStack {
-                content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .offset(x: navigationViewModel.isOpen ? width + navigationViewModel.dragOffset : max(0, navigationViewModel.dragOffset))
-                    .blur(radius: blurIntensity)
-                    .animation(.spring(response: 0.34, dampingFraction: 0.72, blendDuration: 0), value: navigationViewModel.isOpen)
-                    .animation(.interactiveSpring(response: 0.26, dampingFraction: 0.78, blendDuration: 0), value: navigationViewModel.dragOffset)
+                if showSidebarOnly {
+                    Color(.systemBackground)
+                        .ignoresSafeArea()
+                } else {
+                    content
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .offset(x: navigationViewModel.isOpen ? width + navigationViewModel.dragOffset : max(0, navigationViewModel.dragOffset))
+                        .blur(radius: blurIntensity)
+                        .animation(.spring(response: 0.34, dampingFraction: 0.72, blendDuration: 0), value: navigationViewModel.isOpen)
+                        .animation(.interactiveSpring(response: 0.26, dampingFraction: 0.78, blendDuration: 0), value: navigationViewModel.dragOffset)
+                }
 
                 let sidebarOffsetX: CGFloat = containerViewModel.sidebarOffsetX(
                     width: width,

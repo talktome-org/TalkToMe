@@ -19,6 +19,14 @@ final class ChatSessionsEventRouter {
         )
 
         tokens.append(
+            nc.addObserver(forName: .chatSessionRekeyed, object: nil, queue: .main) { [weak viewModel] note in
+                Task { @MainActor in
+                    await viewModel?.handleChatSessionRekeyed(note)
+                }
+            }
+        )
+
+        tokens.append(
             nc.addObserver(forName: .chatMessageSent, object: nil, queue: .main) { [weak viewModel] note in
                 Task { @MainActor in
                     await viewModel?.handleChatMessageSent(note)

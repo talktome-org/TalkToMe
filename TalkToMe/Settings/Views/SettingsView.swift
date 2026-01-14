@@ -15,6 +15,7 @@ struct SettingsView: View {
 
     @State private var showCards = false
     @State private var avatarRefreshKey = UUID()
+    @State private var showLocalDatabaseDebug: Bool = false
 
     private var avatarPlaceholder: AnyView { AnyView(Color.clear) }
 
@@ -110,6 +111,28 @@ struct SettingsView: View {
                     .textCase(.uppercase)
                     .padding(.top, 20)
             }
+
+#if DEBUG
+            Button(action: {
+                Haptics.impact(.light)
+                showLocalDatabaseDebug = true
+            }) {
+                HStack {
+                    Text("Local Database (Debug)")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 14)
+            }
+            .buttonStyle(.plain)
+            .sheet(isPresented: $showLocalDatabaseDebug) {
+                LocalDatabaseDebugView()
+            }
+#endif
         }
     }
 

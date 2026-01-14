@@ -21,6 +21,15 @@ final class ChatMessagesViewModel: ObservableObject {
 #endif
     }
 
+    private func resolvedCurrentUserId() -> UUID? {
+        if let uid = AuthService.shared.currentUser?.id { return uid }
+        if let raw = UserDefaults.standard.string(forKey: PreferenceKeys.currentUserId),
+           let uid = UUID(uuidString: raw) {
+            return uid
+        }
+        return nil
+    }
+
     init(sessionId: UUID? = nil) {
         self.sessionId = sessionId
         if let sid = sessionId {
@@ -81,6 +90,16 @@ final class ChatMessagesViewModel: ObservableObject {
             self.isLoadingHistory = true
         }
 
+        // Load cached messages from GRDB immediately (best-effort).
+        if let currentUserId = resolvedCurrentUserId() {
+            let local = await ChatStore.shared.loadMessages(sessionId: id, currentUserId: currentUserId)
+            if !local.isEmpty {
+                self.messages = local
+                Self.sharedMessagesCache[id] = MessagesCacheEntry(messages: local, lastLoaded: Date())
+                self.isLoadingHistory = false
+            }
+        }
+
         if isCacheFresh(for: id) {
             self.isLoadingHistory = false
             return
@@ -93,6 +112,25 @@ final class ChatMessagesViewModel: ObservableObject {
         do {
             guard let sid = sessionId else { self.messages = []; self.isLoadingHistory = false; return }
 
+            if self.messages.isEmpty { self.isLoadingHistory = true }
+
+            // Always try GRDB first so offline navigation shows cached messages immediately.
+            if let userId = resolvedCurrentUserId() {
+                let local = await ChatStore.shared.loadMessages(sessionId: sid, currentUserId: userId)
+                if !local.isEmpty, (force || self.messages.isEmpty) {
+                    self.messages = local
+                    Self.sharedMessagesCache[sid] = MessagesCacheEntry(messages: local, lastLoaded: Date())
+                    self.isLoadingHistory = false
+                }
+            }
+
+            // If we're offline, stop here (local cache is the best we can do).
+            if NetworkMonitor.shared.isOnline == false {
+                self.isLoadingHistory = false
+                return
+            }
+
+            // If we recently loaded (either from GRDB or from the network), don't refetch.
             if !force, let entry = Self.sharedMessagesCache[sid] {
                 let age = Date().timeIntervalSince(entry.lastLoaded)
                 if age < cacheFreshnessSeconds {
@@ -102,15 +140,13 @@ final class ChatMessagesViewModel: ObservableObject {
                 }
             }
 
-            if self.messages.isEmpty { self.isLoadingHistory = true }
-
             guard let accessToken = await AuthService.shared.getAccessToken() else {
                 debugLog("[ChatMessagesVM] ACCESS_TOKEN: <nil>")
                 self.isLoadingHistory = false
                 return
             }
             let dtos = try await BackendService.shared.fetchMessages(sessionId: sid, accessToken: accessToken)
-            guard let userId = AuthService.shared.currentUser?.id else { self.isLoadingHistory = false; return }
+            guard let userId = resolvedCurrentUserId() else { self.isLoadingHistory = false; return }
             var mapped = dtos.map { ChatMessage(dto: $0, currentUserId: userId) }
 
             if let optimistic = self.messages.last {
@@ -136,6 +172,9 @@ final class ChatMessagesViewModel: ObservableObject {
             }
             self.messages = mapped
             Self.sharedMessagesCache[sid] = MessagesCacheEntry(messages: mapped, lastLoaded: Date())
+            Task.detached {
+                await ChatStore.shared.upsertMessages(dtos)
+            }
 
         } catch {
             debugLog("[ChatMessagesVM] Failed to load history: \(error)")
