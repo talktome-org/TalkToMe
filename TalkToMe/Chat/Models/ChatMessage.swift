@@ -80,7 +80,7 @@ struct ChatMessage: Identifiable {
         )
     }
 
-    init(dto: ChatMessageDTO, currentUserId: UUID) {
+    init(dto: BackendService.ChatMessageDTO, currentUserId: UUID) {
         self.id = dto.id
         let isOwnUserRole = (dto.user_id == currentUserId) && dto.role == "user"
         self.isFromUser = isOwnUserRole

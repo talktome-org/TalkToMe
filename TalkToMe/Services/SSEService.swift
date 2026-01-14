@@ -2,6 +2,7 @@ import Foundation
 
 final class SSEService {
     static let shared = SSEService()
+
     private init() {}
 
     func stream(request: URLRequest) -> AsyncStream<BackendService.StreamEvent> {
@@ -16,10 +17,8 @@ final class SSEService {
                         "Connection": "keep-alive"
                     ]
                     let session = URLSession(configuration: config)
-                    print("[SSE] Starting stream: \(request.httpMethod ?? "") \(request.url?.absoluteString ?? "")")
                     let (bytes, response) = try await session.bytes(for: request)
                     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                        print("[SSE] HTTP error: \(http.statusCode)")
                         continuation.yield(.error("HTTP \(http.statusCode)"))
                         continuation.finish()
                         return
@@ -28,22 +27,17 @@ final class SSEService {
                     var currentEvent: String? = nil
                     var dataLines: [String] = []
                     var sawToolStart = false
-                    var sawPartnerMessage = false
-                    var rawLineCount = 0
-                    let rawLineLogLimit = 80
 
                     func flush() {
                         let dataString = dataLines.joined(separator: "\n")
                         let event = currentEvent ?? ""
                         if event == "response_id" {
-                            print("[SSE] response_id event received")
                             if let json = dataString.data(using: .utf8),
                                let obj = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
                                let rid = obj["response_id"] as? String {
                                 continuation.yield(.responseId(rid))
                             }
                         } else if event == "session" {
-                            print("[SSE] session event received")
                             if let json = dataString.data(using: .utf8),
                                let obj = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
                                let sidStr = obj["session_id"] as? String,
@@ -51,41 +45,27 @@ final class SSEService {
                                 continuation.yield(.session(sid))
                             }
                         } else if event == "token" {
-                            let token: String
-                            if let data = dataString.data(using: .utf8), let decoded = try? JSONDecoder().decode(String.self, from: data) {
-                                token = decoded
-                            } else {
-                                token = dataString.replacingOccurrences(of: "\\n", with: "\n")
-                                    .replacingOccurrences(of: "\\t", with: "\t")
-                                    .replacingOccurrences(of: "\\\"", with: "\"")
-                                    .replacingOccurrences(of: "\\\\", with: "\\")
+                            if dataString.isEmpty {
+                                currentEvent = nil
+                                dataLines.removeAll(keepingCapacity: false)
+                                return
                             }
-                            print("[SSE] token chunk size=\(token.count)")
+                            let token = decodeTokenPayload(dataString)
                             continuation.yield(.token(token))
                         } else if event == "partner_message" {
-                            let text: String
-                            if let data = dataString.data(using: .utf8), let decoded = try? JSONDecoder().decode(String.self, from: data) {
-                                text = decoded
-                            } else {
-                                text = dataString
-                            }
-                            print("[SSE] partner_message received len=\(text.count)")
+                            let text = decodePossiblyQuotedJSONString(dataString) ?? dataString
                             continuation.yield(.partnerMessage(text))
-                            sawPartnerMessage = true
                         } else if event == "tool_start" {
                             if let data = dataString.data(using: .utf8),
                                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                                let name = obj["name"] as? String {
-                                print("[SSE] tool_start received name=\(name)")
                                 continuation.yield(.toolStart(name))
                             } else {
-                                print("[SSE] tool_start received (no name)")
                                 continuation.yield(.toolStart(""))
                             }
                             sawToolStart = true
                         } else if event == "tool_args" {
                             if !sawToolStart {
-                                print("[SSE] tool_args before tool_start; synthesizing toolStart for UI")
                                 continuation.yield(.toolStart(""))
                                 sawToolStart = true
                             }
@@ -93,81 +73,84 @@ final class SSEService {
                         } else if event == "tool_done" {
                             continuation.yield(.toolDone)
                         } else if event == "done" {
-                            print("[SSE] done received; sawToolStart=\(sawToolStart) sawPartnerMessage=\(sawPartnerMessage)")
                             continuation.yield(.done)
                             continuation.finish()
                         } else if event == "error" {
-                            continuation.yield(.error(dataString.replacingOccurrences(of: "\"", with: "")))
+                            continuation.yield(.error(decodeErrorPayload(dataString)))
                             continuation.finish()
-                        } else {
-                            // Ignore other events
-                        }
+                        } else {}
                         currentEvent = nil
                         dataLines.removeAll(keepingCapacity: false)
                     }
 
-                    var tokenCount = 0
                     for try await rawLine in bytes.lines {
                         var line = String(rawLine)
-                        if rawLineCount < rawLineLogLimit {
-                            let preview = line.count > 200 ? String(line.prefix(200)) + "…" : line
-                            print("[SSE][raw] \(rawLineCount): \(preview)")
-                            rawLineCount += 1
-                        }
                         if line.hasSuffix("\r") { line.removeLast() }
-                        line = line.trimmingCharacters(in: .whitespaces)
-                        // Debug the first few lines to ensure stream is flowing
-                        if line.hasPrefix("event:") || line.hasPrefix("data:") { }
-                        if line.isEmpty {
+
+                        if line.trimmingCharacters(in: .whitespaces).isEmpty {
                             if currentEvent != nil || !dataLines.isEmpty { flush() }
                             continue
                         }
+
+                        if line.hasPrefix(":") {
+                            continue
+                        }
+
                         if line.hasPrefix("event:") {
                             if currentEvent != nil || !dataLines.isEmpty { flush() }
-                            currentEvent = line.dropFirst(6).trimmingCharacters(in: .whitespaces)
+                            var value = String(line.dropFirst("event:".count))
+                            if value.first == " " { value.removeFirst() }
+                            currentEvent = value.trimmingCharacters(in: .whitespaces)
                         } else if line.hasPrefix("data:") {
-                            let value = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                            var value = String(line.dropFirst("data:".count))
+                            if value.first == " " { value.removeFirst() }
                             if currentEvent == "token" {
-                                // Emit tokens immediately rather than waiting for a trailing blank line
-                                let token: String
-                                if let data = value.data(using: .utf8), let decoded = try? JSONDecoder().decode(String.self, from: data) {
-                                    token = decoded
-                                } else {
-                                    token = value.replacingOccurrences(of: "\\n", with: "\n")
-                                        .replacingOccurrences(of: "\\t", with: "\t")
-                                        .replacingOccurrences(of: "\\\"", with: "\"")
-                                        .replacingOccurrences(of: "\\\\", with: "\\")
-                                }
-                                tokenCount += 1
-                                if tokenCount % 8 == 0 { print("[SSE] tokens so far: \(tokenCount)") }
+                                let token = decodeTokenPayload(value)
                                 continuation.yield(.token(token))
+                                currentEvent = nil
+                                dataLines.removeAll(keepingCapacity: false)
                             } else {
                                 dataLines.append(value)
                             }
                         } else {
-                            // Ignore comments or other fields
                             continue
                         }
                     }
 
-                    // Flush any pending event at EOF (prevents losing the final event if stream closes without a trailing blank line)
                     if currentEvent != nil || !dataLines.isEmpty { flush() }
-
-                    print("[SSE] Stream finished (EOF) sawToolStart=\(sawToolStart) sawPartnerMessage=\(sawPartnerMessage)")
                     continuation.finish()
                 } catch {
-                    print("[SSE] Stream error: \(error.localizedDescription)")
                     continuation.yield(.error(error.localizedDescription))
                     continuation.finish()
                 }
             }
 
             continuation.onTermination = { _ in
-                print("[SSE] Terminated by client (onTermination)")
                 task.cancel()
             }
         }
     }
+
+    private func decodePossiblyQuotedJSONString(_ value: String) -> String? {
+        guard let data = value.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(String.self, from: data)
+    }
+
+    private func decodeTokenPayload(_ value: String) -> String {
+        if let decoded = decodePossiblyQuotedJSONString(value) {
+            return decoded
+        }
+        return value
+            .replacingOccurrences(of: "\\n", with: "\n")
+            .replacingOccurrences(of: "\\t", with: "\t")
+            .replacingOccurrences(of: "\\\"", with: "\"")
+            .replacingOccurrences(of: "\\\\", with: "\\")
+    }
+
+    private func decodeErrorPayload(_ value: String) -> String {
+        if let decoded = decodePossiblyQuotedJSONString(value) {
+            return decoded
+        }
+        return value.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+    }
 }
-
-

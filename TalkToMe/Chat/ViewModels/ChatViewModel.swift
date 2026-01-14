@@ -6,6 +6,29 @@ import Combine
 @MainActor
 class ChatViewModel: ObservableObject {
 
+    private static func beginBackgroundTask(name: String, onExpire: (() -> Void)? = nil) -> UIBackgroundTaskIdentifier {
+        var identifier: UIBackgroundTaskIdentifier = .invalid
+        let work = {
+            identifier = UIApplication.shared.beginBackgroundTask(withName: name) {
+                onExpire?()
+                UIApplication.shared.endBackgroundTask(identifier)
+            }
+        }
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.sync { work() }
+        }
+        return identifier
+    }
+
+    private static func endBackgroundTask(_ identifier: UIBackgroundTaskIdentifier?) {
+        guard let id = identifier, id != .invalid else { return }
+        DispatchQueue.main.async {
+            UIApplication.shared.endBackgroundTask(id)
+        }
+    }
+
     @Published var messages: [ChatMessage] = []
     @Published var inputText: String = ""
     @Published var focusSnippet: String? = nil
@@ -29,7 +52,8 @@ class ChatViewModel: ObservableObject {
     private let authService = AuthService.shared
     private let chatMessagesVM: ChatMessagesViewModel
     let partnerDrafts = PartnerDraftsViewModel()
-    private var currentStreamHandleId: UUID?
+    private var currentStreamTask: Task<Void, Never>?
+    private var currentStreamToken: UUID?
     private var typingDelayTask: Task<Void, Never>?
     private var receivedAnyAssistantOutput: Bool = false
     private var currentAssistantMessageId: UUID?
@@ -40,6 +64,12 @@ class ChatViewModel: ObservableObject {
     private var observers: [NSObjectProtocol] = []
     private var refreshTimer: Timer?
     private var cancellables: Set<AnyCancellable> = []
+
+    private func cancelCurrentStream() {
+        currentStreamTask?.cancel()
+        currentStreamTask = nil
+        currentStreamToken = nil
+    }
 
     private nonisolated func debugLog(_ message: @autoclosure () -> String) {
 #if DEBUG
@@ -248,7 +278,7 @@ class ChatViewModel: ObservableObject {
                 return String(data: data, encoding: .utf8) ?? messageToSend
             }()
 
-            let dto = ChatMessageDTO(
+            let dto = BackendService.ChatMessageDTO(
                 id: UUID(),
                 user_id: userId,
                 session_id: sid,
@@ -325,8 +355,7 @@ class ChatViewModel: ObservableObject {
             }
         }
 
-        ChatStreamManager.shared.cancel(handleId: currentStreamHandleId)
-        currentStreamHandleId = nil
+        cancelCurrentStream()
 
         let placeholderMessage = ChatMessage.text("", isFromUser: false)
         messages.append(placeholderMessage)
@@ -358,10 +387,10 @@ class ChatViewModel: ObservableObject {
             await MainActor.run { self.isStreaming = true }
             await MainActor.run { if let sid = self.sessionId { self.currentStreamingSessionId = sid } }
             let bgName = await MainActor.run { "chat_stream_" + (self.sessionId?.uuidString ?? "unknown") }
-            let bgTask: UIBackgroundTaskIdentifier? = BackgroundTaskManager.shared.begin(name: bgName) { [weak self] in
+            let bgTask: UIBackgroundTaskIdentifier? = Self.beginBackgroundTask(name: bgName) { [weak self] in
                 guard let self = self else { return }
                 Task { @MainActor in
-                    ChatStreamManager.shared.cancel(handleId: self.currentStreamHandleId)
+                    self.cancelCurrentStream()
                     self.isStreaming = false
                     self.isAssistantTyping = false
                     self.currentStreamingSessionId = nil
@@ -426,7 +455,7 @@ class ChatViewModel: ObservableObject {
                             self.currentStreamingSessionId = nil
                             self.updateCacheForCurrentSession()
                         }
-                        BackgroundTaskManager.shared.end(bgTask)
+                        Self.endBackgroundTask(bgTask)
                         return
                     }
                 }
@@ -437,7 +466,7 @@ class ChatViewModel: ObservableObject {
                     if case .text(let t) = seg { return t }
                     return nil
                 }.joined()
-                return ChatHistoryMessage(
+                return BackendService.ChatHistoryMessage(
                     role: message.isFromUser ? "user" : "assistant",
                     content: plain
                 )
@@ -456,17 +485,8 @@ class ChatViewModel: ObservableObject {
                 return nil
             }()
 
-            let handleId = ChatStreamManager.shared.startStream(
-                params: ChatStreamManager.StartParams(
-                    message: messageToSend,
-                    sessionId: self.sessionId,
-                    chatHistory: Array(chatHistory),
-                    attachments: uploaded.isEmpty ? nil : uploaded,
-                    accessToken: accessToken,
-                    focusSnippet: self.focusSnippet,
-                    previousResponseId: prevId
-                ),
-                onEvent: { [weak self] event in
+            let streamToken = UUID()
+            let onEvent: (BackendService.StreamEvent) -> Void = { [weak self] event in
                     guard let self = self else { return }
                     eventCounter += 1
                     switch event {
@@ -743,7 +763,7 @@ class ChatViewModel: ObservableObject {
                                 ])
                                 NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
                             }
-                            BackgroundTaskManager.shared.end(bgTask)
+                            Self.endBackgroundTask(bgTask)
                         }
                     case .error(let message):
                         Task { @MainActor in
@@ -768,11 +788,12 @@ class ChatViewModel: ObservableObject {
                                 self.currentStreamingSessionId = nil
                                 self.updateCacheForCurrentSession()
                             }
-                            BackgroundTaskManager.shared.end(bgTask)
+                            Self.endBackgroundTask(bgTask)
                         }
                     }
-                },
-                onFinish: { [weak self] in
+            }
+
+            let onFinish: () -> Void = { [weak self] in
                     Task { @MainActor in
                         self?.isLoading = false
                         self?.isAssistantTyping = false
@@ -780,16 +801,45 @@ class ChatViewModel: ObservableObject {
                         self?.currentAssistantMessageId = nil
                         self?.updateCacheForCurrentSession()
                     }
-                }
-            )
+            }
 
-            await MainActor.run { self.currentStreamHandleId = handleId }
+            let sessionIdForStream = self.sessionId
+            let focusSnippetForStream = self.focusSnippet
+
+            let task = Task.detached { [streamToken] in
+                let stream = BackendService.shared.streamChatMessage(
+                    messageToSend,
+                    sessionId: sessionIdForStream,
+                    chatHistory: Array(chatHistory),
+                    attachments: uploaded.isEmpty ? nil : uploaded,
+                    accessToken: accessToken,
+                    focusSnippet: focusSnippetForStream,
+                    previousResponseId: prevId
+                )
+                for await event in stream {
+                    onEvent(event)
+                    if case .done = event { break }
+                    if case .error(_) = event { break }
+                }
+                onFinish()
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    if self.currentStreamToken == streamToken {
+                        self.currentStreamTask = nil
+                        self.currentStreamToken = nil
+                    }
+                }
+            }
+
+            await MainActor.run {
+                self.currentStreamTask = task
+                self.currentStreamToken = streamToken
+            }
         }
     }
 
     func stopGeneration() {
-        ChatStreamManager.shared.cancel(handleId: currentStreamHandleId)
-        currentStreamHandleId = nil
+        cancelCurrentStream()
         isLoading = false
         isStreaming = false
     }

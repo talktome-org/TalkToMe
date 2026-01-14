@@ -2,16 +2,17 @@ import Foundation
 import UserNotifications
 import UIKit
 
-final class PushNotificationManager: NSObject, ObservableObject {
-    static let shared = PushNotificationManager()
+final class APNSService: NSObject, ObservableObject {
+    static let shared = APNSService()
 
     @Published private(set) var authorizationGranted: Bool = false
     @Published var isPushEnabled: Bool = true
 
     private(set) var currentDeviceToken: String?
     private var processingRequestIds: Set<UUID> = []
-
     var pendingRequestId: UUID?
+
+    private let pushEnabledDefaultsKey = "talktome_push_enabled"
 
     private override init() {
         super.init()
@@ -35,7 +36,6 @@ final class PushNotificationManager: NSObject, ObservableObject {
 
     func didReceiveDeviceToken(_ token: String) {
         currentDeviceToken = token
-        print("[Push] Device token (hex)=\(token)")
         Task { await registerTokenWithBackendIfPossible(token) }
     }
 
@@ -55,14 +55,13 @@ final class PushNotificationManager: NSObject, ObservableObject {
                 bundleId: Bundle.main.bundleIdentifier ?? "",
                 accessToken: accessToken
             )
-        } catch {
-        }
+        } catch {}
     }
 
     func setPushEnabled(_ enabled: Bool) {
         DispatchQueue.main.async {
             self.isPushEnabled = enabled
-            UserDefaults.standard.set(enabled, forKey: "talktome_push_enabled")
+            UserDefaults.standard.set(enabled, forKey: self.pushEnabledDefaultsKey)
         }
         if enabled {
             if authorizationGranted {
@@ -78,7 +77,7 @@ final class PushNotificationManager: NSObject, ObservableObject {
                         let session = try await AuthService.shared.client.auth.session
                         let accessToken = session.accessToken
                         try await BackendService.shared.unregisterPushToken(token: token, accessToken: accessToken)
-                    } catch { }
+                    } catch {}
                 }
             }
             DispatchQueue.main.async { UIApplication.shared.unregisterForRemoteNotifications() }
@@ -86,25 +85,22 @@ final class PushNotificationManager: NSObject, ObservableObject {
     }
 
     func loadPushEnabledFromDefaults() {
-        if UserDefaults.standard.object(forKey: "talktome_push_enabled") != nil {
-            isPushEnabled = UserDefaults.standard.bool(forKey: "talktome_push_enabled")
+        if UserDefaults.standard.object(forKey: pushEnabledDefaultsKey) != nil {
+            isPushEnabled = UserDefaults.standard.bool(forKey: pushEnabledDefaultsKey)
         } else {
             isPushEnabled = true
-            UserDefaults.standard.set(true, forKey: "talktome_push_enabled")
+            UserDefaults.standard.set(true, forKey: pushEnabledDefaultsKey)
         }
     }
 }
 
-extension PushNotificationManager: UNUserNotificationCenterDelegate {
+extension APNSService: UNUserNotificationCenterDelegate {
     @MainActor
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         let userInfo = notification.request.content.userInfo
-        print("[Push] willPresent notification with userInfo: \(userInfo)")
         if let sessionIdString = userInfo["session_id"] as? String,
            let sessionId = UUID(uuidString: sessionIdString) {
-            print("[Push] Partner message for session \(sessionId), authenticated=\(AuthService.shared.isAuthenticated)")
             if AuthService.shared.isAuthenticated {
-                print("[Push] Posting partnerMessageReceived notification for session \(sessionId)")
                 NotificationCenter.default.post(name: .partnerMessageReceived, object: nil, userInfo: ["sessionId": sessionId])
             }
         }

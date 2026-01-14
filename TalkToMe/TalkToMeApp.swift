@@ -124,13 +124,13 @@ struct TalkToMeApp: App {
 
                         // All initial data loaded, hide loading screen
                         // Handle push notifications
-                        PushNotificationManager.shared.tryUploadIfAuthenticated()
-                        PushNotificationManager.shared.consumePendingIfReady()
+                        APNSService.shared.tryUploadIfAuthenticated()
+                        APNSService.shared.consumePendingIfReady()
                     }
                 }
                 .task {
                     _ = NetworkMonitor.shared
-                    BackendConnectionMonitor.shared.start()
+                    ConnectionMonitor.shared.start()
                     ChatOutboxProcessor.shared.start()
                     // Telegram-like boot: show cached UI immediately while auth restores.
                     Task { @MainActor in
@@ -140,12 +140,12 @@ struct TalkToMeApp: App {
                         await linkVM.ensureInviteReady()
                         sessionsViewModel.startObserving()
                     }
-                    PushNotificationManager.shared.requestAuthorizationAndRegister()
+                    APNSService.shared.requestAuthorizationAndRegister()
                 }
                 .onChange(of: scenePhase, initial: false) { _, phase in
                     if phase == .active {
                         DispatchQueue.main.async {
-                            PushNotificationManager.shared.consumePendingIfReady()
+                            APNSService.shared.consumePendingIfReady()
                         }
                     }
                 }
