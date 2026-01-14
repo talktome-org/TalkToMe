@@ -105,6 +105,82 @@ struct SidebarView: View {
                             }
 
                             LazyVStack(spacing: 6) {
+                                if term.isEmpty && sessionsViewModel.isLoadingSessions && !sessionsViewModel.sessions.isEmpty {
+                                    HStack(spacing: 10) {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                        Text("Updating…")
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 6)
+                                }
+
+                                if term.isEmpty,
+                                   let err = sessionsViewModel.sessionsLoadError,
+                                   !err.isEmpty,
+                                   !sessionsViewModel.sessions.isEmpty,
+                                   !sessionsViewModel.isLoadingSessions {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundStyle(.secondary)
+                                        Text(err)
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                        Spacer()
+                                        Button(action: {
+                                            Haptics.impact(.light)
+                                            Task { await sessionsViewModel.refreshSessions() }
+                                        }) {
+                                            Text("Retry")
+                                                .font(.system(size: 13, weight: .semibold))
+                                        }
+                                        .buttonStyle(.bordered)
+                                    }
+                                    .padding(.vertical, 6)
+                                }
+
+                                if term.isEmpty && sessionsViewModel.sessions.isEmpty {
+                                    if sessionsViewModel.isLoadingSessions {
+                                        VStack(spacing: 10) {
+                                            ProgressView()
+                                            Text("Loading conversations…")
+                                                .font(.system(size: 14))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 24)
+                                    } else if let err = sessionsViewModel.sessionsLoadError, !err.isEmpty {
+                                        VStack(spacing: 10) {
+                                            Text(err)
+                                                .font(.system(size: 14))
+                                                .foregroundStyle(.secondary)
+                                                .multilineTextAlignment(.center)
+                                            Button(action: {
+                                                Haptics.impact(.light)
+                                                Task { await sessionsViewModel.refreshSessions() }
+                                            }) {
+                                                Text("Retry")
+                                                    .font(.system(size: 14, weight: .semibold))
+                                            }
+                                            .buttonStyle(.bordered)
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 24)
+                                    } else {
+                                        VStack(spacing: 10) {
+                                            Text("No conversations yet")
+                                                .font(.system(size: 14))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 24)
+                                    }
+                                }
+
                                 ForEach(filteredSessions, id: \.id) { session in
                                     Button(action: {
                                         withAnimation(.spring(response: 0.3, dampingFraction: 0.8, blendDuration: 0)) {

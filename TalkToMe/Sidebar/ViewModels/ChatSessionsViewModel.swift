@@ -4,13 +4,13 @@ import SwiftUI
 class ChatSessionsViewModel: ObservableObject {
     @Published var sessions: [ChatSession] = []
     @Published var isLoadingSessions: Bool = false
+    @Published var sessionsLoadError: String? = nil
     @Published var pendingRequests: [BackendService.PartnerPendingRequest] = []
     @Published var activeSessionId: UUID? = nil {
         didSet {
             if let id = activeSessionId {
                 if unreadPartnerSessionIds.remove(id) != nil {
                     print("[SessionsVM] Cleared unread on active change for session=\(id)")
-                    saveCachedUnread()
                 }
             }
         }
@@ -71,8 +71,6 @@ class ChatSessionsViewModel: ObservableObject {
     }
 
     init() {
-        loadCachedSessions()
-        loadCachedUnread()
         if let storedMyAvatar = UserDefaults.standard.string(forKey: PreferenceKeys.myAvatarURL),
            !storedMyAvatar.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             self.myAvatarURL = storedMyAvatar
@@ -128,7 +126,6 @@ class ChatSessionsViewModel: ObservableObject {
 
         if unreadPartnerSessionIds.remove(id) != nil {
             print("[SessionsVM] openSession cleared unread for session=\(id)")
-            saveCachedUnread()
         }
     }
 
@@ -166,7 +163,10 @@ class ChatSessionsViewModel: ObservableObject {
     func loadSessions() async {
         print("🔄 Loading sessions from backend...")
         do {
-            await MainActor.run { self.isLoadingSessions = self.sessions.isEmpty }
+            await MainActor.run {
+                self.sessionsLoadError = nil
+                self.isLoadingSessions = true
+            }
             let session = try await AuthService.shared.client.auth.session
             let accessToken = session.accessToken
             self.currentUserId = session.user.id.uuidString
@@ -192,8 +192,7 @@ class ChatSessionsViewModel: ObservableObject {
             }
 
             if self.partnerInfo?.linked == true {
-                let store = ChatSessionsCacheStore(userId: currentUserId)
-                let previousSessions = (try? store.loadSessions()) ?? self.sessions
+                let previousSessions = self.sessions
 
                 for session in mapped {
                     if let lastMessage = session.lastMessageContent, !lastMessage.isEmpty {
@@ -208,9 +207,6 @@ class ChatSessionsViewModel: ObservableObject {
                         }
                     }
                 }
-                if !self.unreadPartnerSessionIds.isEmpty {
-                    self.saveCachedUnread()
-                }
             }
 
             let finalMapped = mapped
@@ -218,7 +214,6 @@ class ChatSessionsViewModel: ObservableObject {
                 self.sessions = finalMapped
                 self.isLoadingSessions = false
                 print("📱 Updated local sessions list with \(finalMapped.count) sessions")
-                self.saveCachedSessions()
             }
         } catch {
             if let nsError = error as NSError?, nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
@@ -227,7 +222,12 @@ class ChatSessionsViewModel: ObservableObject {
                 return
             }
             print("❌ Failed to load sessions: \(error)")
-            await MainActor.run { self.isLoadingSessions = false }
+            await MainActor.run {
+                self.isLoadingSessions = false
+                self.sessionsLoadError = self.sessions.isEmpty
+                    ? "Couldn’t load conversations. Check your connection and pull to refresh."
+                    : "Couldn’t refresh conversations. Showing what’s already cached."
+            }
         }
     }
 
@@ -246,7 +246,6 @@ class ChatSessionsViewModel: ObservableObject {
                     let trimmed = newTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
                     updated.title = (trimmed?.isEmpty == false) ? trimmed! : ChatSession.defaultTitle
                     self.sessions[idx] = updated
-                    self.saveCachedSessions()
                 }
             }
         } catch {
@@ -262,7 +261,6 @@ class ChatSessionsViewModel: ObservableObject {
             await MainActor.run {
                 self.sessions.removeAll { $0.id == id }
                 if self.activeSessionId == id { self.activeSessionId = nil }
-                self.saveCachedSessions()
                 NotificationCenter.default.post(name: .relationshipTotalsChanged, object: nil)
             }
         } catch {
@@ -297,11 +295,7 @@ class ChatSessionsViewModel: ObservableObject {
             if let session = try? await AuthService.shared.client.auth.session {
                 self.currentUserId = session.user.id.uuidString
             }
-            await loadSessions()
-            await loadPendingRequests()
-            await loadPairedAvatars()
-            await loadPartnerInfo()
-            await preloadAvatars()
+            await bootstrapInitialData()
             print("[SessionsVM] Initial data loaded. PartnerLinked=\(self.partnerInfo?.linked ?? false)")
         }
         eventRouter.start(self)
@@ -423,48 +417,6 @@ class ChatSessionsViewModel: ObservableObject {
 }
 
 extension ChatSessionsViewModel {
-    private func loadCachedSessions() {
-        do {
-            let store = ChatSessionsCacheStore(userId: currentUserId)
-            if let decoded = try store.loadSessions() {
-                self.sessions = decoded
-            }
-        } catch {
-            print("⚠️ Failed to load cached sessions: \(error)")
-        }
-    }
-
-    private func saveCachedSessions() {
-        do {
-            let store = ChatSessionsCacheStore(userId: currentUserId)
-            try store.saveSessions(self.sessions)
-        } catch {
-            print("⚠️ Failed to save cached sessions: \(error)")
-        }
-    }
-
-    func loadCachedUnread() {
-        do {
-            let store = ChatSessionsCacheStore(userId: currentUserId)
-            if let unread = try store.loadUnread() {
-                self.unreadPartnerSessionIds = unread
-                print("[SessionsVM] Loaded unread cache; count=\(unread.count)")
-            }
-        } catch {
-            print("⚠️ Failed to load unread cache: \(error)")
-        }
-    }
-
-    func saveCachedUnread() {
-        do {
-            let store = ChatSessionsCacheStore(userId: currentUserId)
-            try store.saveUnread(self.unreadPartnerSessionIds)
-            print("[SessionsVM] Saved unread cache; count=\(self.unreadPartnerSessionIds.count)")
-        } catch {
-            print("⚠️ Failed to save unread cache: \(error)")
-        }
-    }
-
     private func maybeStartLinkStatusPolling() {
         linkStatusPoller.startLinkPolling(isLinked: { [weak self] in
             self?.partnerInfo?.linked == true

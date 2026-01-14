@@ -41,12 +41,6 @@ final class LinkViewModel: ObservableObject {
             let token = try await accessTokenProvider()
             try await BackendService.shared.acceptLinkInvite(inviteToken: inviteToken, accessToken: token)
             try await refreshStatus()
-            // Mark onboarding as completed once linking succeeds, so user skips onboarding next time
-            do {
-                _ = try await BackendService.shared.updateOnboarding(accessToken: token, update: .init(partner_display_name: nil, onboarding_step: "completed"))
-            } catch {
-                // Non-fatal; UI will still reflect linked state
-            }
             // Eagerly fetch partner info and cache to drive immediate UI updates
             do {
                 let info = try await BackendService.shared.fetchPartnerInfo(accessToken: token)

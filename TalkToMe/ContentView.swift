@@ -17,15 +17,10 @@ struct ContentView: View {
                     LoadingView()
                         .transition(.opacity)
                 } else if authService.isAuthenticated {
-                    if authService.isLoadingInitialData {
-                        LoadingView()
-                            .transition(.opacity)
-                    } else {
-                        SlideOutSidebarContainerView {
-                            MainAppView()
-                        }
-                        .transition(.opacity)
+                    SlideOutSidebarContainerView {
+                        MainAppView()
                     }
+                    .transition(.opacity)
                 } else {
                     AuthView()
                         .transition(.opacity)
@@ -33,7 +28,6 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.3), value: authService.isAuthenticated)
-        .animation(.easeInOut(duration: 0.3), value: authService.isLoadingInitialData)
         .animation(.easeInOut(duration: 0.3), value: authService.isCheckingAuth)
     }
 }

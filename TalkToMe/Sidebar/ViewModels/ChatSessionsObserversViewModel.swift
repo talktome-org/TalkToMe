@@ -68,7 +68,6 @@ extension ChatSessionsViewModel {
         if self.activeSessionId != sid && self.partnerInfo?.linked == true {
             self.unreadPartnerSessionIds.insert(sid)
             print("[SessionsVM] ✅ Marked session \(sid) as unread, total unread: \(self.unreadPartnerSessionIds.count)")
-            self.saveCachedUnread()
             self.objectWillChange.send()
         } else {
             print("[SessionsVM] ❌ Not marking unread: isActive=\(self.activeSessionId == sid), linked=\(self.partnerInfo?.linked ?? false)")
