@@ -13,6 +13,7 @@
 		0481A5F52E63A6FC00A6358E /* Realtime in Frameworks */ = {isa = PBXBuildFile; productRef = 0481A5F42E63A6FC00A6358E /* Realtime */; };
 		0481A5F72E63A6FC00A6358E /* Storage in Frameworks */ = {isa = PBXBuildFile; productRef = 0481A5F62E63A6FC00A6358E /* Storage */; };
 		0481A5FA2E63A80A00A6358E /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 0481A5F92E63A80A00A6358E /* Supabase */; };
+		05D1A0BA2F4A1C1D00C0FFEE /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 05D1A0B92F4A1C1D00C0FFEE /* GRDB */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -47,6 +48,7 @@
 			files = (
 				0481A5F32E63A6FC00A6358E /* PostgREST in Frameworks */,
 				0481A5F12E63A6FC00A6358E /* Functions in Frameworks */,
+				05D1A0BA2F4A1C1D00C0FFEE /* GRDB in Frameworks */,
 				0481A5FA2E63A80A00A6358E /* Supabase in Frameworks */,
 				0481A5EF2E63A6FC00A6358E /* Auth in Frameworks */,
 				0481A5F72E63A6FC00A6358E /* Storage in Frameworks */,
@@ -87,6 +89,7 @@
 			packageProductDependencies = (
 				0481A5EE2E63A6FC00A6358E /* Auth */,
 				0481A5F02E63A6FC00A6358E /* Functions */,
+				05D1A0B92F4A1C1D00C0FFEE /* GRDB */,
 				0481A5F22E63A6FC00A6358E /* PostgREST */,
 				0481A5F42E63A6FC00A6358E /* Realtime */,
 				0481A5F62E63A6FC00A6358E /* Storage */,
@@ -122,6 +125,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				0481A5ED2E63A6FC00A6358E /* XCRemoteSwiftPackageReference "supabase-swift" */,
+				05D1A0B82F4A1C1D00C0FFEE /* XCRemoteSwiftPackageReference "GRDB" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 04C84DF42E6259BA00206037;
@@ -580,6 +584,14 @@
 				minimumVersion = 2.0.0;
 			};
 		};
+		05D1A0B82F4A1C1D00C0FFEE /* XCRemoteSwiftPackageReference "GRDB" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -612,6 +624,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 0481A5ED2E63A6FC00A6358E /* XCRemoteSwiftPackageReference "supabase-swift" */;
 			productName = Supabase;
+		};
+		05D1A0B92F4A1C1D00C0FFEE /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 05D1A0B82F4A1C1D00C0FFEE /* XCRemoteSwiftPackageReference "GRDB" */;
+			productName = GRDB;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
