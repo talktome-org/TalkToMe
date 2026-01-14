@@ -80,6 +80,14 @@ struct TalkToMeApp: App {
                     // We must NOT treat "initial false" as a logout event.
                     let isInitialCallback = (oldValue == isAuthed)
 
+                    // If Settings was open before logout, `showSettingsSheet` can remain true while the auth view is shown.
+                    // On next login, the sidebar container reappears and immediately presents the sheet again.
+                    if !isInitialCallback {
+                        Task { @MainActor in
+                            navigationViewModel.showSettingsSheet = false
+                        }
+                    }
+
                     if !isAuthed {
                         if !isInitialCallback {
                             // User logged out - reset session view model for fresh login

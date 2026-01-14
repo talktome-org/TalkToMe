@@ -5,18 +5,15 @@ import AuthenticationServices
 
 class AuthService: ObservableObject {
     static let shared = AuthService()
+    private let providerSignIn = ProviderSignIn()
 
     let client: SupabaseClient
-    private let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
+    private let redirectURL: URL
 
     @Published var isAuthenticated = false
     @Published var currentUser: User?
     @Published var isCheckingAuth = true
-
-    private let redirectURL: URL
-
-    private let appleService = AppleSignIn()
-    private let googleService = GoogleSignIn()
+    @Published var lastAuthError: String?
 
     private init() {
         guard let supabaseURL = AuthService.getInfoPlistValue(for: "SUPABASE_URL") as? String,
@@ -30,9 +27,6 @@ class AuthService: ObservableObject {
             fatalError("Failed to construct redirect URL for Supabase OAuth")
         }
         self.redirectURL = redirectURL
-        print("[Auth] Init - iOS: \(osVersion)")
-        print("[Auth] Init - Supabase URL: \(supabaseURL)")
-        print("[Auth] Init - Redirect URL: \(redirectURL.absoluteString)")
 
         client = SupabaseClient(
             supabaseURL: URL(string: supabaseURL)!,
@@ -45,110 +39,34 @@ class AuthService: ObservableObject {
             )
         )
 
-        checkAuthStatus()  // Initialises auth state on app launch to check for an existing Supabase session
+        checkAuthStatus()
     }
 
-    static func getInfoPlistValue(for key: String) -> Any? {
-        if let path = Bundle.main.path(forResource: "Secrets", ofType: "plist"),
-           let plist = NSDictionary(contentsOfFile: path),
-           let value = plist[key] {
-            return value
-        }
-
-        return nil
-    }
-
-    private func checkAuthStatus() {
-        Task { @MainActor in
-            self.isCheckingAuth = true
-        }
-        Task {
-            do {
-                let session = try await client.auth.session
-                await MainActor.run {
-                    self.isAuthenticated = true
-                    self.currentUser = session.user
-                    UserDefaults.standard.set(session.user.id.uuidString, forKey: PreferenceKeys.currentUserId)
-                    self.isCheckingAuth = false
-                }
-            } catch {
-                await MainActor.run {
-                    self.isAuthenticated = false
-                    self.currentUser = nil
-                    UserDefaults.standard.removeObject(forKey: PreferenceKeys.currentUserId)
-                    self.isCheckingAuth = false
-                }
-            }
-        }
-    }
-
-    func signInWithGoogle() async {
-        print("[Auth] Google sign-in start - iOS: \(osVersion), redirect: \(redirectURL.absoluteString)")
+    func signIn(_ provider: ProviderSignIn.Provider) async {
         do {
-            let session = try await googleService.signIn(redirectURL: redirectURL, client: client)
-            print("[Auth] Google sign-in success - user id: \(session.user.id)")
+            let session = try await providerSignIn.signIn(provider: provider, redirectURL: redirectURL, client: client)
             await MainActor.run {
-                self.isAuthenticated = true
-                self.currentUser = session.user
-                UserDefaults.standard.set(session.user.id.uuidString, forKey: PreferenceKeys.currentUserId)
+                self.lastAuthError = nil
+                self.applyAuthenticatedSession(session)
             }
         } catch {
-            let nsErr = error as NSError
-            print("[Auth][Google] error domain: \(nsErr.domain), code: \(nsErr.code)")
-            print("[Auth][Google] description: \(nsErr.localizedDescription)")
-            if !nsErr.userInfo.isEmpty {
-                print("[Auth][Google] userInfo: \(nsErr.userInfo)")
-            }
-            if let underlying = nsErr.userInfo[NSUnderlyingErrorKey] as? NSError {
-                print("[Auth][Google] underlying: domain=\(underlying.domain) code=\(underlying.code) desc=\(underlying.localizedDescription)")
-            }
-        }
-    }
-
-    func signInWithApple(presentationAnchor anchor: ASPresentationAnchor) async {
-        do {
-            let session = try await appleService.signIn(presentationAnchor: anchor, client: client)
             await MainActor.run {
-                self.isAuthenticated = true
-                self.currentUser = session.user
-                UserDefaults.standard.set(session.user.id.uuidString, forKey: PreferenceKeys.currentUserId)
-            }
-        } catch {
-            let nsErr = error as NSError
-            print("[Auth][Apple] error domain: \(nsErr.domain), code: \(nsErr.code)")
-            print("[Auth][Apple] description: \(nsErr.localizedDescription)")
-            if !nsErr.userInfo.isEmpty {
-                print("[Auth][Apple] userInfo: \(nsErr.userInfo)")
-            }
-            if let underlying = nsErr.userInfo[NSUnderlyingErrorKey] as? NSError {
-                print("[Auth][Apple] underlying: domain=\(underlying.domain) code=\(underlying.code) desc=\(underlying.localizedDescription)")
+                self.lastAuthError = error.localizedDescription
             }
         }
     }
 
     func signOut() async {
-        // Immediately update UI state
         await MainActor.run {
-            self.isAuthenticated = false
-            self.currentUser = nil
-            self.isCheckingAuth = false
-            UserDefaults.standard.removeObject(forKey: PreferenceKeys.currentUserId)
+            self.clearAuthenticatedSession()
+            self.lastAuthError = nil
         }
 
-        // Best-effort: unregister current push token server-side to prevent further pushes after sign-out
-        do {
-            if let token = PushNotificationManager.shared.currentDeviceToken,
-               let access = try? await client.auth.session.accessToken {
-                try await BackendService.shared.unregisterPushToken(token: token, accessToken: access)
-            }
-        } catch {
-            // ignore
-        }
+        await unregisterPushTokenAfterSignOut()
 
         do {
             try await client.auth.signOut()
         } catch {
-            print("Sign out error: \(error)")
             checkAuthStatus()
         }
     }
@@ -161,5 +79,55 @@ class AuthService: ObservableObject {
         } catch {
             return nil
         }
+    }
+
+    private func unregisterPushTokenAfterSignOut() async {
+        do {
+            if let token = PushNotificationManager.shared.currentDeviceToken,
+               let access = try? await client.auth.session.accessToken {
+                try await BackendService.shared.unregisterPushToken(token: token, accessToken: access)
+            }
+        } catch {}
+    }
+
+    private func checkAuthStatus() {
+        Task { @MainActor in self.isCheckingAuth = true }
+        Task {
+            do {
+                let session = try await client.auth.session
+                await MainActor.run {
+                    self.applyAuthenticatedSession(session)
+                }
+            } catch {
+                await MainActor.run {
+                    self.clearAuthenticatedSession()
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func applyAuthenticatedSession(_ session: Session) {
+        self.isAuthenticated = true
+        self.currentUser = session.user
+        self.isCheckingAuth = false
+        UserDefaults.standard.set(session.user.id.uuidString, forKey: PreferenceKeys.currentUserId)
+    }
+
+    @MainActor
+    private func clearAuthenticatedSession() {
+        self.isAuthenticated = false
+        self.currentUser = nil
+        self.isCheckingAuth = false
+        UserDefaults.standard.removeObject(forKey: PreferenceKeys.currentUserId)
+    }
+
+    static func getInfoPlistValue(for key: String) -> Any? {
+        if let path = Bundle.main.path(forResource: "Secrets", ofType: "plist"),
+           let plist = NSDictionary(contentsOfFile: path),
+           let value = plist[key] {
+            return value
+        }
+        return nil
     }
 }

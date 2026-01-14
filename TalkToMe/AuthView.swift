@@ -27,7 +27,7 @@ struct AuthView: View {
                 VStack(spacing: 12) {
                 Button(action: {
                     Haptics.selection()
-                    Task { await authService.signInWithGoogle() }
+                    Task { await authService.signIn(.google) }
                 }) {
                     HStack(spacing: 10) {
                         Image("icons8-google-48 copy")
@@ -52,7 +52,7 @@ struct AuthView: View {
                 Button(action: {
                     if let anchor = getPresentationAnchor() {
                         Haptics.selection()
-                        Task { await authService.signInWithApple(presentationAnchor: anchor) }
+                        Task { await authService.signIn(.apple(presentationAnchor: anchor)) }
                     }
                 }) {
                     HStack(spacing: 10) {
