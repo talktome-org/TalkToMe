@@ -130,7 +130,6 @@ struct TalkToMeApp: App {
                 }
                 .task {
                     _ = NetworkMonitor.shared
-                    ConnectionMonitor.shared.start()
                     ChatOutboxProcessor.shared.start()
                     // Telegram-like boot: show cached UI immediately while auth restores.
                     Task { @MainActor in

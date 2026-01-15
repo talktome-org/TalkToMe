@@ -54,7 +54,7 @@ class SettingsViewModel: ObservableObject {
                 gradient: [Color.blue, Color.purple],
                 settings: [
                     SettingItem(title: "Appearance", subtitle: nil, type: .picker(["Light", "Dark", "System"]), icon: "circle.lefthalf.filled"),
-                    SettingItem(title: "Notifications", subtitle: nil, type: .toggle(PushNotificationManager.shared.isPushEnabled), icon: "bell"),
+                    SettingItem(title: "Notifications", subtitle: nil, type: .toggle(APNSService.shared.isPushEnabled), icon: "bell"),
                     SettingItem(title: "Haptics", subtitle: nil, type: .toggle(settingsData.hapticFeedbackEnabled), icon: "iphone.radiowaves.left.and.right")
                 ]
             ),
@@ -105,7 +105,7 @@ class SettingsViewModel: ObservableObject {
         case ("App Settings", "Push Notifications"), ("App Settings", "Notifications"):
             let current = UserDefaults.standard.object(forKey: "talktome_push_enabled") != nil ? UserDefaults.standard.bool(forKey: "talktome_push_enabled") : true
             let newValue = !current
-            PushNotificationManager.shared.setPushEnabled(newValue)
+            APNSService.shared.setPushEnabled(newValue)
             DispatchQueue.main.async { self.setupSettingsSections() }
         case ("Chat Settings", "Auto Scroll"):
             break

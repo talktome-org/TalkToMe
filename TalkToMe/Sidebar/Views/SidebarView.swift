@@ -10,7 +10,6 @@ struct SidebarView: View {
     @EnvironmentObject private var linkVM: LinkViewModel
     @ObservedObject private var authService = AuthService.shared
     @ObservedObject private var networkMonitor = NetworkMonitor.shared
-    @ObservedObject private var connectionMonitor = ConnectionMonitor.shared
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -26,7 +25,6 @@ struct SidebarView: View {
     @State private var lastKnownOnline: Bool? = nil
     @State private var reconnectTask: Task<Void, Never>? = nil
     @State private var reconnectPhase: ReconnectPhase? = nil
-    @State private var lastConnectionState: ConnectionMonitor.State? = nil
 
     let profileNamespace: Namespace.ID
 
@@ -367,7 +365,6 @@ struct SidebarView: View {
             .onAppear {
                 Task { await sessionsViewModel.ensureProfilePictureCached() }
                 lastKnownOnline = networkMonitor.isOnline
-                lastConnectionState = connectionMonitor.state
             }
             .onChange(of: networkMonitor.isOnline, initial: false) { _, online in
                 let wasOnline = lastKnownOnline
@@ -383,30 +380,11 @@ struct SidebarView: View {
                 // Only show Connecting/Updating when we *actually* transition from offline -> online.
                 guard wasOnline == false else { return }
 
-                // We only *display* Connecting here. The actual catch-up sync is triggered when the backend
-                // is confirmed reachable again (ConnectionMonitor: connecting -> connected).
-                reconnectTask?.cancel()
-                reconnectTask = nil
                 reconnectPhase = .connecting
 
-                // If the backend is already reachable immediately, run catch-up right away.
-                if connectionMonitor.state == .connected {
-                    startCatchUpSync()
-                }
-            }
-            .onChange(of: connectionMonitor.state, initial: false) { _, newState in
-                let old = lastConnectionState
-                lastConnectionState = newState
-
-                // If we're offline, SidebarStatus handles it already.
-                guard networkMonitor.isOnline else { return }
-                guard AuthService.shared.isAuthenticated else { return }
-
-                // When backend becomes reachable again after a "connecting" period (weak signal),
-                // run a catch-up sync, just like Telegram.
-                if old == .connecting && newState == .connected {
-                    startCatchUpSync()
-                }
+                // Kick off a fast catch-up sync right away (this is the "Updating…" phase).
+                // Keep this extremely simple: if requests fail, the UI still works with cached data.
+                startCatchUpSync()
             }
             .sheet(isPresented: $showRenameSheet) {
                 VStack(spacing: 16) {
@@ -488,12 +466,11 @@ struct SidebarView: View {
     private var sidebarStatus: SidebarStatus? {
         if networkMonitor.isOnline == false { return .offline }
         if authService.isCheckingAuth { return .connecting }
-        if connectionMonitor.state == .connecting { return .connecting }
         if reconnectPhase == .connecting { return .connecting }
-        // Only show Updating when we're doing an actual "sync/bootstrap".
-        // Background refreshes shouldn't pin the status for a long time.
+        // Updating should map to real work (fetching), even if we already have cached sessions.
         if reconnectPhase == .updating { return .updating }
         if sessionsViewModel.isBootstrapping { return .updating }
+        // Don't show Updating for routine foreground refreshes if we already have cached UI.
         if sessionsViewModel.isLoadingSessions && sessionsViewModel.sessions.isEmpty { return .updating }
         return nil
     }

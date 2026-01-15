@@ -83,7 +83,7 @@ class AuthService: ObservableObject {
 
     private func unregisterPushTokenAfterSignOut() async {
         do {
-            if let token = PushNotificationManager.shared.currentDeviceToken,
+            if let token = APNSService.shared.currentDeviceToken,
                let access = try? await client.auth.session.accessToken {
                 try await BackendService.shared.unregisterPushToken(token: token, accessToken: access)
             }
