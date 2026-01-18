@@ -201,52 +201,58 @@ class ChatViewModel: ObservableObject {
         guard !(trimmedMessage.isEmpty && attachmentsToSend.isEmpty) else { return }
         guard !isStreaming else { return }
 
-        // Offline-first: enqueue to outbox and render immediately.
-        if NetworkMonitor.shared.isOnline == false {
-            let messageToSend: String = {
-                if !trimmedMessage.isEmpty { return trimmedMessage }
-                if attachmentsToSend.contains(where: { $0.isImage }) { return "User sent a photo." }
-                return "User sent an attachment."
-            }()
+        // IMPORTANT: For image-only (and attachment-only) sends, we want to send ONLY the attachment.
+        // The backend already stores attachments as "segments" when attachments are present, so sending
+        // an empty message avoids injecting a fake text segment like "User sent a photo."
+        let messageToSend = trimmedMessage
+        let previewToSend: String = {
+            if !trimmedMessage.isEmpty { return trimmedMessage }
+            if attachmentsToSend.contains(where: { $0.isImage }) { return "Sent a photo." }
+            return "Sent an attachment."
+        }()
 
-            if self.sessionId == nil {
-                let localId = UUID()
-                self.sessionId = localId
-                self.chatMessagesVM.sessionId = localId
-                let currentTime = ISO8601DateFormatter().string(from: Date())
-                NotificationCenter.default.post(name: .chatSessionCreated, object: nil, userInfo: [
-                    "sessionId": localId,
-                    "title": ChatSession.defaultTitle,
-                    "lastUsedISO8601": currentTime,
-                    "lastMessageContent": ""
+        // Ensure we always have a local session ID so we can persist the user message even if the request fails.
+        var createdLocalSessionId: UUID? = nil
+        if self.sessionId == nil {
+            let localId = UUID()
+            createdLocalSessionId = localId
+            self.sessionId = localId
+            self.chatMessagesVM.sessionId = localId
+            let currentTime = ISO8601DateFormatter().string(from: Date())
+            NotificationCenter.default.post(name: .chatSessionCreated, object: nil, userInfo: [
+                "sessionId": localId,
+                "title": ChatSession.defaultTitle,
+                "lastUsedISO8601": currentTime,
+                "lastMessageContent": ""
+            ])
+
+            // Persist the local-only session so it survives app restarts even if the network / backend call fails.
+            Task.detached {
+                await ChatStore.shared.upsertSessions([
+                    ChatSession(id: localId, title: ChatSession.defaultTitle, lastUsedISO8601: currentTime, lastMessageContent: "")
                 ])
-
-                // Persist the local-only session so it survives app restarts while offline.
-                Task.detached {
-                    await ChatStore.shared.upsertSessions([
-                        ChatSession(id: localId, title: ChatSession.defaultTitle, lastUsedISO8601: currentTime, lastMessageContent: "")
-                    ])
-                }
             }
+        }
 
-            guard let sid = self.sessionId else { return }
-            guard let userId = AuthService.shared.currentUser?.id else { return }
+        guard let sid = self.sessionId else { return }
+        guard let userId = AuthService.shared.currentUser?.id else { return }
 
-            // Persist attachments to disk now so we can upload later.
-            var outboxAttachments: [OutboxAttachment] = []
-            var segs: [[String: Any]] = []
-            if !trimmedMessage.isEmpty {
-                segs.append(["type": "text", "content": trimmedMessage])
-            }
+        // Persist attachments to disk now so they survive restarts even if streaming fails.
+        var outboxAttachments: [OutboxAttachment] = []
+        var segs: [[String: Any]] = []
+        if !trimmedMessage.isEmpty {
+            segs.append(["type": "text", "content": trimmedMessage])
+        }
 
-            let fm = FileManager.default
-            let baseDir: URL = {
-                let appSupport = (try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)) ?? fm.temporaryDirectory
-                let dir = appSupport.appendingPathComponent("TalkToMe/OutboxAttachments", isDirectory: true)
-                try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-                return dir
-            }()
+        let fm = FileManager.default
+        let baseDir: URL = {
+            let appSupport = (try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)) ?? fm.temporaryDirectory
+            let dir = appSupport.appendingPathComponent("TalkToMe/OutboxAttachments", isDirectory: true)
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
+        }()
 
+        if !attachmentsToSend.isEmpty {
             for att in attachmentsToSend {
                 switch att.kind {
                 case .image(let data, let ct):
@@ -271,29 +277,45 @@ class ChatViewModel: ObservableObject {
                     segs.append(["type": "file", "url": fileURL.absoluteString, "filename": filename, "content_type": ct])
                 }
             }
+        }
 
-            let jsonContent: String = {
-                let obj: [String: Any] = ["_talktome": ["type": "segments", "segments": segs]]
-                let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
-                return String(data: data, encoding: .utf8) ?? messageToSend
-            }()
+        let persistedContent: String = {
+            guard !attachmentsToSend.isEmpty else { return messageToSend }
+            let obj: [String: Any] = ["_talktome": ["type": "segments", "segments": segs]]
+            let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
+            return String(data: data, encoding: .utf8) ?? messageToSend
+        }()
 
-            let dto = BackendService.ChatMessageDTO(
-                id: UUID(),
-                user_id: userId,
-                session_id: sid,
-                role: "user",
-                content: jsonContent,
-                created_at: ISO8601DateFormatter().string(from: Date())
-            )
+        let dto = BackendService.ChatMessageDTO(
+            id: UUID(),
+            user_id: userId,
+            session_id: sid,
+            role: "user",
+            content: persistedContent,
+            created_at: ISO8601DateFormatter().string(from: Date())
+        )
 
-            // Render immediately in the current chat UI.
-            let localMessage = ChatMessage(dto: dto, currentUserId: userId)
-            self.messages.append(localMessage)
-            self.updateCacheForCurrentSession()
+        // Render + persist immediately so the user's message survives failures (no credits, no internet, etc).
+        let localMessage = ChatMessage(dto: dto, currentUserId: userId)
+        self.messages.append(localMessage)
+        self.updateCacheForCurrentSession()
+        Task.detached {
+            await ChatStore.shared.upsertMessages([dto])
+        }
 
+        NotificationCenter.default.post(name: .chatMessageSent, object: nil, userInfo: [
+            "sessionId": sid,
+            "messageContent": previewToSend
+        ])
+        NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
+
+        // Keep current UI behavior (optimistic local message).
+        inputText = ""
+        pendingAttachments = []
+
+        // If we're offline, stop here and rely on the outbox to send later.
+        if NetworkMonitor.shared.isOnline == false {
             Task.detached {
-                await ChatStore.shared.upsertMessages([dto])
                 await ChatOutboxProcessor.shared.enqueueChatMessage(
                     sessionId: sid,
                     serverSessionId: nil,
@@ -301,16 +323,6 @@ class ChatViewModel: ObservableObject {
                     attachments: outboxAttachments
                 )
             }
-
-            NotificationCenter.default.post(name: .chatMessageSent, object: nil, userInfo: [
-                "sessionId": sid,
-                "messageContent": messageToSend
-            ])
-            NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
-
-            // Keep current UI behavior (optimistic local message).
-            inputText = ""
-            pendingAttachments = []
             isLoading = false
             isAssistantTyping = false
             isStreaming = false
@@ -318,29 +330,6 @@ class ChatViewModel: ObservableObject {
             return
         }
 
-        var userSegments: [MessageSegment] = []
-        if !trimmedMessage.isEmpty {
-            userSegments.append(.text(trimmedMessage))
-        }
-        for att in attachmentsToSend {
-            switch att.kind {
-            case .image(let data, _):
-                userSegments.append(.imageData(data))
-            case .file(let data, let filename, _):
-                userSegments.append(.fileData(name: filename, data: data))
-            }
-        }
-
-        let userMessage = ChatMessage(segments: userSegments, isFromUser: true)
-        messages.append(userMessage)
-
-        let messageToSend: String = {
-            if !trimmedMessage.isEmpty { return trimmedMessage }
-            if attachmentsToSend.contains(where: { $0.isImage }) { return "User sent a photo." }
-            return "User sent an attachment."
-        }()
-        inputText = ""
-        pendingAttachments = []
         isLoading = true
         isAssistantTyping = false
         receivedAnyAssistantOutput = false
@@ -375,15 +364,10 @@ class ChatViewModel: ObservableObject {
                 return
             }
 
-            // If we're sending attachments (or this is a brand new chat), we need a session ID before streaming.
-            if self.sessionId == nil || !attachmentsToSend.isEmpty {
-                _ = await self.ensureSessionId()
-                if let sid = self.sessionId {
-                    await MainActor.run {
-                        self.assistantMessageIdBySession[sid] = placeholderMessage.id
-                    }
-                }
-            }
+            let localSessionIdForSend = sid
+            let createdLocalSessionIdForSend = createdLocalSessionId
+            let requestSessionIdForStream: UUID? = (createdLocalSessionIdForSend != nil) ? nil : self.sessionId
+
             await MainActor.run { self.isStreaming = true }
             await MainActor.run { if let sid = self.sessionId { self.currentStreamingSessionId = sid } }
             let bgName = await MainActor.run { "chat_stream_" + (self.sessionId?.uuidString ?? "unknown") }
@@ -605,7 +589,25 @@ class ChatViewModel: ObservableObject {
                     case .session(let sid):
                         streamSessionId = sid
                         Task { @MainActor in
-                            if self.sessionId == nil { self.sessionId = sid }
+                            // If we created a local-only session for persistence, rekey it to the server session id.
+                            if let local = createdLocalSessionIdForSend, self.sessionId == local, sid != local {
+                                await ChatStore.shared.rekeySession(oldId: local, newId: sid)
+                                NotificationCenter.default.post(name: .chatSessionRekeyed, object: nil, userInfo: [
+                                    "oldSessionId": local,
+                                    "newSessionId": sid
+                                ])
+                                NotificationCenter.default.post(name: .chatSessionCreated, object: nil, userInfo: [
+                                    "sessionId": sid,
+                                    "title": ChatSession.defaultTitle,
+                                    "lastUsedISO8601": ISO8601DateFormatter().string(from: Date()),
+                                    "lastMessageContent": ""
+                                ])
+                                self.sessionId = sid
+                                self.chatMessagesVM.sessionId = sid
+                            } else if self.sessionId == nil {
+                                self.sessionId = sid
+                                self.chatMessagesVM.sessionId = sid
+                            }
                             self.chatMessagesVM.setCachedMessages(initialMessagesForStream, for: sid)
                             if let placeholderId = initialAssistantPlaceholderId {
                                 self.assistantMessageIdBySession[sid] = placeholderId
@@ -757,11 +759,6 @@ class ChatViewModel: ObservableObject {
                                 Task { @MainActor in
                                     self.chatMessagesVM.setCachedMessages(self.messages, for: sid)
                                 }
-                                NotificationCenter.default.post(name: .chatMessageSent, object: nil, userInfo: [
-                                    "sessionId": sid,
-                                    "messageContent": messageToSend
-                                ])
-                                NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
                             }
                             Self.endBackgroundTask(bgTask)
                         }
@@ -790,6 +787,21 @@ class ChatViewModel: ObservableObject {
                             }
                             Self.endBackgroundTask(bgTask)
                         }
+                        // Queue for retry so the message can be sent later (e.g. no credits / transient network).
+                        let outboxSessionId: UUID = streamSessionId ?? localSessionIdForSend
+                        let outboxServerSessionId: UUID? = {
+                            guard let s = streamSessionId else { return nil }
+                            if let created = createdLocalSessionIdForSend, s == created { return nil }
+                            return s
+                        }()
+                        Task.detached {
+                            await ChatOutboxProcessor.shared.enqueueChatMessage(
+                                sessionId: outboxSessionId,
+                                serverSessionId: outboxServerSessionId,
+                                message: messageToSend,
+                                attachments: outboxAttachments
+                            )
+                        }
                     }
             }
 
@@ -803,13 +815,12 @@ class ChatViewModel: ObservableObject {
                     }
             }
 
-            let sessionIdForStream = self.sessionId
             let focusSnippetForStream = self.focusSnippet
 
             let task = Task.detached { [streamToken] in
                 let stream = BackendService.shared.streamChatMessage(
                     messageToSend,
-                    sessionId: sessionIdForStream,
+                    sessionId: requestSessionIdForStream,
                     chatHistory: Array(chatHistory),
                     attachments: uploaded.isEmpty ? nil : uploaded,
                     accessToken: accessToken,

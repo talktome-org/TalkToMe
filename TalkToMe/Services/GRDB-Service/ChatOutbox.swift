@@ -196,9 +196,17 @@ final class ChatOutboxProcessor {
             switch event {
             case .done:
                 try await updateItem(item.id, status: "sent")
+                let previewToSend: String = {
+                    let trimmed = item.message.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { return trimmed }
+                    let atts = decodeAttachments(item.attachments_json)
+                    if atts.isEmpty { return "" }
+                    let hasImage = atts.contains(where: { $0.type == "image" })
+                    return hasImage ? "Sent a photo." : "Sent an attachment."
+                }()
                 NotificationCenter.default.post(name: .chatMessageSent, object: nil, userInfo: [
                     "sessionId": serverSid,
-                    "messageContent": item.message
+                    "messageContent": previewToSend
                 ])
                 NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
                 return

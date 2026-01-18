@@ -4,6 +4,8 @@ struct BackendService {
 
     static let shared = BackendService()
 
+    static let coreRequestTimeoutSeconds: TimeInterval = 15
+
     internal let urlSession: URLSession = .shared
     internal let jsonEncoder = JSONEncoder()
     internal let jsonDecoder = JSONDecoder()

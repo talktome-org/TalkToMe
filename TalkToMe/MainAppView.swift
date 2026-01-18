@@ -14,7 +14,9 @@ struct MainAppView: View {
     var body: some View {
         // If we have any conversations but none is selected, don't show the chat screen at all.
         // This makes "landing in main chat view" impossible on launch — the user starts in the sidebar list.
-        if sessionsViewModel.activeSessionId == nil, !sessionsViewModel.sessions.isEmpty {
+        if sessionsViewModel.activeSessionId == nil,
+           !sessionsViewModel.sessions.isEmpty,
+           navigationViewModel.isOpen {
             ZStack {
                 Color(.systemBackground).ignoresSafeArea()
                 VStack(spacing: 10) {
@@ -30,7 +32,6 @@ struct MainAppView: View {
             .onAppear {
                 withAnimation(nil) {
                     navigationViewModel.isOpen = true
-                    navigationViewModel.dragOffset = 0
                 }
             }
         } else {

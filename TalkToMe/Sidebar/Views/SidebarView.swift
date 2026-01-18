@@ -22,9 +22,6 @@ struct SidebarView: View {
     @State private var renameText: String = ""
     @State private var renameTargetId: UUID? = nil
     @State private var showAddFriendSheet: Bool = false
-    @State private var lastKnownOnline: Bool? = nil
-    @State private var reconnectTask: Task<Void, Never>? = nil
-    @State private var reconnectPhase: ReconnectPhase? = nil
 
     let profileNamespace: Namespace.ID
 
@@ -33,323 +30,303 @@ struct SidebarView: View {
         return !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private func controlsBar(bottomInset: CGFloat, availableWidth: CGFloat) -> some View {
+        let showLeftButtons: Bool = !isSearchActive
+        let isSearchCollapsed: Bool = !isSearchActive
+
+        // Make the search pill ~1/3 shorter when not active.
+        // Use the parent GeometryReader width (not a self-measured width) to avoid feedback loops.
+        let horizontalPadding: CGFloat = 40 // matches `.padding(.horizontal, 20)` below
+        let contentWidth: CGFloat = max(0, availableWidth - horizontalPadding)
+        let sideButtonWidth: CGFloat = 50
+        let buttonSpacing: CGFloat = 8
+
+        // Base "full width" (inactive layout is [profile][search][newChat]) has 2 gaps (2 * 8).
+        let fullSearchWidthBetweenButtons: CGFloat = max(0, contentWidth - sideButtonWidth - sideButtonWidth - (2 * buttonSpacing))
+        let collapsedSearchWidthFallback: CGFloat = 220
+        let collapsedSearchWidth: CGFloat = {
+            guard fullSearchWidthBetweenButtons > 0 else { return collapsedSearchWidthFallback }
+            return max(200, fullSearchWidthBetweenButtons * 0.90)
+        }()
+
+        return HStack(spacing: 8) {
+            if #available(iOS 26.0, *) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 17, weight: .regular))
+                        .foregroundStyle(.secondary)
+
+                    TextField("Search", text: $searchText)
+                        .focused($isSearchFieldFocused)
+                        .submitLabel(.search)
+                        .textInputAutocapitalization(.never)
+                        .disableAutocorrection(true)
+                        .font(.system(size: 17, weight: .regular))
+                        .padding(.vertical, 4)
+                }
+                .padding(.vertical, 10)
+                .padding(.horizontal, 14)
+                .frame(maxWidth: isSearchCollapsed ? collapsedSearchWidth : .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 999, style: .continuous))
+                .glassEffect(.regular.interactive())
+            }
+
+            if showLeftButtons {
+                if #available(iOS 26.0, *) {
+                    Button(action: {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0)) {
+                            sessionsViewModel.startNewChat()
+                            navigationViewModel.selectedTab = .chat
+                            isOpen = false
+                        }
+                    }) {
+                        Image(systemName: "chevron.right.2")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .offset(y: -1)
+                    }
+                    .frame(width: 50, height: 50)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("New chat")
+                    .glassEffect(.regular.interactive(), in: Circle())
+                }
+            }
+
+            if isSearchActive {
+                if #available(iOS 26.0, *) {
+                    Button(action: {
+                        Haptics.impact(.light)
+                        searchText = ""
+                        isSearchFieldFocused = false
+                    }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 50, height: 50)
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: Circle())
+                    .accessibilityLabel("Close search")
+
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, bottomInset + 2 + (isSearchFieldFocused ? 12 : 0))
+        .contentShape(Rectangle())
+        .animation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0), value: isSearchActive)
+        .animation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0), value: isSearchFieldFocused)
+        .zIndex(10)
+    }
+
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
-                VStack(spacing: 0) {
-                    ScrollView {
-                        let availableWidth = geometry.size.width
-                        let isLinked = (linkVM.state == .linked) || (sessionsViewModel.partnerInfo?.linked == true)
+                let pinnedHeaderBar = HStack {
+                    if #available(iOS 26.0, *) {
+                    Button(action: {
+                        Haptics.impact(.light)
+                        navigationViewModel.showSettingsSheet = true
+                    }) {
+                        SidebarAvatarView(avatarURL: sessionsViewModel.myAvatarURL)
+                            .frame(width: 40, height: 40)
+                            .clipShape(Circle())
+                    }
+                    .frame(width: 50, height: 50)
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular, in: Circle())
+                    }
 
-                        VStack(spacing: 10) {
-                            if !isSearchActive {
-                                if !sessionsViewModel.pendingRequests.isEmpty {
-                                    VStack(alignment: .leading, spacing: 12) {
-                                        ForEach(sessionsViewModel.pendingRequests, id: \.id) { request in
-                                            Button(action: {
-                                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8, blendDuration: 0)) {
-                                                    sessionsViewModel.openPendingRequest(request)
-                                                    isOpen = false
-                                                }
-                                            }) {
-                                                PendingRequestRowView(request: request)
-                                            }
-                                            .buttonStyle(.plain)
-                                        }
-                                    }
-                                    .padding(12)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                            .fill(Color(.systemGray6))
-                                    )
-                                    .padding(.horizontal, 16)
-                                }
+                    Spacer()
+                    ConnectionStatusPillView()
+                    Spacer()
 
-                                HStack(spacing: 12) {
-                                    Text("Conversations")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(.secondary)
-                                    if let status = sidebarStatus {
-                                        sidebarStatusView(status)
-                                    }
-                                    Spacer()
+                    if #available(iOS 26.0, *) {
+                        Button(action: {
+                            showAddFriendSheet = true
+                            Task { await linkVM.ensureInviteReady() }
+                        }) {
+                            Image(systemName: "person.fill.badge.plus")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(.primary)
+                        }
+                        .frame(width: 50, height: 50)
+                        .contentShape(Circle())
+                        .buttonStyle(.plain)
+                        .glassEffect(.regular.interactive(), in: Circle())
+                    }
+
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 6)
+
+                ScrollView {
+                    let availableWidth = geometry.size.width
+                    let isLinked = (linkVM.state == .linked) || (sessionsViewModel.partnerInfo?.linked == true)
+
+                    VStack(spacing: 10) {
+                        if !sessionsViewModel.pendingRequests.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach(sessionsViewModel.pendingRequests, id: \.id) { request in
                                     Button(action: {
-                                        Haptics.impact(.light)
-                                        showAddFriendSheet = true
-                                        Task { await linkVM.ensureInviteReady() }
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8, blendDuration: 0)) {
+                                            sessionsViewModel.openPendingRequest(request)
+                                            isOpen = false
+                                        }
                                     }) {
-                                        HStack(spacing: 8) {
-                                            Text("ADD FRIEND")
-                                                .font(.system(size: 12, weight: .semibold))
-                                                .foregroundColor(.primary)
-                                            Spacer(minLength: 0)
-                                            Image(systemName: "plus")
-                                                .font(.system(size: 12, weight: .semibold))
-                                                .foregroundStyle(.primary)
-                                        }
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 8)
-                                        .frame(width: 132)
-                                        .background {
-                                            if #available(iOS 26.0, *) {
-                                                Color.clear
-                                                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                                    .opacity(0.98)
-                                            } else {
-                                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                                    .fill(Color(.systemGray6))
-                                            }
-                                        }
+                                        PendingRequestRowView(request: request)
                                     }
                                     .buttonStyle(.plain)
                                 }
-                                .padding(.horizontal, 20)
-                                .padding(.top, 12)
+                            }
+                            .padding(12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .fill(Color(.systemGray6))
+                            )
+                            .padding(.horizontal, 16)
+                            .padding(.top, 10)
+                        }
+
+
+                        let term = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        let filteredSessions: [ChatSession] = sessionsViewModel.sessions.filter { session in
+                            term.isEmpty || session.title.lowercased().contains(term)
+                        }
+
+                        LazyVStack(spacing: 6) {
+                            if term.isEmpty,
+                               let err = sessionsViewModel.sessionsLoadError,
+                               !err.isEmpty,
+                               !sessionsViewModel.sessions.isEmpty,
+                               !sessionsViewModel.isLoadingSessions {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                    Text(err)
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                    Spacer()
+                                    Button(action: {
+                                        Haptics.impact(.light)
+                                        Task { await sessionsViewModel.refreshSessions() }
+                                    }) {
+                                        Text("Retry")
+                                            .font(.system(size: 13, weight: .semibold))
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                                .padding(.vertical, 6)
                             }
 
-                            let term = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                            let filteredSessions: [ChatSession] = sessionsViewModel.sessions.filter { session in
-                                term.isEmpty || session.title.lowercased().contains(term)
-                            }
-
-                            LazyVStack(spacing: 6) {
-                                if term.isEmpty,
-                                   let err = sessionsViewModel.sessionsLoadError,
-                                   !err.isEmpty,
-                                   !sessionsViewModel.sessions.isEmpty,
-                                   !sessionsViewModel.isLoadingSessions {
-                                    HStack(spacing: 10) {
-                                        Image(systemName: "exclamationmark.triangle.fill")
-                                            .font(.system(size: 12, weight: .semibold))
+                            if term.isEmpty && sessionsViewModel.sessions.isEmpty {
+                                if sessionsViewModel.isLoadingSessions {
+                                    VStack(spacing: 10) {
+                                        ProgressView()
+                                        Text("Loading conversations…")
+                                            .font(.system(size: 14))
                                             .foregroundStyle(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 24)
+                                } else if let err = sessionsViewModel.sessionsLoadError, !err.isEmpty {
+                                    VStack(spacing: 10) {
                                         Text(err)
-                                            .font(.system(size: 13))
+                                            .font(.system(size: 14))
                                             .foregroundStyle(.secondary)
-                                            .lineLimit(2)
-                                        Spacer()
+                                            .multilineTextAlignment(.center)
                                         Button(action: {
                                             Haptics.impact(.light)
                                             Task { await sessionsViewModel.refreshSessions() }
                                         }) {
                                             Text("Retry")
-                                                .font(.system(size: 13, weight: .semibold))
+                                                .font(.system(size: 14, weight: .semibold))
                                         }
                                         .buttonStyle(.bordered)
                                     }
-                                    .padding(.vertical, 6)
-                                }
-
-                                if term.isEmpty && sessionsViewModel.sessions.isEmpty {
-                                    if sessionsViewModel.isLoadingSessions {
-                                        VStack(spacing: 10) {
-                                            ProgressView()
-                                            Text("Loading conversations…")
-                                                .font(.system(size: 14))
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 24)
-                                    } else if let err = sessionsViewModel.sessionsLoadError, !err.isEmpty {
-                                        VStack(spacing: 10) {
-                                            Text(err)
-                                                .font(.system(size: 14))
-                                                .foregroundStyle(.secondary)
-                                                .multilineTextAlignment(.center)
-                                            Button(action: {
-                                                Haptics.impact(.light)
-                                                Task { await sessionsViewModel.refreshSessions() }
-                                            }) {
-                                                Text("Retry")
-                                                    .font(.system(size: 14, weight: .semibold))
-                                            }
-                                            .buttonStyle(.bordered)
-                                        }
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 24)
-                                    } else {
-                                        VStack(spacing: 10) {
-                                            Text("No conversations yet")
-                                                .font(.system(size: 14))
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 24)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 24)
+                                } else {
+                                    VStack(spacing: 10) {
+                                        Text("No conversations yet")
+                                            .font(.system(size: 14))
+                                            .foregroundStyle(.secondary)
                                     }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 24)
                                 }
+                            }
 
-                                ForEach(filteredSessions, id: \.id) { session in
-                                    Button(action: {
-                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8, blendDuration: 0)) {
-                                            sessionsViewModel.openSession(session.id)
-                                            navigationViewModel.selectedTab = .chat
-                                            isOpen = false
-                                        }
-                                    }) {
-                                        let title = session.title
-                                        let dateText = sessionsViewModel.formatLastUsed(session.lastUsedISO8601)
-                                        let previewText = previewText(for: session, availableWidth: availableWidth)
-                                        let showUnreadDot = isLinked && sessionsViewModel.unreadPartnerSessionIds.contains(session.id)
-
-                                        VStack(alignment: .leading, spacing: 12) {
-                                            HStack {
-                                                Text(title)
-                                                    .font(.system(size: 18, weight: .regular))
-                                                    .foregroundColor(.primary)
-                                                Spacer()
-                                                Text(dateText)
-                                                    .font(.system(size: 12))
-                                                    .foregroundColor(.secondary)
-                                            }
-
-                                            HStack(spacing: 6) {
-                                                Text(previewText)
-                                                    .font(.system(size: 14))
-                                                    .foregroundColor(.secondary)
-                                                    .lineLimit(1)
-                                                    .truncationMode(.tail)
-                                                Spacer()
-                                                if showUnreadDot {
-                                                    Circle()
-                                                        .fill(Color(red: 0.4, green: 0.2, blue: 0.6))
-                                                        .frame(width: 14, height: 14)
-                                                }
-                                            }
-                                        }
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.horizontal, 2)
-                                        .padding(.vertical, 12)
+                            ForEach(filteredSessions, id: \.id) { session in
+                                Button(action: {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8, blendDuration: 0)) {
+                                        sessionsViewModel.openSession(session.id)
+                                        navigationViewModel.selectedTab = .chat
+                                        isOpen = false
                                     }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        Button("Rename", systemImage: "pencil") {
-                                            renameTargetId = session.id
-                                            renameText = (session.title == ChatSession.defaultTitle) ? "" : session.title
-                                            showRenameSheet = true
+                                }) {
+                                    let title = session.title
+                                    let dateText = sessionsViewModel.formatLastUsed(session.lastUsedISO8601)
+                                    let previewText = previewText(for: session, availableWidth: availableWidth)
+                                    let showUnreadDot = isLinked && sessionsViewModel.unreadPartnerSessionIds.contains(session.id)
+
+                                    VStack(alignment: .leading, spacing: 12) {
+                                        HStack {
+                                            Text(title)
+                                                .font(.system(size: 18, weight: .regular))
+                                                .foregroundColor(.primary)
+                                            Spacer()
+                                            Text(dateText)
+                                                .font(.system(size: 12))
+                                                .foregroundColor(.secondary)
                                         }
-                                        Button(role: .destructive) {
-                                            Task { await sessionsViewModel.deleteSession(session.id) }
-                                        } label: {
-                                            Label("Delete", systemImage: "trash")
+
+                                        HStack(spacing: 6) {
+                                            Text(previewText)
+                                                .font(.system(size: 14))
+                                                .foregroundColor(.secondary)
+                                                .lineLimit(1)
+                                                .truncationMode(.tail)
+                                            Spacer()
+                                            if showUnreadDot {
+                                                Circle()
+                                                    .fill(Color(red: 0.4, green: 0.2, blue: 0.6))
+                                                    .frame(width: 14, height: 14)
+                                            }
                                         }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 2)
+                                    .padding(.vertical, 12)
+                                }
+                                .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button("Rename", systemImage: "pencil") {
+                                        renameTargetId = session.id
+                                        renameText = (session.title == ChatSession.defaultTitle) ? "" : session.title
+                                        showRenameSheet = true
+                                    }
+                                    Button(role: .destructive) {
+                                        Task { await sessionsViewModel.deleteSession(session.id) }
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
                                     }
                                 }
                             }
-                            .padding(.top, 4)
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 20)
                         }
-                        .padding(.top, 8)
-                        .padding(.bottom, 80)
+                        .padding(.horizontal, 20)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .refreshable { await sessionsViewModel.refreshSessions() }
-                    .scrollIndicators(.hidden)
-
-                    let pillShape = RoundedRectangle(cornerRadius: 999, style: .continuous)
-
-                    HStack(spacing: 12) {
-                        Button(action: {
-                            Haptics.impact(.light)
-                            navigationViewModel.showSettingsSheet = true
-                        }) {
-                            SidebarAvatarView(avatarURL: sessionsViewModel.myAvatarURL)
-                                .frame(width: 40, height: 40)
-                                .clipShape(Circle())
-                                .overlay(
-                                    Circle()
-                                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                                )
-                        }
-                        .buttonStyle(.plain)
-
-                        HStack(spacing: 10) {
-                            Image(systemName: "magnifyingglass")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(.secondary)
-
-                            TextField("Search conversations", text: $searchText)
-                                .focused($isSearchFieldFocused)
-                                .submitLabel(.search)
-                                .textInputAutocapitalization(.never)
-                                .disableAutocorrection(true)
-                                .font(.system(size: 16, weight: .regular))
-                                .foregroundStyle(.primary)
-                        }
-                        .padding(.vertical, 10)
-                        .padding(.horizontal, 14)
-                        .frame(maxWidth: .infinity)
-                        .background {
-                            if #available(iOS 26.0, *) {
-                                pillShape
-                                    .fill(.clear)
-                                    .glassEffect()
-                            } else {
-                                pillShape
-                                    .fill(.ultraThinMaterial)
-                            }
-                        }
-                        .clipShape(pillShape)
-                        .overlay(
-                            pillShape
-                                .stroke(Color.white.opacity(colorScheme == .dark ? 0.14 : 0.18), lineWidth: 1)
-                        )
-
-                        Button(action: {
-                            Haptics.impact(.light)
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0)) {
-                                sessionsViewModel.startNewChat()
-                                navigationViewModel.selectedTab = .chat
-                                isOpen = false
-                            }
-                        }) {
-                            Image(systemName: "square.and.pencil")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(.primary)
-                                .frame(width: 44, height: 44)
-                                .offset(y: -1.5)
-                                .background {
-                                    if #available(iOS 26.0, *) {
-                                        Circle()
-                                            .fill(.clear)
-                                            .glassEffect()
-                                    } else {
-                                        Circle()
-                                            .fill(.ultraThinMaterial)
-                                    }
-                                }
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("New chat")
-
-                        if isSearchActive {
-                            Button(action: {
-                                Haptics.impact(.light)
-                                searchText = ""
-                                isSearchFieldFocused = false
-                            }) {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 18, weight: .semibold))
-                                    .foregroundStyle(.primary)
-                                    .frame(width: 44, height: 44)
-                                    .background {
-                                        if #available(iOS 26.0, *) {
-                                            Circle()
-                                                .fill(.clear)
-                                                .glassEffect()
-                                        } else {
-                                            Circle()
-                                                .fill(.ultraThinMaterial)
-                                        }
-                                    }
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Close search")
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 10)
-                    .padding(.bottom, 12)
-                    .background(Color(.systemBackground).opacity(0.96))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .refreshable { await sessionsViewModel.refreshSessions() }
+                .safeAreaInset(edge: .top) {
+                    pinnedHeaderBar
+                }
+                // Match the top: the bottom controls bar is now a real safe-area inset, not an overlay.
+                .safeAreaInset(edge: .bottom) {
+                    controlsBar(bottomInset: 0, availableWidth: geometry.size.width)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -364,27 +341,6 @@ struct SidebarView: View {
             }
             .onAppear {
                 Task { await sessionsViewModel.ensureProfilePictureCached() }
-                lastKnownOnline = networkMonitor.isOnline
-            }
-            .onChange(of: networkMonitor.isOnline, initial: false) { _, online in
-                let wasOnline = lastKnownOnline
-                lastKnownOnline = online
-
-                if online == false {
-                    reconnectTask?.cancel()
-                    reconnectTask = nil
-                    reconnectPhase = nil
-                    return
-                }
-
-                // Only show Connecting/Updating when we *actually* transition from offline -> online.
-                guard wasOnline == false else { return }
-
-                reconnectPhase = .connecting
-
-                // Kick off a fast catch-up sync right away (this is the "Updating…" phase).
-                // Keep this extremely simple: if requests fail, the UI still works with cached data.
-                startCatchUpSync()
             }
             .sheet(isPresented: $showRenameSheet) {
                 VStack(spacing: 16) {
@@ -430,85 +386,6 @@ struct SidebarView: View {
         return clipped + (clipped.count < rawPreview.count ? "…" : "")
     }
 
-    private enum SidebarStatus {
-        case offline
-        case connecting
-        case updating
-    }
-
-    private enum ReconnectPhase {
-        case connecting
-        case updating
-    }
-
-    private func startCatchUpSync() {
-        reconnectTask?.cancel()
-        reconnectTask = Task { @MainActor in
-            reconnectPhase = .updating
-            await AppSyncGate.shared.setSyncing(true)
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask { await sessionsViewModel.loadPartnerInfo(prefetchAvatars: false) }
-                group.addTask { await sessionsViewModel.loadPendingRequests() }
-                group.addTask { await sessionsViewModel.loadSessions(ensurePartnerInfo: false) }
-            }
-            await AppSyncGate.shared.setSyncing(false)
-            reconnectPhase = nil
-
-            // After sync finishes, do non-critical prefetch in the background.
-            Task { @MainActor in
-                await sessionsViewModel.loadPairedAvatars()
-                await sessionsViewModel.preloadAvatars()
-                await sessionsViewModel.ensureProfilePictureCached()
-            }
-        }
-    }
-
-    private var sidebarStatus: SidebarStatus? {
-        if networkMonitor.isOnline == false { return .offline }
-        if authService.isCheckingAuth { return .connecting }
-        if reconnectPhase == .connecting { return .connecting }
-        // Updating should map to real work (fetching), even if we already have cached sessions.
-        if reconnectPhase == .updating { return .updating }
-        if sessionsViewModel.isBootstrapping { return .updating }
-        // Don't show Updating for routine foreground refreshes if we already have cached UI.
-        if sessionsViewModel.isLoadingSessions && sessionsViewModel.sessions.isEmpty { return .updating }
-        return nil
-    }
-
-    @ViewBuilder
-    private func sidebarStatusView(_ status: SidebarStatus) -> some View {
-        let pill = Capsule(style: .continuous)
-        HStack(spacing: 6) {
-            switch status {
-            case .offline:
-                Image(systemName: "wifi.slash")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text("Offline")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            case .connecting:
-                ProgressView()
-                    .controlSize(.mini)
-                Text("Connecting…")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            case .updating:
-                ProgressView()
-                    .controlSize(.mini)
-                Text("Updating…")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.thinMaterial, in: pill)
-        .overlay(
-            pill.stroke(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.14), lineWidth: 1)
-        )
-    }
-
     private func shouldShowLastMessage(_ content: String?) -> Bool {
         guard let content = content else { return false }
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -537,8 +414,6 @@ struct SidebarView: View {
         return result
     }
 }
-
-// MARK: - Add Friend (Contacts + Messages)
 
 private struct InviteContact: Identifiable, Hashable {
     let id: String
@@ -964,3 +839,197 @@ private struct SidebarView_PreviewHost: View {
     SidebarView_PreviewHost()
 }
 #endif
+
+
+private struct ConnectionStatusPillView: View {
+    @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
+    @ObservedObject private var authService = AuthService.shared
+    @ObservedObject private var networkMonitor = NetworkMonitor.shared
+
+    @State private var lastPathSatisfied: Bool? = nil
+    @State private var reconnectTask: Task<Void, Never>? = nil
+    @State private var isReconnectUpdating: Bool = false
+    @State private var displayedStatus: PillStatus? = nil
+
+    private enum PillStatus: Equatable {
+        case waitingForNetwork
+        case connecting
+        case updating
+    }
+
+    private enum ConnectivityPolicy {
+        static let coreTimeoutSeconds: TimeInterval = BackendService.coreRequestTimeoutSeconds
+        static let maxRetryAttemptsWithCachedUI: Int = 3
+        static let maxRetryWindowSecondsWithCachedUI: TimeInterval = coreTimeoutSeconds
+        static let connectingFailureCooldownSeconds: TimeInterval = coreTimeoutSeconds
+        static let backoffCapSeconds: TimeInterval = 16
+    }
+
+    var body: some View {
+        ZStack {
+            if let status = displayedStatus {
+                pillView(status)
+                    .transition(
+                        .asymmetric(
+                            insertion: .scale(scale: 0.96).combined(with: .opacity),
+                            // “Escape” animation: a tiny pop before fading out.
+                            removal: .scale(scale: 1.06).combined(with: .opacity)
+                        )
+                    )
+            }
+        }
+        .onAppear {
+            lastPathSatisfied = (networkMonitor.pathStatus == .satisfied)
+            displayedStatus = pillStatus
+        }
+        .onChange(of: pillStatus, initial: false) { _, newValue in
+            withAnimation(.spring(response: 0.30, dampingFraction: 0.70, blendDuration: 0)) {
+                displayedStatus = newValue
+            }
+        }
+        .onChange(of: networkMonitor.pathStatus, initial: false) { _, newStatus in
+            let isSatisfied = (newStatus == .satisfied)
+            let wasSatisfied = lastPathSatisfied
+            lastPathSatisfied = isSatisfied
+
+            if isSatisfied == false {
+                reconnectTask?.cancel()
+                reconnectTask = nil
+                isReconnectUpdating = false
+                return
+            }
+
+            // Only trigger catch-up when we transition offline -> online (path unsatisfied -> satisfied).
+            guard wasSatisfied == false else { return }
+
+            // Reset reachability markers so the reconnect loop can decide between Connecting/Updating.
+            sessionsViewModel.lastSessionsSyncSucceeded = nil
+            sessionsViewModel.lastPendingRequestsSyncSucceeded = nil
+
+            startCatchUpSync()
+        }
+    }
+
+    private var pillStatus: PillStatus? {
+        if networkMonitor.pathStatus != .satisfied { return .waitingForNetwork }
+        if authService.isCheckingAuth { return .connecting }
+        if isReconnectUpdating { return .updating }
+
+        // If we're online but our last core sync failed *recently*, show Connecting… (cool-down prevents infinite pill).
+        let now = Date()
+        let recentFailureWindowSeconds: TimeInterval = ConnectivityPolicy.connectingFailureCooldownSeconds
+        let sessionsFailedRecently =
+            (sessionsViewModel.lastSessionsSyncSucceeded == false) &&
+            ((sessionsViewModel.lastSessionsSyncAt.map { now.timeIntervalSince($0) } ?? .infinity) <= recentFailureWindowSeconds)
+        let pendingFailedRecently =
+            (sessionsViewModel.lastPendingRequestsSyncSucceeded == false) &&
+            ((sessionsViewModel.lastPendingRequestsSyncAt.map { now.timeIntervalSince($0) } ?? .infinity) <= recentFailureWindowSeconds)
+        if sessionsFailedRecently || pendingFailedRecently {
+            return .connecting
+        }
+
+        // For first-run empty UI, keep a minimal updating indicator.
+        if sessionsViewModel.isBootstrapping && sessionsViewModel.sessions.isEmpty { return .updating }
+        if sessionsViewModel.isLoadingSessions && sessionsViewModel.sessions.isEmpty { return .updating }
+        return nil
+    }
+
+    @ViewBuilder
+    private func pillView(_ status: PillStatus) -> some View {
+        if #available(iOS 26.0, *) {
+        let capsule = Capsule(style: .continuous)
+        HStack(spacing: 6) {
+            switch status {
+            case .waitingForNetwork:
+                Image(systemName: "wifi.slash")
+                    .font(.system(size: 11, weight: .regular))
+                Text("Waiting for network…")
+                    .font(.system(size: 12, weight: .regular))
+            case .connecting:
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Connecting…")
+                    .font(.system(size: 12, weight: .regular))
+            case .updating:
+                ProgressView()
+                Text("Updating…")
+                    .font(.system(size: 12, weight: .regular))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .glassEffect(.regular, in: capsule)
+        }
+    }
+
+    private func startCatchUpSync() {
+        reconnectTask?.cancel()
+        reconnectTask = Task { @MainActor in
+            // Show cached UI immediately. Sync status should never block usability.
+            await sessionsViewModel.preloadCachedSessionsIfNeeded()
+
+            let hasCachedUIAtStart = !sessionsViewModel.sessions.isEmpty
+            var didAttemptOnce = false
+            var failureCount = 0
+            let startedAt = Date()
+
+            while Task.isCancelled == false {
+                if networkMonitor.pathStatus != .satisfied { break }
+
+                await AppSyncGate.shared.setSyncing(true)
+
+                // Avoid UI flip-flopping between Updating/Connecting when the backend is timing out:
+                // - If we already have cached UI, show Updating only on the first attempt.
+                // - If we have no cached UI, keep showing Updating for every attempt (user needs feedback).
+                if hasCachedUIAtStart && didAttemptOnce {
+                    isReconnectUpdating = false
+                } else {
+                    isReconnectUpdating = true
+                }
+                didAttemptOnce = true
+
+                // Reset reachability markers for this attempt.
+                sessionsViewModel.lastSessionsSyncSucceeded = nil
+                sessionsViewModel.lastPendingRequestsSyncSucceeded = nil
+
+                async let sessionsTask: Void = sessionsViewModel.loadSessions(ensurePartnerInfo: false)
+                async let pendingTask: Void = sessionsViewModel.loadPendingRequests()
+                _ = await (sessionsTask, pendingTask)
+
+                await AppSyncGate.shared.setSyncing(false)
+                isReconnectUpdating = false
+
+                let sessionsOK = (sessionsViewModel.lastSessionsSyncSucceeded == true)
+                let pendingOK = (sessionsViewModel.lastPendingRequestsSyncSucceeded == true)
+                if sessionsOK && pendingOK {
+                    // Core sync succeeded: kick off non-critical work in the background.
+                    Task { @MainActor in
+                        await sessionsViewModel.loadPartnerInfo(prefetchAvatars: false)
+                        await sessionsViewModel.loadPairedAvatars()
+                        await sessionsViewModel.preloadAvatars()
+                        await sessionsViewModel.ensureProfilePictureCached()
+                    }
+                    return
+                }
+
+                failureCount += 1
+
+                // If we already have cached UI, don't retry forever (prevents infinite Connecting… loops).
+                if hasCachedUIAtStart {
+                    let elapsed = Date().timeIntervalSince(startedAt)
+                    if failureCount >= ConnectivityPolicy.maxRetryAttemptsWithCachedUI ||
+                        elapsed >= ConnectivityPolicy.maxRetryWindowSecondsWithCachedUI {
+                        break
+                    }
+                }
+
+                let capped = min(failureCount, 5) // 1,2,4,8,16s cap
+                let delaySeconds = min(pow(2.0, Double(capped - 1)), ConnectivityPolicy.backoffCapSeconds)
+                try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+            }
+
+            await AppSyncGate.shared.setSyncing(false)
+            isReconnectUpdating = false
+        }
+    }
+}

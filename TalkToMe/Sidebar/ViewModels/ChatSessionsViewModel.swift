@@ -22,6 +22,10 @@ class ChatSessionsViewModel: ObservableObject {
     @Published var isBootstrapping: Bool = false
     @Published var isBootstrapComplete: Bool = false
     @Published var unreadPartnerSessionIds: Set<UUID> = []
+    @Published var lastSessionsSyncSucceeded: Bool? = nil
+    @Published var lastSessionsSyncAt: Date? = nil
+    @Published var lastPendingRequestsSyncSucceeded: Bool? = nil
+    @Published var lastPendingRequestsSyncAt: Date? = nil
 
     var suppressUnreadSessionIds: Set<UUID> = []
     var handlingPartnerRequestIds: Set<UUID> = []
@@ -233,6 +237,8 @@ class ChatSessionsViewModel: ObservableObject {
             await MainActor.run {
                 self.sessions = finalMapped
                 self.isLoadingSessions = false
+                self.lastSessionsSyncSucceeded = true
+                self.lastSessionsSyncAt = Date()
                 print("📱 Updated local sessions list with \(finalMapped.count) sessions")
             }
             Task.detached {
@@ -247,6 +253,8 @@ class ChatSessionsViewModel: ObservableObject {
             print("❌ Failed to load sessions: \(error)")
             await MainActor.run {
                 self.isLoadingSessions = false
+                self.lastSessionsSyncSucceeded = false
+                self.lastSessionsSyncAt = Date()
                 // If we already have cached sessions, stay silent (don't show an error banner).
                 self.sessionsLoadError = self.sessions.isEmpty
                     ? "Couldn’t load conversations. Check your connection and pull to refresh."
@@ -299,9 +307,15 @@ class ChatSessionsViewModel: ObservableObject {
             let response = try await BackendService.shared.getPartnerPendingRequests(accessToken: accessToken)
             await MainActor.run {
                 self.pendingRequests = response.requests
+                self.lastPendingRequestsSyncSucceeded = true
+                self.lastPendingRequestsSyncAt = Date()
             }
         } catch {
             print("Failed to load pending requests: \(error)")
+            await MainActor.run {
+                self.lastPendingRequestsSyncSucceeded = false
+                self.lastPendingRequestsSyncAt = Date()
+            }
         }
     }
 

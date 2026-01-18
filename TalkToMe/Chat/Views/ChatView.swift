@@ -7,11 +7,11 @@ struct ChatView: View {
 
     @StateObject private var viewModel: ChatViewModel
 
-    @FocusState private var isInputFocused: Bool
-
     @State private var showNotLinkedAlert: Bool = false
     @State private var showPartnerAddedBanner: Bool = false
     @State private var partnerAddedName: String = ""
+
+    @FocusState private var isInputFocused: Bool
 
     private var isPartnerLinked: Bool {
         sessionsViewModel.partnerInfo?.linked == true ||
@@ -60,22 +60,6 @@ struct ChatView: View {
                         }
                     }
                 }
-                if !viewModel.messages.isEmpty {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(action: {
-                            Haptics.impact(.light)
-                            sessionsViewModel.startNewChat()
-                        }) {
-                            Image(systemName: "square.and.pencil")
-                                .font(.system(size: 20, weight: .semibold))
-                                .foregroundColor(Color(red: 0.4, green: 0.2, blue: 0.6))
-                                .frame(width: 44, height: 44)
-                                .offset(y: -1.5)
-                        }
-                        .transaction { txn in txn.animation = nil }
-                        .animation(nil, value: viewModel.messages.isEmpty)
-                    }
-                }
             }
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
@@ -93,9 +77,6 @@ struct ChatView: View {
                     }
                 }
             }
-        }
-        .onChange(of: navigationViewModel.dragOffset, initial: false) { _, newValue in
-            if abs(newValue) > 10 { isInputFocused = false }
         }
         .onChange(of: navigationViewModel.isOpen, initial: false) { _, newValue in
             if newValue { isInputFocused = false }
