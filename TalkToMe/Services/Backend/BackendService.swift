@@ -13,12 +13,15 @@ struct BackendService {
     let baseURL: URL
 
     private init() {
-        guard let backendURLString = BackendService.getSecretsPlistValue(for: "BACKEND_BASE_URL") as? String,
-              let url = URL(string: backendURLString) else {
-            fatalError("Missing or invalid BACKEND_BASE_URL in Secrets.plist")
+        let backendURLString = BackendService.getConfigValue(for: "BACKEND_BASE_URL")
+        let resolvedURL = URL(string: backendURLString ?? "") ?? URL(string: "http://localhost:8000")!
+        self.baseURL = resolvedURL
+        if backendURLString?.isEmpty ?? true {
+            print("🌐 BackendService: Missing BACKEND_BASE_URL. Using default http://localhost:8000")
+        } else if URL(string: backendURLString ?? "") == nil {
+            print("🌐 BackendService: Invalid BACKEND_BASE_URL. Using default http://localhost:8000")
         }
-        self.baseURL = url
-        print("🌐 BackendService: Initialized with base URL: \(url)")
+        print("🌐 BackendService: Initialized with base URL: \(resolvedURL)")
     }
 
     enum StreamEvent: Equatable {
@@ -47,11 +50,14 @@ struct BackendService {
         }
     }
 
-    static func getSecretsPlistValue(for key: String) -> Any? {
+    static func getConfigValue(for key: String) -> String? {
         if let path = Bundle.main.path(forResource: "Secrets", ofType: "plist"),
            let plist = NSDictionary(contentsOfFile: path),
-           let value = plist[key] {
-            return value
+           let value = plist[key] as? String {
+            return value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let value = Bundle.main.object(forInfoDictionaryKey: key) as? String {
+            return value.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return nil
     }
