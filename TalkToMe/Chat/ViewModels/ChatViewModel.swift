@@ -761,6 +761,16 @@ class ChatViewModel: ObservableObject {
                                 }
                             }
                             Self.endBackgroundTask(bgTask)
+
+                            // Refresh sidebar sessions after the stream completes.
+                            // The backend may update `last_message_*` and/or generate a chat title
+                            // after it has received enough context, so a refresh at send-time can be too early.
+                            if NetworkMonitor.shared.isOnline {
+                                Task.detached {
+                                    try? await Task.sleep(nanoseconds: 900_000_000) // small delay for server-side updates
+                                    NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
+                                }
+                            }
                         }
                     case .error(let message):
                         Task { @MainActor in

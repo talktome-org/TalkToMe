@@ -90,6 +90,141 @@ final class ChatStore {
         } catch {}
     }
 
+    // MARK: - Server reconciliation / pruning
+
+    private func chatAttachmentsBaseDir() -> URL {
+        let fm = FileManager.default
+        let appSupport = (try? fm.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )) ?? fm.temporaryDirectory
+        let dir = appSupport.appendingPathComponent("TalkToMe/ChatAttachments", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func removeCachedAttachmentFiles(relativePaths: [String]) {
+        guard !relativePaths.isEmpty else { return }
+        let base = chatAttachmentsBaseDir()
+        let fm = FileManager.default
+        for rel in relativePaths {
+            let trimmed = rel.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let url = base.appendingPathComponent(trimmed)
+            try? fm.removeItem(at: url)
+        }
+    }
+
+    /// Reconciles the local cache with the server's session list.
+    /// - Upserts all server sessions locally
+    /// - Deletes any local session that is missing from the server *unless* it has pending outbox items
+    func reconcileSessionsWithServer(_ serverSessions: [ChatSession]) async {
+        let serverIds = Set(serverSessions.map { $0.id.uuidString })
+        let attachmentRelpathsToDelete: [String]
+
+        do {
+            attachmentRelpathsToDelete = try await dbQueue.write { db -> [String] in
+                var collectedRelpaths: [String] = []
+                // 1) Upsert server sessions
+                for s in serverSessions {
+                    let rec = ChatSessionRecord(
+                        id: s.id.uuidString,
+                        title: s.title,
+                        last_message_at: s.lastUsedISO8601,
+                        last_message_content: s.lastMessageContent
+                    )
+                    try rec.save(db)
+                }
+
+                // 2) Find local-only sessions (not on server)
+                let localIds = try String.fetchAll(db, sql: "SELECT id FROM sessions")
+                let candidates = localIds.filter { !serverIds.contains($0) }
+                if candidates.isEmpty { return [] }
+
+                for sid in candidates {
+                    // Preserve sessions that still have unsent/retriable outbox items.
+                    let pendingCount = try Int.fetchOne(
+                        db,
+                        sql: """
+                        SELECT COUNT(1)
+                        FROM outbox
+                        WHERE (session_id = ? OR server_session_id = ?)
+                          AND status IN ('pending', 'failed', 'sending')
+                        """,
+                        arguments: [sid, sid]
+                    ) ?? 0
+                    if pendingCount > 0 { continue }
+
+                    // Collect cached attachment files for cleanup.
+                    let rels = try String.fetchAll(
+                        db,
+                        sql: """
+                        SELECT a.local_relpath
+                        FROM attachments a
+                        JOIN messages m ON m.id = a.message_id
+                        WHERE m.session_id = ?
+                          AND a.local_relpath IS NOT NULL
+                        """,
+                        arguments: [sid]
+                    )
+                    collectedRelpaths.append(contentsOf: rels)
+
+                    // Remove outbox entries for this session (even if already 'sent', it's now orphaned).
+                    try db.execute(
+                        sql: "DELETE FROM outbox WHERE session_id = ? OR server_session_id = ?",
+                        arguments: [sid, sid]
+                    )
+
+                    // Delete session (cascades messages + attachments rows).
+                    try db.execute(sql: "DELETE FROM sessions WHERE id = ?", arguments: [sid])
+                }
+
+                return collectedRelpaths
+            }
+        } catch {
+            return
+        }
+
+        // Best-effort file cleanup after DB commit.
+        removeCachedAttachmentFiles(relativePaths: attachmentRelpathsToDelete)
+    }
+
+    /// Deletes a session from the local cache (sessions/messages/attachments) and cleans up cached attachment files.
+    func deleteSessionLocal(sessionId: UUID) async {
+        let sid = sessionId.uuidString
+        let attachmentRelpathsToDelete: [String]
+
+        do {
+            attachmentRelpathsToDelete = try await dbQueue.write { db -> [String] in
+                let rels = try String.fetchAll(
+                    db,
+                    sql: """
+                    SELECT a.local_relpath
+                    FROM attachments a
+                    JOIN messages m ON m.id = a.message_id
+                    WHERE m.session_id = ?
+                      AND a.local_relpath IS NOT NULL
+                    """,
+                    arguments: [sid]
+                )
+
+                try db.execute(
+                    sql: "DELETE FROM outbox WHERE session_id = ? OR server_session_id = ?",
+                    arguments: [sid, sid]
+                )
+                try db.execute(sql: "DELETE FROM sessions WHERE id = ?", arguments: [sid])
+
+                return rels
+            }
+        } catch {
+            return
+        }
+
+        removeCachedAttachmentFiles(relativePaths: attachmentRelpathsToDelete)
+    }
+
 
     func loadMessages(sessionId: UUID, currentUserId: UUID) async -> [ChatMessage] {
         let sid = sessionId.uuidString

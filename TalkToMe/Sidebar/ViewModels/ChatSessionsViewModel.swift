@@ -242,7 +242,7 @@ class ChatSessionsViewModel: ObservableObject {
                 print("📱 Updated local sessions list with \(finalMapped.count) sessions")
             }
             Task.detached {
-                await ChatStore.shared.upsertSessions(finalMapped)
+                await ChatStore.shared.reconcileSessionsWithServer(finalMapped)
             }
         } catch {
             if let nsError = error as NSError?, nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
@@ -272,13 +272,26 @@ class ChatSessionsViewModel: ObservableObject {
             let session = try await AuthService.shared.client.auth.session
             let accessToken = session.accessToken
             try await BackendService.shared.renameSession(sessionId: id, title: newTitle, accessToken: accessToken)
+            let persistedTitle: String = {
+                let trimmed = newTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+                return (trimmed?.isEmpty == false) ? trimmed! : ChatSession.defaultTitle
+            }()
             await MainActor.run {
                 if let idx = self.sessions.firstIndex(where: { $0.id == id }) {
                     var updated = self.sessions[idx]
-                    let trimmed = newTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    updated.title = (trimmed?.isEmpty == false) ? trimmed! : ChatSession.defaultTitle
+                    updated.title = persistedTitle
                     self.sessions[idx] = updated
                 }
+            }
+            Task.detached {
+                await ChatStore.shared.upsertSessions([
+                    ChatSession(
+                        id: id,
+                        title: persistedTitle,
+                        lastUsedISO8601: nil,
+                        lastMessageContent: nil
+                    )
+                ])
             }
         } catch {
             print("Failed to rename session: \(error)")
@@ -290,6 +303,9 @@ class ChatSessionsViewModel: ObservableObject {
             let session = try await AuthService.shared.client.auth.session
             let accessToken = session.accessToken
             try await BackendService.shared.deleteSession(sessionId: id, accessToken: accessToken)
+            Task.detached {
+                await ChatStore.shared.deleteSessionLocal(sessionId: id)
+            }
             await MainActor.run {
                 self.sessions.removeAll { $0.id == id }
                 if self.activeSessionId == id { self.activeSessionId = nil }
