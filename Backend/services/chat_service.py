@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from typing import List, Optional
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 
 def _backend_root() -> Path:
@@ -13,7 +13,7 @@ def _backend_root() -> Path:
 
 class ChatService:
     def __init__(self):
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.model = "gpt-5-mini"
         self.vision_model = "gpt-5-mini"
 
@@ -52,8 +52,8 @@ class ChatService:
 
         return input_messages
 
-    def create_response(self, *, messages: List[dict], previous_response_id: Optional[str] = None):
-        return self.client.responses.create(
+    async def create_response(self, *, messages: List[dict], previous_response_id: Optional[str] = None):
+        return await self.client.responses.create(
             model=self.vision_model if any(isinstance(m.get("content"), list) for m in messages) else self.model,
             input=messages,
             text={"verbosity": "medium"},
@@ -73,14 +73,14 @@ class ChatService:
 
 class ChatTitleService:
     def __init__(self):
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.model = "gpt-5-mini"
 
         prompt_path = _backend_root() / "resources" / "chat_title_generation_prompt.txt"
         with open(prompt_path, "r", encoding="utf-8") as f:
             self.title_generation_prompt = f.read().strip()
 
-    def generate_chat_title(self, user_messages: list[str]) -> str:
+    async def generate_chat_title(self, user_messages: list[str]) -> str:
         try:
             def _extract_text(msg: str) -> str:
                 try:
@@ -115,7 +115,7 @@ class ChatTitleService:
                 {"role": "user", "content": combined},
             ]
 
-            resp = self.client.responses.create(
+            resp = await self.client.responses.create(
                 model=self.model,
                 input=input_messages,
             )

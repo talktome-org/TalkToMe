@@ -12,3 +12,4 @@ __pycache__/
 
 # SweetPad
 buildServer.json
+.vscode/

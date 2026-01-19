@@ -1,4 +1,5 @@
 import json
+import asyncio
 import time
 import traceback
 import uuid
@@ -8,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
-from starlette.concurrency import iterate_in_threadpool
+from starlette.concurrency import run_in_threadpool
 
 from Backend.auth import get_current_user
 from Backend.crud.chat.chat_crud import (
@@ -64,7 +65,7 @@ def _resolve_public_base_url(request: Request | None) -> str:
     return f"{proto}://{host}".rstrip("/")
 
 
-def _signed_url_for_upload_path(
+async def _signed_url_for_upload_path(
     *, base_url: str, user_id: uuid.UUID, path_value: str, expires_seconds: int
 ) -> str:
     if not isinstance(path_value, str) or not path_value.startswith("uploads/"):
@@ -74,14 +75,16 @@ def _signed_url_for_upload_path(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid attachment id")
 
-    # Verify ownership (iter_sse runs in a threadpool, so do a sync DB read here)
-    db = SessionLocal()
-    try:
-        row = db.get(Upload, upload_id)
-        if not row or row.user_id != user_id:
-            raise HTTPException(status_code=403, detail="Forbidden attachment")
-    finally:
-        db.close()
+    def _verify_ownership():
+        db = SessionLocal()
+        try:
+            row = db.get(Upload, upload_id)
+            if not row or row.user_id != user_id:
+                raise HTTPException(status_code=403, detail="Forbidden attachment")
+        finally:
+            db.close()
+
+    await run_in_threadpool(_verify_ownership)
 
     exp = int(time.time()) + int(expires_seconds)
     sig = sign_upload_id(upload_id=upload_id, exp=exp)
@@ -237,7 +240,7 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
         if user_message_count in (1, 2):
             try:
                 recent_user_messages = await get_recent_user_messages(session_id=session_uuid, limit=2)
-                chat_title = chat_title_service.generate_chat_title(recent_user_messages)
+                chat_title = await chat_title_service.generate_chat_title(recent_user_messages)
                 if chat_title:
                     await update_session_title(user_id=user_uuid, session_id=session_uuid, title=chat_title)
             except Exception:
@@ -363,7 +366,7 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
             except Exception as e:
                 print(f"[SSE] persist task fatal: {e}")
 
-        def iter_sse():
+        async def iter_sse():
             yield (":" + " " * 2048 + "\n\n").encode()
 
             sess_payload = json.dumps({"session_id": str(session_uuid)})
@@ -382,7 +385,7 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                             p = getattr(a, "path", None) or (a.get("path") if isinstance(a, dict) else None)
                             if not t or not p:
                                 continue
-                            url_value = _signed_url_for_upload_path(
+                            url_value = await _signed_url_for_upload_path(
                                 base_url=public_base,
                                 user_id=user_uuid,
                                 path_value=p,
@@ -406,9 +409,7 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                 )
 
                 import re
-                import threading
                 from contextlib import suppress
-                from queue import Empty, Queue
 
                 open_pat = re.compile(r"<partner_message(?:\s+[^>]*)?>")
                 end_marker = "</partner_message>"
@@ -417,84 +418,74 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                 buffer = ""
                 in_partner = False
 
-                q: Queue = Queue()
-                done = {"flag": False}
+                # Keep SSE connection alive without burning CPU per connection.
+                # For high concurrency, frequent heartbeats add up quickly.
+                heartbeat_interval = 5.0
 
-                def producer():
-                    try:
-                        with chat_service.stream_response(
-                            messages=input_messages,
-                            previous_response_id=chat_request.previous_response_id,
-                        ) as stream:
-                            for event in stream:
-                                etype = getattr(event, "type", "")
-                                if etype == "response.created":
-                                    rid = None
-                                    with suppress(Exception):
-                                        rid = getattr(getattr(event, "response", None), "id", None)
-                                    if rid:
-                                        q.put(("response_id", json.dumps({"response_id": rid})))
-                                    continue
-                                if etype == "response.output_text.delta":
-                                    delta = getattr(event, "delta", "") or ""
-                                    if not isinstance(delta, str):
-                                        with suppress(Exception):
-                                            delta = str(delta)
-                                    if delta:
-                                        q.put(("delta", delta))
-                                    continue
-                                if etype == "response.error":
-                                    err_msg = "Streaming error"
-                                    with suppress(Exception):
-                                        err_obj = getattr(event, "error", None)
-                                        if err_obj is not None:
-                                            err_msg = str(err_obj)
-                                    q.put(("error", err_msg))
-                                    return
-                                if etype == "response.completed":
-                                    break
-                    finally:
-                        done["flag"] = True
-
-                t = threading.Thread(target=producer, daemon=True)
-                t.start()
-
-                heartbeat_interval = 0.1
-
-                while True:
-                    try:
-                        kind, payload = q.get(timeout=heartbeat_interval)
-                    except Empty:
-                        if done["flag"] and q.empty():
+                async with chat_service.stream_response(
+                    messages=input_messages,
+                    previous_response_id=chat_request.previous_response_id,
+                ) as stream:
+                    aiter = stream.__aiter__()
+                    while True:
+                        try:
+                            event = await asyncio.wait_for(aiter.__anext__(), timeout=heartbeat_interval)
+                        except asyncio.TimeoutError:
+                            if not in_partner and buffer:
+                                max_k = min(len(buffer), len(tag_start))
+                                overlap = 0
+                                for k in range(max_k, -1, -1):
+                                    if buffer.endswith(tag_start[:k]):
+                                        overlap = k
+                                        break
+                                flush_len = len(buffer) - overlap
+                                if flush_len > 0:
+                                    flushable = buffer[:flush_len]
+                                    full_text_parts.append(flushable)
+                                    yield f"event: token\ndata: {json.dumps(flushable)}\n\n".encode()
+                                    current_text_segment += flushable
+                                    buffer = buffer[flush_len:]
+                            yield b":\n\n"
+                            continue
+                        except StopAsyncIteration:
                             break
-                        if not in_partner and buffer:
-                            max_k = min(len(buffer), len(tag_start))
-                            overlap = 0
-                            for k in range(max_k, -1, -1):
-                                if buffer.endswith(tag_start[:k]):
-                                    overlap = k
-                                    break
-                            flush_len = len(buffer) - overlap
-                            if flush_len > 0:
-                                flushable = buffer[:flush_len]
-                                full_text_parts.append(flushable)
-                                yield f"event: token\ndata: {json.dumps(flushable)}\n\n".encode()
-                                current_text_segment += flushable
-                                buffer = buffer[flush_len:]
-                        yield b":\n\n"
-                        continue
+                        except Exception as e:
+                            yield f"event: error\ndata: {json.dumps(str(e))}\n\n".encode()
+                            break
 
-                    if kind == "response_id":
-                        yield f"event: response_id\ndata: {payload}\n\n".encode()
-                        continue
+                        etype = getattr(event, "type", "")
 
-                    if kind == "error":
-                        err_msg = payload
-                        yield f"event: error\ndata: {json.dumps(err_msg)}\n\n".encode()
-                        break
+                        if etype == "response.created":
+                            rid = None
+                            with suppress(Exception):
+                                rid = getattr(getattr(event, "response", None), "id", None)
+                            if rid:
+                                payload = json.dumps({"response_id": rid})
+                                yield f"event: response_id\ndata: {payload}\n\n".encode()
+                            continue
 
-                    if kind == "delta":
-                        delta = payload
+                        if etype == "response.error":
+                            err_msg = "Streaming error"
+                            with suppress(Exception):
+                                err_obj = getattr(event, "error", None)
+                                if err_obj is not None:
+                                    err_msg = str(err_obj)
+                            yield f"event: error\ndata: {json.dumps(err_msg)}\n\n".encode()
+                            break
+
+                        if etype == "response.completed":
+                            break
+
+                        if etype != "response.output_text.delta":
+                            continue
+
+                        delta = getattr(event, "delta", "") or ""
+                        if not isinstance(delta, str):
+                            with suppress(Exception):
+                                delta = str(delta)
+                        if not delta:
+                            continue
+
                         buffer += delta
 
                         while True:
@@ -563,7 +554,7 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                 yield f"event: error\ndata: {json.dumps(str(e))}\n\n".encode()
 
         return StreamingResponse(
-            iterate_in_threadpool(iter_sse()),
+            iter_sse(),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache, no-transform",
