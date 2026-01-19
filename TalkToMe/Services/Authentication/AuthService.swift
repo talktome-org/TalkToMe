@@ -46,6 +46,7 @@ class AuthService: ObservableObject {
         do {
             let session = try await providerSignIn.signIn(provider: provider, redirectURL: redirectURL, client: client)
             await MainActor.run {
+                UserDefaults.standard.set(false, forKey: PreferenceKeys.didExplicitSignOut)
                 self.lastAuthError = nil
                 self.applyAuthenticatedSession(session)
             }
@@ -58,6 +59,7 @@ class AuthService: ObservableObject {
 
     func signOut() async {
         await MainActor.run {
+            UserDefaults.standard.set(true, forKey: PreferenceKeys.didExplicitSignOut)
             self.clearAuthenticatedSession()
             self.lastAuthError = nil
         }
@@ -67,7 +69,10 @@ class AuthService: ObservableObject {
         do {
             try await client.auth.signOut()
         } catch {
-            checkAuthStatus()
+            // If we're offline (or sign-out fails), keep the app logged out. Don't re-check and resurrect the session.
+            await MainActor.run {
+                self.lastAuthError = error.localizedDescription
+            }
         }
     }
 
@@ -96,10 +101,23 @@ class AuthService: ObservableObject {
             do {
                 let session = try await client.auth.session
                 await MainActor.run {
+                    UserDefaults.standard.set(false, forKey: PreferenceKeys.didExplicitSignOut)
                     self.applyAuthenticatedSession(session)
                 }
             } catch {
                 await MainActor.run {
+                    // Important: "offline" must not be treated as "logged out".
+                    // If we have a cached user id and the user didn't explicitly sign out, keep showing the app.
+                    let didSignOut = UserDefaults.standard.bool(forKey: PreferenceKeys.didExplicitSignOut)
+                    let cachedUserId = UserDefaults.standard.string(forKey: PreferenceKeys.currentUserId)
+                    if didSignOut == false,
+                       NetworkMonitor.shared.isOnline == false,
+                       cachedUserId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                        self.isAuthenticated = true
+                        self.currentUser = nil
+                        self.isCheckingAuth = false
+                        return
+                    }
                     self.clearAuthenticatedSession()
                 }
             }

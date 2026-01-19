@@ -235,7 +235,15 @@ class ChatViewModel: ObservableObject {
         }
 
         guard let sid = self.sessionId else { return }
-        guard let userId = AuthService.shared.currentUser?.id else { return }
+        let userId: UUID? = {
+            if let uid = AuthService.shared.currentUser?.id { return uid }
+            if let raw = UserDefaults.standard.string(forKey: PreferenceKeys.currentUserId),
+               let uid = UUID(uuidString: raw) {
+                return uid
+            }
+            return nil
+        }()
+        guard let userId else { return }
 
         // Persist attachments to disk now so they survive restarts even if streaming fails.
         var outboxAttachments: [OutboxAttachment] = []

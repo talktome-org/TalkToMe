@@ -3,7 +3,11 @@ import AuthenticationServices
 import UIKit
 
 struct AuthView: View {
+    @ObservedObject private var network = NetworkMonitor.shared
+
     private let authService = AuthService.shared
+
+    @State private var showOfflineAlert: Bool = false
 
     var body: some View {
         ZStack {
@@ -27,6 +31,10 @@ struct AuthView: View {
                 VStack(spacing: 12) {
                 Button(action: {
                     Haptics.selection()
+                    guard network.isOnline else {
+                        showOfflineAlert = true
+                        return
+                    }
                     Task { await authService.signIn(.google) }
                 }) {
                     HStack(spacing: 10) {
@@ -52,6 +60,10 @@ struct AuthView: View {
                 Button(action: {
                     if let anchor = getPresentationAnchor() {
                         Haptics.selection()
+                        guard network.isOnline else {
+                            showOfflineAlert = true
+                            return
+                        }
                         Task { await authService.signIn(.apple(presentationAnchor: anchor)) }
                     }
                 }) {
