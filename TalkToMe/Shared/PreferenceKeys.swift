@@ -5,6 +5,7 @@ enum PreferenceKeys {
     static let hapticsEnabled = "haptics_enabled"
     static let myAvatarURL = "my_avatar_url"
     static let partnerConnected = "partner_connected"
+    static let partnerUserId = "partner_user_id"
     static let partnerName = "partner_name"
     static let partnerAvatarURL = "partner_avatar_url"
     static let partnerDisplayName = "partner_display_name"

@@ -14,6 +14,8 @@ struct PartnerDraftBlockView: View {
     let isLinked: Bool
     let onAction: (Action) -> Void
 
+    @AppStorage(PreferenceKeys.partnerName) private var cachedPartnerName: String = ""
+
     init(initialText: String, isSent: Bool = false, isLinked: Bool = true, onAction: @escaping (Action) -> Void) {
         self.initialText = initialText
         self.isSent = isSent
@@ -107,9 +109,14 @@ struct PartnerDraftBlockView: View {
                         ZStack {
                             if isLinked && (isSent || showSentLocally) {
                                 HStack(spacing: 6) {
-                                    Text("Sent")
+                                    let resolved = cachedPartnerName.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    let fullName = resolved.isEmpty ? "Partner" : resolved
+                                    let firstName = fullName.split(separator: " ").first.map(String.init) ?? "Partner"
+                                    Text("Sent to \(firstName)")
                                         .font(.subheadline)
                                         .foregroundColor(Color.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundColor(Color.green)
                                 }

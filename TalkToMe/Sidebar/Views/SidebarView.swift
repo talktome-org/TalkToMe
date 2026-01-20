@@ -321,11 +321,14 @@ struct SidebarView: View {
             if showLeftButtons {
                 if #available(iOS 26.0, *) {
                     Button(action: {
-                        // This button is for closing the sidebar (NOT for creating a new chat).
-                        // New chat lives in the top bar (pencil icon) to avoid accidental resets.
                         Haptics.impact(.light)
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0)) {
+                        // Always start a fresh chat when closing via the chevron (never "return" to a previous session).
+                        // We intentionally do this without animation to avoid briefly showing the old chat while the sidebar slides away.
+                        withAnimation(nil) {
+                            sessionsViewModel.startNewChat()
                             navigationViewModel.selectedTab = .chat
+                        }
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0)) {
                             isOpen = false
                         }
                     }) {

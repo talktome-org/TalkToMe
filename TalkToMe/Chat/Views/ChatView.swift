@@ -61,6 +61,16 @@ struct ChatView: View {
                     Task { @MainActor in
                         viewModel.selectedFriendUserId = friendId
                         UserDefaults.standard.set(true, forKey: PreferenceKeys.partnerConnected)
+                        UserDefaults.standard.set(friendId.uuidString, forKey: PreferenceKeys.partnerUserId)
+                        if let picked = friendsViewModel.friends.first(where: { $0.id == friendId }) {
+                            let name = picked.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !name.isEmpty {
+                                UserDefaults.standard.set(name, forKey: PreferenceKeys.partnerName)
+                            }
+                            if let url = picked.avatarURL?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty {
+                                UserDefaults.standard.set(url, forKey: PreferenceKeys.partnerAvatarURL)
+                            }
+                        }
                         showFriendPicker = false
                         if let draft = pendingPartnerDraftText {
                             pendingPartnerDraftText = nil
@@ -143,12 +153,17 @@ struct ChatView: View {
 
     @MainActor
     private func refreshFriendsForPicker() async {
-        isFriendPickerLoading = true
+        // Only block the UI with a loader if we truly have nothing to show yet.
+        let hasCachedFriends = !friendsViewModel.friends.isEmpty
+        isFriendPickerLoading = !hasCachedFriends
         friendPickerErrorMessage = nil
         do {
             try await friendsViewModel.loadFriends()
         } catch {
-            friendPickerErrorMessage = error.localizedDescription
+            // If we already have friends to show, keep the sheet usable and don't block it with an error state.
+            if !hasCachedFriends {
+                friendPickerErrorMessage = error.localizedDescription
+            }
         }
         isFriendPickerLoading = false
     }
@@ -179,35 +194,65 @@ private struct FriendPickerSheetView: View {
                     .foregroundStyle(.secondary)
                     .padding(.top, 6)
 
-                if let errorMessage, !errorMessage.isEmpty {
-                    VStack(spacing: 10) {
-                        Text(errorMessage)
+                if friends.isEmpty {
+                    if let errorMessage, !errorMessage.isEmpty {
+                        VStack(spacing: 10) {
+                            Text(errorMessage)
+                                .font(.system(size: 14))
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+
+                            Button("Retry") {
+                                Haptics.impact(.light)
+                                onRetry()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        .padding(.top, 6)
+                    } else if isLoading {
+                        VStack(spacing: 10) {
+                            ProgressView()
+                            Text("Loading friends…")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.top, 6)
+                    } else {
+                        Text("No friends yet. Add one with a 4-digit code first.")
                             .font(.system(size: 14))
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
-
-                        Button("Retry") {
-                            Haptics.impact(.light)
-                            onRetry()
-                        }
-                        .buttonStyle(.bordered)
+                            .padding(.top, 6)
                     }
-                    .padding(.top, 6)
-                } else if isLoading {
-                    VStack(spacing: 10) {
-                        ProgressView()
-                        Text("Loading friends…")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.top, 6)
-                } else if friends.isEmpty {
-                    Text("No friends yet. Add one with a 4-digit code first.")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 6)
                 } else {
+                    // If we already have cached friends, show the list immediately.
+                    // We can still refresh in the background without blocking selection.
+                    if isLoading {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Refreshing…")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .padding(.top, 2)
+                    } else if let errorMessage, !errorMessage.isEmpty {
+                        HStack(spacing: 10) {
+                            Text(errorMessage)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                            Spacer()
+                            Button("Retry") {
+                                Haptics.impact(.light)
+                                onRetry()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        .padding(.top, 2)
+                    }
+
                     List {
                         ForEach(friends) { friend in
                             Button {

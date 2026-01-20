@@ -107,6 +107,9 @@ final class FriendsViewModel: ObservableObject {
                 // Warm avatar images so the Friends list sheet can render immediately.
                 await warmFriendAvatars(updatedFriends)
 
+                // Persist "partner" defaults so partner message UI can render name/avatar instantly.
+                self.updatePartnerDefaults(from: updatedFriends, preferredPartnerUserId: friendId)
+
                 if let added = updatedFriends.first(where: { $0.id == friendId }) {
                     let name = added.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
                     self.lastActionMessage = name.isEmpty ? "Added friend" : "Added \(name)"
@@ -144,6 +147,7 @@ final class FriendsViewModel: ObservableObject {
                 }.value
                 self.friends = updatedFriends
                 await warmFriendAvatars(updatedFriends)
+                self.updatePartnerDefaults(from: updatedFriends, preferredPartnerUserId: nil)
             } catch {
                 self.lastActionMessage = error.localizedDescription
                 self.friendsLoadErrorMessage = error.localizedDescription
@@ -160,6 +164,44 @@ final class FriendsViewModel: ObservableObject {
             .filter { !$0.isEmpty }
         guard !urls.isEmpty else { return }
         await AvatarCacheManager.shared.preloadAvatars(urls: urls)
+    }
+
+    private func updatePartnerDefaults(from friends: [FriendSummary], preferredPartnerUserId: UUID?) {
+        // Determine which friend should be treated as the "partner" for UI purposes.
+        // Priority:
+        // - explicitly preferred (e.g. just added / explicitly picked)
+        // - previously cached partner_user_id
+        // - if exactly one friend exists, use it
+
+        let preferredId = preferredPartnerUserId
+
+        let cachedId: UUID? = {
+            guard let raw = UserDefaults.standard.string(forKey: PreferenceKeys.partnerUserId),
+                  let id = UUID(uuidString: raw) else { return nil }
+            return id
+        }()
+
+        let resolvedId: UUID? = {
+            if let preferredId { return preferredId }
+            if let cachedId, friends.contains(where: { $0.id == cachedId }) { return cachedId }
+            if friends.count == 1 { return friends.first?.id }
+            return nil
+        }()
+
+        guard let partnerId = resolvedId,
+              let partner = friends.first(where: { $0.id == partnerId }) else {
+            return
+        }
+
+        let name = partner.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty {
+            UserDefaults.standard.set(name, forKey: PreferenceKeys.partnerName)
+        }
+        if let url = partner.avatarURL?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty {
+            UserDefaults.standard.set(url, forKey: PreferenceKeys.partnerAvatarURL)
+        }
+        UserDefaults.standard.set(partnerId.uuidString, forKey: PreferenceKeys.partnerUserId)
+        UserDefaults.standard.set(true, forKey: PreferenceKeys.partnerConnected)
     }
 
     private static func parseISO8601(_ iso: String) -> Date? {

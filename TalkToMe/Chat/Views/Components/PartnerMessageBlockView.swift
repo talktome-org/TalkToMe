@@ -2,18 +2,38 @@ import SwiftUI
 
 struct PartnerMessageBlockView: View {
 
+    @EnvironmentObject private var friendsViewModel: FriendsViewModel
+
     let text: String
+
+    @AppStorage(PreferenceKeys.partnerUserId) private var cachedPartnerUserId: String = ""
+    @AppStorage(PreferenceKeys.partnerName) private var cachedPartnerName: String = ""
+    @AppStorage(PreferenceKeys.partnerAvatarURL) private var cachedPartnerAvatarURL: String = ""
 
     var body: some View {
         VStack(alignment: .leading) {
             HStack {
                 HStack(spacing: 6) {
-                    let name = UserDefaults.standard.string(forKey: PreferenceKeys.partnerName)
-                    let firstName = name?.split(separator: " ").first.map(String.init)
-                    let avatarURL = UserDefaults.standard.string(forKey: PreferenceKeys.partnerAvatarURL)
+                    let resolvedFriend: FriendSummary? = {
+                        let friends = friendsViewModel.friends
+                        if let id = UUID(uuidString: cachedPartnerUserId),
+                           let match = friends.first(where: { $0.id == id }) {
+                            return match
+                        }
+                        if friends.count == 1 {
+                            return friends.first
+                        }
+                        return nil
+                    }()
+
+                    let resolvedName = (resolvedFriend?.fullName ?? cachedPartnerName).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let nameToShow = resolvedName.isEmpty ? "Partner" : resolvedName
+                    let firstName = nameToShow.split(separator: " ").first.map(String.init)
+
+                    let avatarURL = (resolvedFriend?.avatarURL ?? cachedPartnerAvatarURL).trimmingCharacters(in: .whitespacesAndNewlines)
 
                     AvatarCacheManager.shared.cachedAsyncImage(
-                        urlString: avatarURL,
+                        urlString: avatarURL.isEmpty ? nil : avatarURL,
                         placeholder: avatarPlaceholder,
                         fallback: avatarPlaceholder
                     )
