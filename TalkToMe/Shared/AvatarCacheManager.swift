@@ -189,6 +189,23 @@ struct CachedAsyncImageView: View {
     @State private var image: UIImage?
     @State private var isLoading = false
 
+    init(
+        urlString: String,
+        cacheManager: AvatarCacheManager,
+        placeholder: @escaping () -> AnyView,
+        fallback: @escaping () -> AnyView
+    ) {
+        self.urlString = urlString
+        self.cacheManager = cacheManager
+        self.placeholder = placeholder
+        self.fallback = fallback
+
+        // Prime initial state from cache so we can render the avatar on the first frame.
+        let cached = cacheManager.getImageIfCached(urlString: urlString)
+        self._image = State(initialValue: cached)
+        self._isLoading = State(initialValue: cached == nil)
+    }
+
     var body: some View {
         Group {
             if let image = image {
@@ -199,13 +216,6 @@ struct CachedAsyncImageView: View {
                 placeholder()
             } else {
                 fallback()
-            }
-        }
-        .onAppear {
-            if image == nil {
-                if let cached = cacheManager.getImageIfCached(urlString: urlString) {
-                    image = cached
-                }
             }
         }
         .task {

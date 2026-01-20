@@ -1,5 +1,5 @@
 import uuid
-from typing import List
+from typing import List, Optional
 
 from starlette.concurrency import run_in_threadpool
 
@@ -37,6 +37,61 @@ async def save_message(*, user_id: uuid.UUID, session_id: uuid.UUID, role: str, 
     inserted = await run_in_threadpool(_insert)
     try:
         print(f"[DB] save_message ok id={inserted.get('id')}")
+    except Exception:
+        pass
+    return inserted
+
+
+async def save_message_with_id(
+    *,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    role: str,
+    content: str,
+    message_id: Optional[uuid.UUID],
+) -> dict:
+    """
+    Idempotent insert for client-supplied message ids.
+    - If `message_id` is None, behaves like `save_message`.
+    - If a row with `message_id` already exists:
+        - Return it if it belongs to the same user/session/role
+        - Otherwise raise PermissionError (prevents cross-user id collisions)
+    """
+    if message_id is None:
+        return await save_message(user_id=user_id, session_id=session_id, role=role, content=content)
+
+    try:
+        preview = (content or "")[:120].replace("\n", " ")
+        print(
+            f"[DB] save_message_with_id insert role={role} session_id={session_id} user_id={user_id} id={message_id} preview={preview!r}"
+        )
+    except Exception:
+        pass
+
+    def _insert():
+        db = SessionLocal()
+        try:
+            existing = db.get(UserChatMessage, message_id)
+            if existing is not None:
+                if (
+                    existing.user_id == user_id
+                    and existing.session_id == session_id
+                    and existing.role == role
+                ):
+                    return _to_dict(existing)
+                raise PermissionError("Message ID already exists for a different user/session")
+
+            msg = UserChatMessage(id=message_id, user_id=user_id, session_id=session_id, role=role, content=content)
+            db.add(msg)
+            db.commit()
+            db.refresh(msg)
+            return _to_dict(msg)
+        finally:
+            db.close()
+
+    inserted = await run_in_threadpool(_insert)
+    try:
+        print(f"[DB] save_message_with_id ok id={inserted.get('id')}")
     except Exception:
         pass
     return inserted

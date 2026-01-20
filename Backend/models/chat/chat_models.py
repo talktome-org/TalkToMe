@@ -24,13 +24,13 @@ class UserChatSession(Base):
     title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), server_default=func.now())
     last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
-    linked_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    last_message_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    friendship_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("linked_sessions.id", name="user_chat_sessions_linked_session_id_fkey"),
+        ForeignKey("friendships.id", name="user_chat_sessions_friendship_id_fkey"),
         nullable=True,
         index=True,
     )
-    last_message_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class UserChatMessage(Base):

@@ -9,9 +9,6 @@ class SettingsViewModel: ObservableObject {
     @Published var settingsSections: [SettingsSection] = []
     @Published var isUploadingAvatar: Bool = false
     @Published var avatarURL: String? = nil
-    @Published var isConnectedToPartner: Bool = false
-    @Published var partnerName: String? = nil
-    @Published var partnerAvatarURL: String? = nil
     @Published var showPersonalizationEdit: Bool = false
 
     private let avatarCacheManager = AvatarCacheManager.shared
@@ -29,7 +26,6 @@ class SettingsViewModel: ObservableObject {
             self.isProfileLoaded = true
         }
         setupSettingsSections()
-        loadCachedPartnerConnection()
     }
 
     private func loadSettings() {
@@ -59,14 +55,6 @@ class SettingsViewModel: ObservableObject {
                 ]
             ),
             SettingsSection(
-                title: "Link Your Partner",
-                icon: "link",
-                gradient: [Color.pink, Color.purple],
-                settings: [
-                    SettingItem(title: "Link Your Partner", subtitle: "Invite or manage link", type: .linkPartner, icon: "link")
-                ]
-            ),
-            SettingsSection(
                 title: "Help & Support",
                 icon: "questionmark.circle",
                 gradient: [Color.green, Color.blue],
@@ -81,9 +69,6 @@ class SettingsViewModel: ObservableObject {
                 gradient: [Color.red, Color.orange],
                 settings: {
                     var items: [SettingItem] = []
-                    if isConnectedToPartner {
-                        items.append(SettingItem(title: "Unlink Partner", subtitle: nil, type: .action, icon: "xmark.circle"))
-                    }
                     items.append(SettingItem(title: "Sign Out", subtitle: nil, type: .action, icon: "rectangle.portrait.and.arrow.right"))
                     return items
                 }()
@@ -124,55 +109,19 @@ class SettingsViewModel: ObservableObject {
         case "Sign Out":
             Task {
                 await AuthService.shared.signOut()
-                await MainActor.run {
-                    self.isConnectedToPartner = false
-                    self.partnerName = nil
-                    self.partnerAvatarURL = nil
-                    self.clearPartnerConnectionCache()
-                }
             }
         default:
             break
         }
     }
 
-    func loadPartnerConnectionStatus() {
-        Task { @MainActor in
-            do {
-                guard let token = await AuthService.shared.getAccessToken() else {
-                    return
-                }
-                let partnerInfo = try await BackendService.shared.fetchPartnerInfo(accessToken: token)
-                self.isConnectedToPartner = partnerInfo.linked
-
-                if partnerInfo.linked, let partner = partnerInfo.partner {
-                    self.partnerName = partner.name
-                    self.partnerAvatarURL = partner.avatar_url
-                    self.savePartnerConnectionCache()
-
-                    if let url = self.partnerAvatarURL, !url.isEmpty {
-                        Task { [weak self] in
-                            guard let self = self else { return }
-                            _ = await self.avatarCacheManager.getCachedImage(urlString: url)
-                        }
-                    }
-                } else {
-                    self.isConnectedToPartner = false
-                    self.partnerName = nil
-                    self.partnerAvatarURL = nil
-                    self.clearPartnerConnectionCache()
-                }
-                self.setupSettingsSections()
-            } catch {
-                print("Failed to load partner connection status: \(error)")
-            }
-        }
-    }
-
     func preloadAvatar() {
         Task { @MainActor in
-            if let avatarURL = avatarURL, !avatarURL.isEmpty {
-                let _ = await avatarCacheManager.getCachedImage(urlString: avatarURL)
+            // Prefer persisted URL so Settings avatar is ready immediately on open.
+            let url = UserDefaults.standard.string(forKey: PreferenceKeys.myAvatarURL)
+                ?? avatarURL
+            if let url, !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let _ = await avatarCacheManager.getCachedImage(urlString: url)
             }
         }
     }
@@ -226,72 +175,6 @@ class SettingsViewModel: ObservableObject {
         }
     }
 
-    func applyPartnerInfo(_ info: BackendService.PartnerInfo?) {
-        if let info = info, info.linked, let partner = info.partner {
-            self.isConnectedToPartner = true
-            self.partnerName = partner.name
-            self.partnerAvatarURL = partner.avatar_url
-            self.savePartnerConnectionCache()
-            if let url = self.partnerAvatarURL, !url.isEmpty {
-                Task { [weak self] in
-                    guard let self = self else { return }
-                    _ = await self.avatarCacheManager.getCachedImage(urlString: url)
-                }
-            }
-        } else {
-            self.isConnectedToPartner = false
-            self.partnerName = nil
-            self.partnerAvatarURL = nil
-            self.clearPartnerConnectionCache()
-        }
-        self.setupSettingsSections()
-    }
-
-    private func loadCachedPartnerConnection() {
-        if UserDefaults.standard.object(forKey: PreferenceKeys.partnerConnected) != nil {
-            let connected = UserDefaults.standard.bool(forKey: PreferenceKeys.partnerConnected)
-            self.isConnectedToPartner = connected
-            if connected {
-                self.partnerName = UserDefaults.standard.string(forKey: PreferenceKeys.partnerName)
-                self.partnerAvatarURL = UserDefaults.standard.string(forKey: PreferenceKeys.partnerAvatarURL)
-                if let url = self.partnerAvatarURL, !url.isEmpty {
-                    Task { [weak self] in
-                        guard let self = self else { return }
-                        _ = await self.avatarCacheManager.getCachedImage(urlString: url)
-                    }
-                }
-            } else {
-                self.partnerName = nil
-                self.partnerAvatarURL = nil
-            }
-        }
-    }
-
-    private func savePartnerConnectionCache() {
-        UserDefaults.standard.set(self.isConnectedToPartner, forKey: PreferenceKeys.partnerConnected)
-        if self.isConnectedToPartner {
-            if let name = self.partnerName {
-                UserDefaults.standard.set(name, forKey: PreferenceKeys.partnerName)
-            }
-            if let avatar = self.partnerAvatarURL {
-                UserDefaults.standard.set(avatar, forKey: PreferenceKeys.partnerAvatarURL)
-            }
-        }
-    }
-
-    private func clearPartnerConnectionCache() {
-        UserDefaults.standard.set(false, forKey: PreferenceKeys.partnerConnected)
-        UserDefaults.standard.removeObject(forKey: PreferenceKeys.partnerName)
-        UserDefaults.standard.removeObject(forKey: PreferenceKeys.partnerAvatarURL)
-    }
-
-    func preloadPartnerAvatarIfAvailable() {
-        Task { @MainActor in
-            if let url = self.partnerAvatarURL, !url.isEmpty {
-                _ = await self.avatarCacheManager.getCachedImage(urlString: url)
-            }
-        }
-    }
 }
 
 extension SettingsViewModel {

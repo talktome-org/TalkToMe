@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SettingsCardView: View {
 
-    @EnvironmentObject private var linkVM: LinkViewModel
+    @EnvironmentObject private var friendsVM: FriendsViewModel
     @AppStorage(PreferenceKeys.appearancePreference) private var appearance: String = "System"
 
     let section: SettingsSection
@@ -46,8 +46,8 @@ struct SettingsCardView: View {
                 ForEach(Array(section.settings.enumerated()), id: \.offset) { index, setting in
                     Group {
                         switch setting.type {
-                        case .linkPartner:
-                            LinkPartnerInlineRow(linkViewModel: linkVM)
+                        case .friendsCode:
+                            FriendCodeInlineRow()
 
                         case .picker(let options):
                             HStack(spacing: 12) {
@@ -155,7 +155,7 @@ struct SettingsCardView: View {
                                         .frame(width: 24, height: 24)
 
                                     VStack(alignment: .leading, spacing: 2) {
-                                        if setting.title == "Sign Out" || setting.title == "Unlink Partner" {
+                                        if setting.title == "Sign Out" {
                                             Text(setting.title)
                                                 .font(.system(size: 16, weight: .regular))
                                                 .foregroundColor(.red)
@@ -227,6 +227,66 @@ struct SettingsCardView: View {
     }
 }
 
+private struct FriendCodeInlineRow: View {
+    @EnvironmentObject private var friendsVM: FriendsViewModel
+    @State private var codeToAdd: String = ""
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: "number")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.primary)
+                    .frame(width: 24, height: 24)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Your code")
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundColor(.primary)
+                    Text(friendsVM.myCode ?? "— — — —")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+
+                Spacer()
+
+                Button("Refresh") { Task { await friendsVM.refreshMyCode(force: true) } }
+                    .font(.system(size: 13, weight: .semibold))
+                    .buttonStyle(.bordered)
+            }
+
+            HStack(spacing: 10) {
+                TextField("Enter 4-digit code", text: $codeToAdd)
+                    .keyboardType(.numberPad)
+                    .textInputAutocapitalization(.never)
+                    .disableAutocorrection(true)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color(.secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                Button("Add") {
+                    let c = codeToAdd.trimmingCharacters(in: .whitespacesAndNewlines)
+                    Task { await friendsVM.addFriendByCode(c) }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(codeToAdd.trimmingCharacters(in: .whitespacesAndNewlines).count != 4 || friendsVM.isAddingFriend)
+            }
+
+            if let msg = friendsVM.lastActionMessage, !msg.isEmpty {
+                Text(msg)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color(.systemBackground))
+        .task { await friendsVM.refreshMyCode() }
+    }
+}
+
 @ViewBuilder
 private func viewForTitle(_ title: String) -> some View {
     switch title {
@@ -255,4 +315,5 @@ private func viewForTitle(_ title: String) -> some View {
         onPickerSelect: { _, _ in }
     )
     .padding(20)
+    .environmentObject(FriendsViewModel(accessTokenProvider: { "" }))
 }

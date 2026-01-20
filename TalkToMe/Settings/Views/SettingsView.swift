@@ -5,7 +5,7 @@ struct SettingsView: View {
 
     let profileNamespace: Namespace.ID
 
-    @EnvironmentObject private var linkVM: LinkViewModel
+    @EnvironmentObject private var friendsVM: FriendsViewModel
     @EnvironmentObject private var sessionsVM: ChatSessionsViewModel
     @EnvironmentObject private var viewModel: SettingsViewModel
     @Environment(\.colorScheme) private var colorScheme
@@ -16,6 +16,8 @@ struct SettingsView: View {
     @State private var showCards = false
     @State private var avatarRefreshKey = UUID()
 
+    // Settings should behave like the sidebar: show the cached image immediately if available.
+    // (We preload the image before the sheet is presented.)
     private var avatarPlaceholder: AnyView { AnyView(Color.clear) }
 
     private var avatarFallback: AnyView {
@@ -93,12 +95,7 @@ struct SettingsView: View {
                         viewModel.toggleSetting(for: sectionIndex, settingIndex: settingIndex)
                     },
                     onAction: { settingIndex in
-                        let selected = viewModel.settingsSections[sectionIndex].settings[settingIndex]
-                        if section.title == "Account" && selected.title == "Unlink Partner" {
-                            Task { await linkVM.unlink() }
-                        } else {
-                            viewModel.handleSettingAction(for: sectionIndex, settingIndex: settingIndex)
-                        }
+                        viewModel.handleSettingAction(for: sectionIndex, settingIndex: settingIndex)
                     }
                 )
             }
@@ -177,19 +174,21 @@ struct SettingsView: View {
         .onAppear {
             showCards = false
 
-            // Preload partner avatar from cached URL for instant capsule image
-            viewModel.preloadPartnerAvatarIfAvailable()
-
             // Preload avatar for personalization screen
             viewModel.preloadAvatar()
+
+            // As a safety net (normally this is warmed before presenting the sheet).
+            Task { @MainActor in
+                await sessionsVM.ensureProfilePictureCached()
+                avatarRefreshKey = UUID()
+            }
 
             // Load profile information only if not already loaded from cache
             if !viewModel.isProfileLoaded {
                 viewModel.loadProfileInfo()
             }
 
-            // Apply any already-known partner info from sessions VM instantly
-            viewModel.applyPartnerInfo(sessionsVM.partnerInfo)
+            Task { await friendsVM.refreshMyCode() }
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
                 withAnimation(.spring(response: 0.38, dampingFraction: 0.92)) {
@@ -204,20 +203,6 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .avatarChanged)) { _ in
             avatarRefreshKey = UUID()
         }
-        // Keep connection capsule synced with linking state changes
-        .onChange(of: linkVM.state, initial: false) { _, newState in
-            // If linked, refresh from backend; otherwise clear immediately so capsule hides live
-            if case .linked = newState {
-                // Also request sessions VM to refresh partner info so cached AppStorage updates
-                Task { await sessionsVM.loadPartnerInfo() }
-            } else {
-                viewModel.applyPartnerInfo(nil)
-            }
-        }
-        // React to session-level partner info updates as a live source of truth
-        .onReceive(sessionsVM.$partnerInfo) { newInfo in
-            viewModel.applyPartnerInfo(newInfo)
-        }
     }
 
 }
@@ -230,9 +215,7 @@ struct SettingsView: View {
         profileNamespace: namespace,
         isPresented: $isPresented
     )
-    .environmentObject(LinkViewModel(accessTokenProvider: {
-        return "mock-access-token"
-    }))
+    .environmentObject(FriendsViewModel(accessTokenProvider: { "" }))
     .environmentObject(ChatSessionsViewModel())
     .environmentObject(SettingsViewModel())
 }

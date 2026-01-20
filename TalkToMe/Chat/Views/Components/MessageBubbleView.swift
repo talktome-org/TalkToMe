@@ -9,6 +9,7 @@ struct MessageBubbleView: View {
 
     var onSendToPartner: ((String) -> Void)? = nil
 
+    @MainActor
     var body: some View {
         VStack(alignment: message.isFromUser ? .trailing : .leading, spacing: 4) {
             if message.isFromUser {
@@ -48,7 +49,8 @@ struct MessageBubbleView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     if message.isFromPartnerUser {
                         PartnerMessageBlockView(text: plainText(from: message.segments))
-                    } else if !message.segments.isEmpty {
+                    } else
+                    if !message.segments.isEmpty {
                         let attachmentSegments = message.segments.filter { isAttachmentSegment($0) }
                         if !attachmentSegments.isEmpty {
                             attachmentsView(segments: attachmentSegments, alignment: .leading)
@@ -68,7 +70,6 @@ struct MessageBubbleView: View {
                             case .partnerMessage(let text):
                                 if !text.isEmpty {
                                     let isSent = chatViewModel.partnerDrafts.isPartnerDraftSent(sessionId: chatViewModel.sessionId, messageContent: text)
-
                                     let isLinked = (UserDefaults.standard.bool(forKey: PreferenceKeys.partnerConnected) == true)
                                     PartnerDraftBlockView(initialText: text, isSent: isSent, isLinked: isLinked) { action in
                                         switch action {

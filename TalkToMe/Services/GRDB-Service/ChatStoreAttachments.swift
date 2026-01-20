@@ -60,7 +60,11 @@ extension ChatStore {
         let base: URL = {
             let fm = FileManager.default
             let appSupport = (try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)) ?? fm.temporaryDirectory
-            let dir = appSupport.appendingPathComponent("TalkToMe/ChatAttachments", isDirectory: true)
+            let raw = UserDefaults.standard.string(forKey: PreferenceKeys.currentUserId)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+            let cleaned = raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
+            let key = raw.isEmpty ? "unauthenticated" : String(cleaned)
+            let dir = appSupport.appendingPathComponent("TalkToMe/ChatAttachments/\(key)", isDirectory: true)
             try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
             return dir
         }()

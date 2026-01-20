@@ -11,7 +11,7 @@ struct ContentView: View {
     @ObservedObject private var authService = AuthService.shared
     @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
     @EnvironmentObject private var navigationViewModel: SidebarNavigationViewModel
-    @EnvironmentObject private var linkVM: LinkViewModel
+    @EnvironmentObject private var friendsVM: FriendsViewModel
 
     @Namespace private var profileNamespace
     @Environment(\.scenePhase) private var scenePhase
@@ -21,7 +21,9 @@ struct ContentView: View {
             Group {
                 if authService.isCheckingAuth {
                     // Telegram-like: show cached UI immediately; otherwise a minimal spinner.
-                    if !sessionsViewModel.sessions.isEmpty {
+                    // Only show cached UI if we have an effective user id (avoids flashing stale state across account switches).
+                    if authService.currentUserId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+                       !sessionsViewModel.sessions.isEmpty {
                         sidebarContainer(content: MainAppView())
                             .transition(.opacity)
                     } else {
@@ -46,9 +48,10 @@ struct ContentView: View {
     @ViewBuilder
     private func sidebarContainer<Content: View>(content: Content) -> some View {
         GeometryReader { proxy in
+            // If the sidebar is open and nothing is selected, never show ChatView "behind" it.
+            // This prevents the brief ChatView flash during login / account switches while sessions are still loading.
             let showSidebarOnly: Bool = navigationViewModel.isOpen
                 && sessionsViewModel.activeSessionId == nil
-                && !sessionsViewModel.sessions.isEmpty
 
             ZStack(alignment: .leading) {
                 if showSidebarOnly {
@@ -66,7 +69,6 @@ struct ContentView: View {
                 )
                 .frame(width: proxy.size.width)
                 .offset(x: navigationViewModel.isOpen ? 0 : -proxy.size.width)
-                .animation(.spring(response: 0.32, dampingFraction: 0.86, blendDuration: 0), value: navigationViewModel.isOpen)
                 .zIndex(2)
             }
             .sheet(isPresented: $navigationViewModel.showSettingsSheet) {
@@ -75,14 +77,13 @@ struct ContentView: View {
                     isPresented: $navigationViewModel.showSettingsSheet
                 )
                 .environmentObject(sessionsViewModel)
-                .environmentObject(linkVM)
+                .environmentObject(friendsVM)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
             }
         }
         .onAppear {
             sessionsViewModel.setNavigationViewModel(navigationViewModel)
-            sessionsViewModel.setLinkViewModel(linkVM)
         }
         .onChange(of: scenePhase, initial: false) { _, newPhase in
             if newPhase == .active {

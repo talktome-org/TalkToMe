@@ -8,6 +8,8 @@ struct OutboxItem: Codable, FetchableRecord, PersistableRecord {
     var kind: String
     var session_id: String
     var server_session_id: String?
+    var friend_user_id: String?
+    var message_id: String?
     var message: String
     var attachments_json: String?
     var status: String
@@ -53,6 +55,8 @@ final class ChatOutboxProcessor {
     func enqueueChatMessage(
         sessionId: UUID,
         serverSessionId: UUID?,
+        friendUserId: UUID?,
+        messageId: UUID,
         message: String,
         attachments: [OutboxAttachment]
     ) async {
@@ -65,6 +69,8 @@ final class ChatOutboxProcessor {
             kind: "chat_message",
             session_id: sessionId.uuidString,
             server_session_id: serverSessionId?.uuidString,
+            friend_user_id: friendUserId?.uuidString,
+            message_id: messageId.uuidString,
             message: message,
             attachments_json: attachmentsJSON,
             status: "pending",
@@ -72,25 +78,6 @@ final class ChatOutboxProcessor {
             last_error: nil
         )
 
-        _ = try? await LocalDatabase.shared.dbQueue.write { db in
-            try item.insert(db)
-        }
-    }
-
-    func enqueuePartnerRequest(sessionId: UUID, message: String) async {
-        let id = UUID().uuidString
-        let createdAt = isoNow()
-        let item = OutboxItem(
-            id: id,
-            kind: "partner_request",
-            session_id: sessionId.uuidString,
-            server_session_id: nil,
-            message: message,
-            attachments_json: nil,
-            status: "pending",
-            created_at: createdAt,
-            last_error: nil
-        )
         _ = try? await LocalDatabase.shared.dbQueue.write { db in
             try item.insert(db)
         }
@@ -112,8 +99,6 @@ final class ChatOutboxProcessor {
         for item in pending {
             do {
                 switch item.kind {
-                case "partner_request":
-                    try await flushPartnerRequest(item)
                 case "chat_message":
                     try await flushChatMessage(item)
                 default:
@@ -122,30 +107,6 @@ final class ChatOutboxProcessor {
             } catch {
                 let msg = (error as NSError).localizedDescription
                 try? await updateItem(item.id, status: "failed", lastError: msg)
-            }
-        }
-    }
-
-
-    private func flushPartnerRequest(_ item: OutboxItem) async throws {
-        guard let localSid = UUID(uuidString: item.session_id) else { throw NSError() }
-        let existingServer = item.server_session_id.flatMap { UUID(uuidString: $0) }
-        let sid = try await ensureServerSessionId(localSessionId: localSid, existing: existingServer)
-        try await updateItem(item.id, status: "sending", serverSessionId: sid.uuidString, lastError: nil)
-        let accessToken = try await requireAccessToken()
-
-        let body = BackendService.PartnerRequestBody(message: item.message, session_id: sid)
-        let stream = BackendService.shared.streamPartnerRequest(body, accessToken: accessToken)
-        for await event in stream {
-            switch event {
-            case .done:
-                try await updateItem(item.id, status: "sent")
-                NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
-                return
-            case .error(let msg):
-                throw NSError(domain: "Outbox", code: -2, userInfo: [NSLocalizedDescriptionKey: msg])
-            default:
-                continue
             }
         }
     }
@@ -182,6 +143,8 @@ final class ChatOutboxProcessor {
             }
         }
 
+        let friendUserId = item.friend_user_id.flatMap { UUID(uuidString: $0) }
+        let messageId = item.message_id.flatMap { UUID(uuidString: $0) }
         let stream = BackendService.shared.streamChatMessage(
             item.message,
             sessionId: serverSid,
@@ -189,7 +152,9 @@ final class ChatOutboxProcessor {
             attachments: uploaded.isEmpty ? nil : uploaded,
             accessToken: accessToken,
             focusSnippet: nil,
-            previousResponseId: nil
+            previousResponseId: nil,
+            friendUserId: friendUserId,
+            messageId: messageId
         )
 
         for await event in stream {

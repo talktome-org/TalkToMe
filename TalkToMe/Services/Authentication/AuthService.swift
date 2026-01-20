@@ -15,6 +15,18 @@ class AuthService: ObservableObject {
     @Published var isCheckingAuth = true
     @Published var lastAuthError: String?
 
+    /// A stable user id string for UI + cache scoping.
+    /// - When online and authenticated, this is `currentUser.id`.
+    /// - When offline but previously authenticated, we fall back to the cached id in `UserDefaults`.
+    var currentUserId: String? {
+        if let id = currentUser?.id.uuidString {
+            return id
+        }
+        let cached = UserDefaults.standard.string(forKey: PreferenceKeys.currentUserId)
+        let trimmed = cached?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     private init() {
         guard let supabaseURL = AuthService.getInfoPlistValue(for: "SUPABASE_URL") as? String,
               let supabaseKey = AuthService.getInfoPlistValue(for: "SUPABASE_PUBLISHABLE_KEY") as? String else {

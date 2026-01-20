@@ -33,5 +33,5 @@ enum SettingType {
     case navigation
     case action
     case picker([String])
-    case linkPartner
+    case friendsCode
 }

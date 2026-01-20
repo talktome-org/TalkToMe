@@ -5,6 +5,8 @@ final class ChatMessagesViewModel: ObservableObject {
 
     struct MessagesCacheEntry {
         let messages: [ChatMessage]
+        /// Timestamp of the last *network* refresh for this session.
+        /// Loading from GRDB should not mark the cache as "fresh" (otherwise we can get stuck showing partial local history).
         let lastLoaded: Date
     }
 
@@ -15,10 +17,32 @@ final class ChatMessagesViewModel: ObservableObject {
     private let cacheFreshnessSeconds: TimeInterval = 300
     private static var sharedMessagesCache: [UUID: MessagesCacheEntry] = [:]
 
+    static func clearAllCachedMessages() {
+        sharedMessagesCache.removeAll()
+    }
+
     private func debugLog(_ message: @autoclosure () -> String) {
 #if DEBUG
         print(message())
 #endif
+    }
+
+    private func sameMessageIds(_ a: [ChatMessage], _ b: [ChatMessage]) -> Bool {
+        if a.count != b.count { return false }
+        if a.isEmpty { return true }
+        for i in 0..<a.count {
+            if a[i].id != b[i].id { return false }
+        }
+        return true
+    }
+
+    private func applyMessages(_ newMessages: [ChatMessage], reason: String) {
+        if sameMessageIds(self.messages, newMessages) {
+            debugLog("[ChatMessagesVM] applyMessages skip (same ids) reason=\(reason) count=\(newMessages.count) sid=\(sessionId?.uuidString ?? "nil")")
+            return
+        }
+        debugLog("[ChatMessagesVM] applyMessages reason=\(reason) \(self.messages.count)->\(newMessages.count) sid=\(sessionId?.uuidString ?? "nil")")
+        self.messages = newMessages
     }
 
     private func resolvedCurrentUserId() -> UUID? {
@@ -61,6 +85,11 @@ final class ChatMessagesViewModel: ObservableObject {
         return Date().timeIntervalSince(entry.lastLoaded) < cacheFreshnessSeconds
     }
 
+    private func setCachedMessagesFromLocal(_ messages: [ChatMessage], for sessionId: UUID) {
+        let existingLastLoaded = Self.sharedMessagesCache[sessionId]?.lastLoaded ?? Date.distantPast
+        Self.sharedMessagesCache[sessionId] = MessagesCacheEntry(messages: messages, lastLoaded: existingLastLoaded)
+    }
+
     static func preCachePartnerMessage(sessionId: UUID, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -74,30 +103,36 @@ final class ChatMessagesViewModel: ObservableObject {
         if !exists {
             messages.append(partnerMessage)
         }
-        Self.sharedMessagesCache[sessionId] = MessagesCacheEntry(
-            messages: messages,
-            lastLoaded: Date()
-        )
+        // IMPORTANT: This is an optimistic in-memory hint; do NOT mark as a "fresh" network load.
+        let existingLastLoaded = Self.sharedMessagesCache[sessionId]?.lastLoaded ?? Date.distantPast
+        Self.sharedMessagesCache[sessionId] = MessagesCacheEntry(messages: messages, lastLoaded: existingLastLoaded)
     }
 
     func presentSession(_ id: UUID) async {
         self.sessionId = id
-        if let entry = Self.sharedMessagesCache[id], !entry.messages.isEmpty {
-            self.messages = entry.messages
-            self.isLoadingHistory = false
-        } else {
-            self.messages = []
-            self.isLoadingHistory = true
-        }
+        // Prefer the durable GRDB cache over the in-memory cache to avoid "1 message then full history" flashes.
+        // (In-memory cache can be partial/optimistic.)
+        self.messages = []
+        self.isLoadingHistory = true
 
         // Load cached messages from GRDB immediately (best-effort).
         if let currentUserId = resolvedCurrentUserId() {
             let local = await ChatStore.shared.loadMessages(sessionId: id, currentUserId: currentUserId)
             if !local.isEmpty {
-                self.messages = local
-                Self.sharedMessagesCache[id] = MessagesCacheEntry(messages: local, lastLoaded: Date())
+                applyMessages(local, reason: "presentSession.grdb")
+                // IMPORTANT: Do not mark as "fresh" just because we loaded from disk.
+                // We still want to refresh from the server (when online) to avoid being stuck with partial history.
+                setCachedMessagesFromLocal(local, for: id)
                 self.isLoadingHistory = false
             }
+        }
+
+        // If GRDB had nothing, fall back to in-memory cache (best-effort).
+        if self.messages.isEmpty,
+           let entry = Self.sharedMessagesCache[id],
+           !entry.messages.isEmpty {
+            applyMessages(entry.messages, reason: "presentSession.memoryCacheFallback")
+            self.isLoadingHistory = false
         }
 
         if isCacheFresh(for: id) {
@@ -118,8 +153,9 @@ final class ChatMessagesViewModel: ObservableObject {
             if let userId = resolvedCurrentUserId() {
                 let local = await ChatStore.shared.loadMessages(sessionId: sid, currentUserId: userId)
                 if !local.isEmpty, (force || self.messages.isEmpty) {
-                    self.messages = local
-                    Self.sharedMessagesCache[sid] = MessagesCacheEntry(messages: local, lastLoaded: Date())
+                    applyMessages(local, reason: "loadHistory.grdb")
+                    // Don't treat local disk reads as a "fresh" cache for server fetch purposes.
+                    setCachedMessagesFromLocal(local, for: sid)
                     self.isLoadingHistory = false
                 }
             }
@@ -170,7 +206,7 @@ final class ChatMessagesViewModel: ObservableObject {
                     }
                 }
             }
-            self.messages = mapped
+            applyMessages(mapped, reason: "loadHistory.network")
             Self.sharedMessagesCache[sid] = MessagesCacheEntry(messages: mapped, lastLoaded: Date())
             Task.detached {
                 await ChatStore.shared.upsertMessages(dtos)

@@ -33,7 +33,7 @@ struct PartnerDraftBlockView: View {
                 Spacer()
 
                 MessageActionsView(text: text)
-                .offset(y: -4)
+                    .offset(y: -4)
             }
 
             Divider()
@@ -186,5 +186,4 @@ private struct HeightReader: View {
     PartnerDraftBlockView(initialText: "Hey love — I've been feeling a bit overwhelmed lately and could use a little extra help this week.", isSent: false) { _ in }
         .padding()
 }
-
 

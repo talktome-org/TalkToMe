@@ -40,6 +40,15 @@ final class ChatStore {
     var dbQueue: DatabaseQueue { LocalDatabase.shared.dbQueue }
     let isoFormatter = ISO8601DateFormatter()
 
+    private func currentUserKey() -> String {
+        let raw = UserDefaults.standard.string(forKey: PreferenceKeys.currentUserId)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if raw.isEmpty { return "unauthenticated" }
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+        let cleaned = raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
+        return String(cleaned)
+    }
+
     struct RemoteAttachment {
         let messageId: String
         let kind: String
@@ -100,7 +109,7 @@ final class ChatStore {
             appropriateFor: nil,
             create: true
         )) ?? fm.temporaryDirectory
-        let dir = appSupport.appendingPathComponent("TalkToMe/ChatAttachments", isDirectory: true)
+        let dir = appSupport.appendingPathComponent("TalkToMe/ChatAttachments/\(currentUserKey())", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -116,6 +125,9 @@ final class ChatStore {
             try? fm.removeItem(at: url)
         }
     }
+
+    // NOTE: We do NOT "wipe on account switch" in prod.
+    // Local chat isolation is handled by per-user database files and per-user attachment directories.
 
     /// Reconciles the local cache with the server's session list.
     /// - Upserts all server sessions locally
@@ -251,7 +263,7 @@ final class ChatStore {
             let base: URL = {
                 let fm = FileManager.default
                 let appSupport = (try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)) ?? fm.temporaryDirectory
-                let dir = appSupport.appendingPathComponent("TalkToMe/ChatAttachments", isDirectory: true)
+                let dir = appSupport.appendingPathComponent("TalkToMe/ChatAttachments/\(currentUserKey())", isDirectory: true)
                 try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
                 return dir
             }()
@@ -290,6 +302,19 @@ final class ChatStore {
         let wrote: Bool
         do {
             try await dbQueue.write { db in
+                // Messages have a FK to `sessions(id)`. Ensure the parent session rows exist so inserts never fail.
+                // This matters on cold start (messages may load before sessions) and during local→server rekey races.
+                let sessionIds = Set(dtos.map { $0.session_id.uuidString })
+                for sid in sessionIds {
+                    try db.execute(
+                        sql: """
+                        INSERT OR IGNORE INTO sessions (id, title, last_message_at, last_message_content)
+                        VALUES (?, NULL, NULL, NULL)
+                        """,
+                        arguments: [sid]
+                    )
+                }
+
                 let nowISO = isoFormatter.string(from: Date())
                 for dto in dtos {
                     let created = dto.created_at ?? nowISO
@@ -320,12 +345,37 @@ final class ChatStore {
 
         do {
             try await dbQueue.write { db in
-                try db.execute(sql: "UPDATE sessions SET id = ? WHERE id = ?", arguments: [new, old])
-                try db.execute(sql: "UPDATE messages SET session_id = ? WHERE session_id = ?", arguments: [new, old])
-                try db.execute(
-                    sql: "UPDATE outbox SET session_id = ?, server_session_id = COALESCE(server_session_id, ?) WHERE session_id = ?",
-                    arguments: [new, new, old]
-                )
+                let newExists = (try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(1) FROM sessions WHERE id = ?",
+                    arguments: [new]
+                ) ?? 0) > 0
+
+                // If the server session already exists locally (e.g. a background refresh inserted it),
+                // we can't UPDATE the PK. Instead, merge the old session's children into the new session and delete the old row.
+                if newExists {
+                    try db.execute(sql: "UPDATE messages SET session_id = ? WHERE session_id = ?", arguments: [new, old])
+                    try db.execute(
+                        sql: """
+                        UPDATE outbox
+                        SET session_id = ?, server_session_id = COALESCE(server_session_id, ?)
+                        WHERE session_id = ?
+                        """,
+                        arguments: [new, new, old]
+                    )
+                    try db.execute(sql: "DELETE FROM sessions WHERE id = ?", arguments: [old])
+                } else {
+                    try db.execute(sql: "UPDATE sessions SET id = ? WHERE id = ?", arguments: [new, old])
+                    try db.execute(sql: "UPDATE messages SET session_id = ? WHERE session_id = ?", arguments: [new, old])
+                    try db.execute(
+                        sql: """
+                        UPDATE outbox
+                        SET session_id = ?, server_session_id = COALESCE(server_session_id, ?)
+                        WHERE session_id = ?
+                        """,
+                        arguments: [new, new, old]
+                    )
+                }
             }
         } catch {}
     }

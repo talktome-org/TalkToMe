@@ -36,10 +36,23 @@ class ChatViewModel: ObservableObject {
     @Published var focusTopMessageId: UUID? = nil
     @Published var assistantScrollTargetId: UUID? = nil
     @Published var streamingScrollToken: Int = 0
+    @Published var selectedFriendUserId: UUID? = nil
     @Published var sessionId: UUID? {
         didSet {
+#if DEBUG
+            let oldStr = oldValue?.uuidString ?? "nil"
+            let newStr = sessionId?.uuidString ?? "nil"
+            if oldStr != newStr {
+                debugLog("[ChatVM] sessionId changed \(oldStr) -> \(newStr)")
+            }
+            if sessionId == nil {
+                let stack = Thread.callStackSymbols.prefix(12).joined(separator: "\n")
+                debugLog("[ChatVM] sessionId set to nil (will clear UI state). Call stack:\n\(stack)")
+            }
+#endif
             if sessionId == nil {
                 messages = []
+                selectedFriendUserId = nil
             }
         }
     }
@@ -64,6 +77,30 @@ class ChatViewModel: ObservableObject {
     private var observers: [NSObjectProtocol] = []
     private var refreshTimer: Timer?
     private var cancellables: Set<AnyCancellable> = []
+
+    private static func friendKey(for sessionId: UUID) -> String {
+        "session_friend_user_id_\(sessionId.uuidString)"
+    }
+
+    private func loadPersistedFriendUserId(for sessionId: UUID) -> UUID? {
+        guard let raw = UserDefaults.standard.string(forKey: Self.friendKey(for: sessionId)),
+              let id = UUID(uuidString: raw)
+        else { return nil }
+        return id
+    }
+
+    private func persistFriendUserId(_ friendUserId: UUID, for sessionId: UUID) {
+        UserDefaults.standard.set(friendUserId.uuidString, forKey: Self.friendKey(for: sessionId))
+    }
+
+    private func movePersistedFriendUserId(from oldId: UUID, to newId: UUID) {
+        let oldKey = Self.friendKey(for: oldId)
+        let newKey = Self.friendKey(for: newId)
+        if let raw = UserDefaults.standard.string(forKey: oldKey) {
+            UserDefaults.standard.set(raw, forKey: newKey)
+            UserDefaults.standard.removeObject(forKey: oldKey)
+        }
+    }
 
     private func cancelCurrentStream() {
         currentStreamTask?.cancel()
@@ -97,29 +134,18 @@ class ChatViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        partnerDrafts.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
         Task { [weak self] in
             guard let self = self else { return }
             await self.loadHistory()
             if !self.messages.isEmpty { self.initialJumpToken &+= 1 }
         }
-
-        let partnerReceived = NotificationCenter.default.addObserver(
-            forName: .partnerMessageReceived,
-            object: nil,
-            queue: .main
-        ) { [weak self] note in
-            Task { @MainActor in
-                guard let self = self else { return }
-                guard let notificationSessionId = note.userInfo?["sessionId"] as? UUID else { return }
-                let currentSessionId = self.sessionId
-                self.debugLog("[ChatVM] Received partnerMessageReceived for session \(notificationSessionId), current session: \(String(describing: currentSessionId))")
-                if notificationSessionId == currentSessionId {
-                    self.debugLog("[ChatVM] Refreshing messages for partner message in session \(notificationSessionId)")
-                    await self.loadHistory(force: true)
-                }
-            }
-        }
-        observers.append(partnerReceived)
 
         let sessionRekeyed = NotificationCenter.default.addObserver(
             forName: .chatSessionRekeyed,
@@ -133,12 +159,16 @@ class ChatViewModel: ObservableObject {
                     let newId = note.userInfo?["newSessionId"] as? UUID
                 else { return }
                 if self.sessionId == oldId {
+                    self.movePersistedFriendUserId(from: oldId, to: newId)
                     self.sessionId = newId
+                    self.selectedFriendUserId = self.loadPersistedFriendUserId(for: newId)
                     await self.presentSession(newId)
                 }
             }
         }
         observers.append(sessionRekeyed)
+
+        // Partner-draft sending is handled by ChatView (it must show the friend picker if not connected).
     }
 
     deinit {
@@ -174,10 +204,55 @@ class ChatViewModel: ObservableObject {
         self.isLoadingHistory = chatMessagesVM.isLoadingHistory
     }
 
+    func sendPartnerDraftToSelectedFriend(_ text: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let friendId = selectedFriendUserId else { return }
+
+        do {
+            let sid = await ensureSessionId()
+            guard let sid else { return }
+            persistFriendUserId(friendId, for: sid)
+
+            guard let accessToken = await authService.getAccessToken() else { return }
+
+            _ = try await backend.sendPartnerMessage(
+                message: trimmed,
+                sessionId: sid,
+                friendUserId: friendId,
+                accessToken: accessToken
+            )
+
+            partnerDrafts.markPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
+        } catch {
+            self.debugLog("[ChatVM] sendPartnerDraftToSelectedFriend failed: \(error)")
+        }
+    }
+
+    func sendPartnerDraftViaSession(_ text: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        do {
+            let sid = await ensureSessionId()
+            guard let sid else { return }
+            guard let accessToken = await authService.getAccessToken() else { return }
+            _ = try await backend.sendPartnerMessage(
+                message: trimmed,
+                sessionId: sid,
+                friendUserId: nil,
+                accessToken: accessToken
+            )
+            partnerDrafts.markPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
+        } catch {
+            self.debugLog("[ChatVM] sendPartnerDraftViaSession failed: \(error)")
+        }
+    }
+
     func presentSession(_ id: UUID) async {
         await MainActor.run {
             self.sessionId = id
-            self.startPartnerMessagePolling()
+            self.selectedFriendUserId = self.loadPersistedFriendUserId(for: id)
             if let placeholderId = self.assistantMessageIdBySession[id] {
                 self.currentAssistantMessageId = placeholderId
             } else {
@@ -226,6 +301,8 @@ class ChatViewModel: ObservableObject {
                 "lastMessageContent": ""
             ])
 
+            self.debugLog("[ChatVM] Created local-only session id=\(localId.uuidString) (will rekey once server assigns id)")
+
             // Persist the local-only session so it survives app restarts even if the network / backend call fails.
             Task.detached {
                 await ChatStore.shared.upsertSessions([
@@ -235,6 +312,11 @@ class ChatViewModel: ObservableObject {
         }
 
         guard let sid = self.sessionId else { return }
+        if let friendId = selectedFriendUserId {
+            persistFriendUserId(friendId, for: sid)
+        }
+        let friendToUse = selectedFriendUserId
+
         let userId: UUID? = {
             if let uid = AuthService.shared.currentUser?.id { return uid }
             if let raw = UserDefaults.standard.string(forKey: PreferenceKeys.currentUserId),
@@ -255,7 +337,11 @@ class ChatViewModel: ObservableObject {
         let fm = FileManager.default
         let baseDir: URL = {
             let appSupport = (try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)) ?? fm.temporaryDirectory
-            let dir = appSupport.appendingPathComponent("TalkToMe/OutboxAttachments", isDirectory: true)
+            let raw = UserDefaults.standard.string(forKey: PreferenceKeys.currentUserId)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+            let cleaned = raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
+            let key = raw.isEmpty ? "unauthenticated" : String(cleaned)
+            let dir = appSupport.appendingPathComponent("TalkToMe/OutboxAttachments/\(key)", isDirectory: true)
             try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
             return dir
         }()
@@ -302,6 +388,7 @@ class ChatViewModel: ObservableObject {
             content: persistedContent,
             created_at: ISO8601DateFormatter().string(from: Date())
         )
+        let clientMessageId = dto.id
 
         // Render + persist immediately so the user's message survives failures (no credits, no internet, etc).
         let localMessage = ChatMessage(dto: dto, currentUserId: userId)
@@ -327,6 +414,8 @@ class ChatViewModel: ObservableObject {
                 await ChatOutboxProcessor.shared.enqueueChatMessage(
                     sessionId: sid,
                     serverSessionId: nil,
+                    friendUserId: friendToUse,
+                    messageId: clientMessageId,
                     message: messageToSend,
                     attachments: outboxAttachments
                 )
@@ -596,6 +685,7 @@ class ChatViewModel: ObservableObject {
                         }
                     case .session(let sid):
                         streamSessionId = sid
+                        self.debugLog("[ChatVM] SSE session event sid=\(sid.uuidString) currentSessionId=\(self.sessionId?.uuidString ?? "nil") createdLocal=\(createdLocalSessionIdForSend?.uuidString ?? "nil")")
                         Task { @MainActor in
                             // If we created a local-only session for persistence, rekey it to the server session id.
                             if let local = createdLocalSessionIdForSend, self.sessionId == local, sid != local {
@@ -774,6 +864,25 @@ class ChatViewModel: ObservableObject {
                             // The backend may update `last_message_*` and/or generate a chat title
                             // after it has received enough context, so a refresh at send-time can be too early.
                             if NetworkMonitor.shared.isOnline {
+                                // Persist the canonical server history to GRDB after streaming completes.
+                                // This avoids the "opens with 1 message, then loads full history" effect on next launch.
+                                if let sid = (streamSessionId ?? self.sessionId) {
+                                    let tokenForSync = accessToken
+                                    Task.detached {
+                                        try? await Task.sleep(nanoseconds: 900_000_000) // allow server background persistence to commit
+                                        do {
+                                            let dtos = try await BackendService.shared.fetchMessages(sessionId: sid, accessToken: tokenForSync)
+                                            await ChatStore.shared.upsertMessages(dtos)
+#if DEBUG
+                                            print("[ChatVM] post-stream sync persisted \(dtos.count) messages to GRDB for session \(sid.uuidString)")
+#endif
+                                        } catch {
+#if DEBUG
+                                            print("[ChatVM] post-stream sync failed for session \(sid.uuidString): \(error)")
+#endif
+                                        }
+                                    }
+                                }
                                 Task.detached {
                                     try? await Task.sleep(nanoseconds: 900_000_000) // small delay for server-side updates
                                     NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
@@ -781,6 +890,7 @@ class ChatViewModel: ObservableObject {
                             }
                         }
                     case .error(let message):
+                        self.debugLog("[ChatVM] stream error (manager): \(message)")
                         Task { @MainActor in
 
                             let targetSid = streamSessionId ?? self.sessionId
@@ -816,6 +926,8 @@ class ChatViewModel: ObservableObject {
                             await ChatOutboxProcessor.shared.enqueueChatMessage(
                                 sessionId: outboxSessionId,
                                 serverSessionId: outboxServerSessionId,
+                                friendUserId: friendToUse,
+                                messageId: clientMessageId,
                                 message: messageToSend,
                                 attachments: outboxAttachments
                             )
@@ -843,7 +955,9 @@ class ChatViewModel: ObservableObject {
                     attachments: uploaded.isEmpty ? nil : uploaded,
                     accessToken: accessToken,
                     focusSnippet: focusSnippetForStream,
-                    previousResponseId: prevId
+                    previousResponseId: prevId,
+                    friendUserId: friendToUse,
+                    messageId: clientMessageId
                 )
                 for await event in stream {
                     onEvent(event)
@@ -871,143 +985,6 @@ class ChatViewModel: ObservableObject {
         cancelCurrentStream()
         isLoading = false
         isStreaming = false
-    }
-
-    private func startPartnerMessagePolling() {
-        refreshTimer?.invalidate()
-        guard sessionId != nil else { return }
-
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                guard self.sessionId != nil else { return }
-                guard !self.isStreaming else { return }
-
-                self.debugLog("[ChatVM] Polling for new partner messages...")
-                await self.loadHistory(force: true)
-            }
-        }
-    }
-
-    func sendToPartner(sessionsViewModel: ChatSessionsViewModel, customMessage: String? = nil) async {
-        // Guard: must be linked to a partner
-        let isLinked = (sessionsViewModel.partnerInfo?.linked == true) || UserDefaults.standard.bool(forKey: PreferenceKeys.partnerConnected) == true
-        guard isLinked else {
-            await MainActor.run {
-                Haptics.notification(.error)
-            }
-            return
-        }
-        let message = (customMessage ?? self.inputText).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty else { return }
-
-        // Offline-first: queue partner request.
-        if NetworkMonitor.shared.isOnline == false {
-            if self.sessionId == nil {
-                let localId = UUID()
-                self.sessionId = localId
-                let currentTime = ISO8601DateFormatter().string(from: Date())
-                NotificationCenter.default.post(name: .chatSessionCreated, object: nil, userInfo: [
-                    "sessionId": localId,
-                    "title": ChatSession.defaultTitle,
-                    "lastUsedISO8601": currentTime,
-                    "lastMessageContent": ""
-                ])
-
-                Task.detached {
-                    await ChatStore.shared.upsertSessions([
-                        ChatSession(id: localId, title: ChatSession.defaultTitle, lastUsedISO8601: currentTime, lastMessageContent: "")
-                    ])
-                }
-            }
-            guard let sid = self.sessionId else { return }
-            await ChatOutboxProcessor.shared.enqueuePartnerRequest(sessionId: sid, message: message)
-            return
-        }
-
-        let resolved = await ensureSessionId()
-        let sessionId = resolved ?? sessionsViewModel.activeSessionId
-        guard let sid = sessionId else { return }
-        do {
-            guard let accessToken = await AuthService.shared.getAccessToken() else { return }
-            let body = BackendService.PartnerRequestBody(message: message, session_id: sid)
-            Task.detached {
-                let stream = BackendService.shared.streamPartnerRequest(body, accessToken: accessToken)
-                for await event in stream {
-                    switch event {
-                    case .toolStart(_): break
-                    case .toolArgs(_): break
-                    case .toolDone: break
-                    case .token(_): break
-                    case .done: return
-                    case .error(let msg):
-                        self.debugLog("[PartnerStream][iOS] error=\(msg)")
-                        return
-                    case .session(_): break
-                    case .partnerMessage(_): break
-                    case .responseId(_): break
-                    }
-                }
-            }
-        }
-    }
-
-    @MainActor
-    func showPartnerAcceptanceInstant(sessionId targetSessionId: UUID, text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-
-        let optimistic = ChatMessage(
-            segments: [.partnerReceived(trimmed)],
-            isFromUser: false,
-            isToolLoading: false
-        )
-
-        if self.sessionId == targetSessionId {
-            if let last = self.messages.last, last.partnerMessageContent == trimmed, last.isPartnerMessage {
-                self.isLoadingHistory = false
-                self.assistantScrollTargetId = last.id
-                self.streamingScrollToken &+= 1
-                updateCacheForCurrentSession()
-                return
-            }
-            self.messages.append(optimistic)
-            self.isLoadingHistory = false
-            self.assistantScrollTargetId = optimistic.id
-            self.streamingScrollToken &+= 1
-            updateCacheForCurrentSession()
-        } else {
-            var entry = self.chatMessagesVM.getCachedMessages(for: targetSessionId) ?? []
-            if let last = entry.last, last.partnerMessageContent == trimmed, last.isPartnerMessage {
-                self.chatMessagesVM.setCachedMessages(entry, for: targetSessionId)
-            } else {
-                entry.append(optimistic)
-                self.chatMessagesVM.setCachedMessages(entry, for: targetSessionId)
-            }
-        }
-    }
-
-    @MainActor
-    func preloadPartnerMessageIntoCache(sessionId: UUID, text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-
-        let partnerMessage = ChatMessage.partnerReceived(trimmed)
-        var messages = self.chatMessagesVM.getCachedMessages(for: sessionId) ?? []
-
-        let alreadyExists = messages.contains { msg in
-            msg.partnerMessageContent == trimmed && msg.isPartnerMessage
-        }
-
-        if !alreadyExists {
-            messages.append(partnerMessage)
-            self.chatMessagesVM.setCachedMessages(messages, for: sessionId)
-        }
-
-        if self.sessionId == sessionId {
-            self.messages = messages
-            self.isLoadingHistory = false
-        }
     }
 
     private func updateCacheForCurrentSession() {

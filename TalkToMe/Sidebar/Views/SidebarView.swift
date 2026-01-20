@@ -1,19 +1,17 @@
 import SwiftUI
-import Contacts
-import MessageUI
 import UIKit
 
 struct SidebarView: View {
 
     @EnvironmentObject private var navigationViewModel: SidebarNavigationViewModel
     @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
-    @EnvironmentObject private var linkVM: LinkViewModel
+    @EnvironmentObject private var friendsViewModel: FriendsViewModel
+
     @ObservedObject private var authService = AuthService.shared
     @ObservedObject private var networkMonitor = NetworkMonitor.shared
 
-    @Environment(\.colorScheme) private var colorScheme
-
     @Binding var isOpen: Bool
+    let profileNamespace: Namespace.ID
 
     @FocusState private var isSearchFieldFocused: Bool
 
@@ -21,256 +19,102 @@ struct SidebarView: View {
     @State private var showRenameSheet: Bool = false
     @State private var renameText: String = ""
     @State private var renameTargetId: UUID? = nil
-    @State private var showAddFriendSheet: Bool = false
-
-    let profileNamespace: Namespace.ID
+    @State private var inviteErrorMessage: String? = nil
+    @State private var showFriendsSheet: Bool = false
 
     private var isSearchActive: Bool {
         if isSearchFieldFocused { return true }
         return !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private func controlsBar(bottomInset: CGFloat, availableWidth: CGFloat) -> some View {
-        let showLeftButtons: Bool = !isSearchActive
-        let isSearchCollapsed: Bool = !isSearchActive
-
-        // Make the search pill ~1/3 shorter when not active.
-        // Use the parent GeometryReader width (not a self-measured width) to avoid feedback loops.
-        let horizontalPadding: CGFloat = 40 // matches `.padding(.horizontal, 20)` below
-        let contentWidth: CGFloat = max(0, availableWidth - horizontalPadding)
-        let sideButtonWidth: CGFloat = 50
-        let buttonSpacing: CGFloat = 8
-
-        // Base "full width" (inactive layout is [profile][search][newChat]) has 2 gaps (2 * 8).
-        let fullSearchWidthBetweenButtons: CGFloat = max(0, contentWidth - sideButtonWidth - sideButtonWidth - (2 * buttonSpacing))
-        let collapsedSearchWidthFallback: CGFloat = 220
-        let collapsedSearchWidth: CGFloat = {
-            guard fullSearchWidthBetweenButtons > 0 else { return collapsedSearchWidthFallback }
-            return max(200, fullSearchWidthBetweenButtons * 0.90)
-        }()
-
-        return HStack(spacing: 8) {
-            if #available(iOS 26.0, *) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 17, weight: .regular))
-                        .foregroundStyle(.secondary)
-
-                    TextField("Search", text: $searchText)
-                        .focused($isSearchFieldFocused)
-                        .submitLabel(.search)
-                        .textInputAutocapitalization(.never)
-                        .disableAutocorrection(true)
-                        .font(.system(size: 17, weight: .regular))
-                        .padding(.vertical, 4)
-                }
-                .padding(.vertical, 10)
-                .padding(.horizontal, 14)
-                .frame(maxWidth: isSearchCollapsed ? collapsedSearchWidth : .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 999, style: .continuous))
-                .glassEffect(.regular.interactive())
-            }
-
-            if showLeftButtons {
-                if #available(iOS 26.0, *) {
-                    Button(action: {
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0)) {
-                            sessionsViewModel.startNewChat()
-                            navigationViewModel.selectedTab = .chat
-                            isOpen = false
-                        }
-                    }) {
-                        Image(systemName: "chevron.right.2")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .offset(y: -1)
-                    }
-                    .frame(width: 50, height: 50)
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("New chat")
-                    .glassEffect(.regular.interactive(), in: Circle())
-                }
-            }
-
-            if isSearchActive {
-                if #available(iOS 26.0, *) {
-                    Button(action: {
-                        Haptics.impact(.light)
-                        searchText = ""
-                        isSearchFieldFocused = false
-                    }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .frame(width: 50, height: 50)
-                    }
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: Circle())
-                    .accessibilityLabel("Close search")
-
-                }
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.bottom, bottomInset + 2 + (isSearchFieldFocused ? 12 : 0))
-        .contentShape(Rectangle())
-        .animation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0), value: isSearchActive)
-        .animation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0), value: isSearchFieldFocused)
-        .zIndex(10)
+    private var filteredSessions: [ChatSession] {
+        let term = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if term.isEmpty { return sessionsViewModel.sessions }
+        return sessionsViewModel.sessions.filter { $0.title.lowercased().contains(term) }
     }
 
+    @MainActor
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
                 let pinnedHeaderBar = HStack {
                     if #available(iOS 26.0, *) {
-                    Button(action: {
-                        Haptics.impact(.light)
-                        navigationViewModel.showSettingsSheet = true
-                    }) {
-                        SidebarAvatarView(avatarURL: sessionsViewModel.myAvatarURL)
-                            .frame(width: 40, height: 40)
-                            .clipShape(Circle())
-                    }
-                    .frame(width: 50, height: 50)
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular, in: Circle())
+                        Button(action: {
+                            Haptics.impact(.light)
+                            presentFriendsSheet()
+                        }) {
+                            HStack(spacing: 8) {
+                                Text("Friends")
+                                    .font(.system(size: 15, weight: .semibold))
+                                Image(systemName: "plus")
+                                    .font(.system(size: 16, weight: .semibold))
+                            }
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 12)
+                            .frame(height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
 
                     Spacer()
                     ConnectionStatusPillView()
                     Spacer()
-
-                    if #available(iOS 26.0, *) {
-                        Button(action: {
-                            showAddFriendSheet = true
-                            Task { await linkVM.ensureInviteReady() }
-                        }) {
-                            Image(systemName: "person.fill.badge.plus")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundColor(.primary)
+                    // Keep the right side the same width as the left so the status pill stays centered.
+                    HStack {
+                        Spacer(minLength: 0)
+                        if #available(iOS 26.0, *) {
+                            Button(action: {
+                                Haptics.impact(.light)
+                                // Select new chat immediately (no animation) so the main content updates
+                                // while the sidebar is still visible.
+                                withAnimation(nil) {
+                                    sessionsViewModel.startNewChat()
+                                    navigationViewModel.selectedTab = .chat
+                                }
+                                // Only animate the sidebar closing.
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8, blendDuration: 0)) {
+                                    isOpen = false
+                                }
+                            }) {
+                                Image(systemName: "square.and.pencil")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                    .frame(width: 44, height: 44)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("New chat")
+                            .glassEffect(.regular.interactive(), in: Circle())
                         }
-                        .frame(width: 50, height: 50)
-                        .contentShape(Circle())
-                        .buttonStyle(.plain)
-                        .glassEffect(.regular.interactive(), in: Circle())
                     }
-
+                    .frame(width: 110, height: 44)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 6)
 
                 ScrollView {
                     let availableWidth = geometry.size.width
-                    let isLinked = (linkVM.state == .linked) || (sessionsViewModel.partnerInfo?.linked == true)
 
                     VStack(spacing: 10) {
-                        if !sessionsViewModel.pendingRequests.isEmpty {
-                            VStack(alignment: .leading, spacing: 12) {
-                                ForEach(sessionsViewModel.pendingRequests, id: \.id) { request in
-                                    Button(action: {
-                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8, blendDuration: 0)) {
-                                            sessionsViewModel.openPendingRequest(request)
-                                            isOpen = false
-                                        }
-                                    }) {
-                                        PendingRequestRowView(request: request)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .padding(12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .fill(Color(.systemGray6))
-                            )
-                            .padding(.horizontal, 16)
-                            .padding(.top, 10)
-                        }
-
-
-                        let term = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                        let filteredSessions: [ChatSession] = sessionsViewModel.sessions.filter { session in
-                            term.isEmpty || session.title.lowercased().contains(term)
-                        }
-
                         LazyVStack(spacing: 6) {
-                            if term.isEmpty,
-                               let err = sessionsViewModel.sessionsLoadError,
-                               !err.isEmpty,
-                               !sessionsViewModel.sessions.isEmpty,
-                               !sessionsViewModel.isLoadingSessions {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                    Text(err)
-                                        .font(.system(size: 13))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
-                                    Spacer()
-                                    Button(action: {
-                                        Haptics.impact(.light)
-                                        Task { await sessionsViewModel.refreshSessions() }
-                                    }) {
-                                        Text("Retry")
-                                            .font(.system(size: 13, weight: .semibold))
-                                    }
-                                    .buttonStyle(.bordered)
-                                }
-                                .padding(.vertical, 6)
-                            }
-
-                            if term.isEmpty && sessionsViewModel.sessions.isEmpty {
-                                if sessionsViewModel.isLoadingSessions {
-                                    VStack(spacing: 10) {
-                                        ProgressView()
-                                        Text("Loading conversations…")
-                                            .font(.system(size: 14))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 24)
-                                } else if let err = sessionsViewModel.sessionsLoadError, !err.isEmpty {
-                                    VStack(spacing: 10) {
-                                        Text(err)
-                                            .font(.system(size: 14))
-                                            .foregroundStyle(.secondary)
-                                            .multilineTextAlignment(.center)
-                                        Button(action: {
-                                            Haptics.impact(.light)
-                                            Task { await sessionsViewModel.refreshSessions() }
-                                        }) {
-                                            Text("Retry")
-                                                .font(.system(size: 14, weight: .semibold))
-                                        }
-                                        .buttonStyle(.bordered)
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 24)
-                                } else {
-                                    VStack(spacing: 10) {
-                                        Text("No conversations yet")
-                                            .font(.system(size: 14))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 24)
-                                }
-                            }
-
                             ForEach(filteredSessions, id: \.id) { session in
                                 Button(action: {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8, blendDuration: 0)) {
+                                    Haptics.impact(.light)
+                                    // Switch the active chat immediately (no animation) to avoid briefly showing
+                                    // the previous chat while the sidebar is sliding away.
+                                    withAnimation(nil) {
                                         sessionsViewModel.openSession(session.id)
                                         navigationViewModel.selectedTab = .chat
+                                    }
+                                    // Only animate the sidebar closing.
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8, blendDuration: 0)) {
                                         isOpen = false
                                     }
                                 }) {
                                     let title = session.title
                                     let dateText = sessionsViewModel.formatLastUsed(session.lastUsedISO8601)
                                     let previewText = previewText(for: session, availableWidth: availableWidth)
-                                    let showUnreadDot = isLinked && sessionsViewModel.unreadPartnerSessionIds.contains(session.id)
 
                                     VStack(alignment: .leading, spacing: 12) {
                                         HStack {
@@ -290,11 +134,6 @@ struct SidebarView: View {
                                                 .lineLimit(1)
                                                 .truncationMode(.tail)
                                             Spacer()
-                                            if showUnreadDot {
-                                                Circle()
-                                                    .fill(Color(red: 0.4, green: 0.2, blue: 0.6))
-                                                    .frame(width: 14, height: 14)
-                                            }
                                         }
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -324,7 +163,6 @@ struct SidebarView: View {
                 .safeAreaInset(edge: .top) {
                     pinnedHeaderBar
                 }
-                // Match the top: the bottom controls bar is now a real safe-area inset, not an overlay.
                 .safeAreaInset(edge: .bottom) {
                     controlsBar(bottomInset: 0, availableWidth: geometry.size.width)
                 }
@@ -340,7 +178,11 @@ struct SidebarView: View {
                 }
             }
             .onAppear {
-                Task { await sessionsViewModel.ensureProfilePictureCached() }
+                Task {
+                    await sessionsViewModel.ensureProfilePictureCached()
+                    // Prefetch the friend code so it's ready before the user opens the sheet.
+                    await friendsViewModel.refreshMyCode()
+                }
             }
             .sheet(isPresented: $showRenameSheet) {
                 VStack(spacing: 16) {
@@ -371,13 +213,135 @@ struct SidebarView: View {
                 .padding(20)
                 .presentationDetents([.medium])
             }
-            .sheet(isPresented: $showAddFriendSheet) {
-                AddFriendContactsSheetView(isPresented: $showAddFriendSheet)
-                    .environmentObject(linkVM)
+            .sheet(isPresented: $showFriendsSheet) {
+                FriendsSheetView(isPresented: $showFriendsSheet)
+                    .environmentObject(friendsViewModel)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
         }
     }
 
+    @MainActor
+    private func presentFriendsSheet() {
+        // SwiftUI sometimes drops sheet presentations if `isPresented` is already true
+        // or if multiple state updates happen in the same run loop.
+        if showFriendsSheet {
+            showFriendsSheet = false
+            DispatchQueue.main.async {
+                showFriendsSheet = true
+            }
+        } else {
+            DispatchQueue.main.async {
+                showFriendsSheet = true
+            }
+        }
+    }
+
+    private func controlsBar(bottomInset: CGFloat, availableWidth: CGFloat) -> some View {
+        let showLeftButtons: Bool = !isSearchActive
+        let isSearchCollapsed: Bool = !isSearchActive
+
+        let horizontalPadding: CGFloat = 40 // matches `.padding(.horizontal, 20)` below
+        let contentWidth: CGFloat = max(0, availableWidth - horizontalPadding)
+        let sideButtonWidth: CGFloat = 50
+        let buttonSpacing: CGFloat = 8
+
+        let fullSearchWidthBetweenButtons: CGFloat = max(0, contentWidth - sideButtonWidth - sideButtonWidth - (2 * buttonSpacing))
+        let collapsedSearchWidthFallback: CGFloat = 220
+        let collapsedSearchWidth: CGFloat = {
+            guard fullSearchWidthBetweenButtons > 0 else { return collapsedSearchWidthFallback }
+            return max(200, fullSearchWidthBetweenButtons * 0.90)
+        }()
+
+        return HStack(spacing: 8) {
+            if #available(iOS 26.0, *) {
+                if showLeftButtons {
+                    Button(action: {
+                        Haptics.impact(.light)
+                        Task { @MainActor in
+                            // Warm avatar before presenting Settings so it shows instantly.
+                            await sessionsViewModel.ensureProfilePictureCached()
+                            navigationViewModel.showSettingsSheet = true
+                        }
+                    }) {
+                        SidebarAvatarView(avatarURL: sessionsViewModel.myAvatarURL)
+                            .frame(width: 40, height: 40)
+                            .clipShape(Circle())
+                    }
+                    .frame(width: 50, height: 50)
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular, in: Circle())
+                }
+
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 17, weight: .regular))
+                        .foregroundStyle(.secondary)
+
+                    TextField("Search", text: $searchText)
+                        .focused($isSearchFieldFocused)
+                        .submitLabel(.search)
+                        .textInputAutocapitalization(.never)
+                        .disableAutocorrection(true)
+                        .font(.system(size: 17, weight: .regular))
+                        .padding(.vertical, 4)
+                }
+                .padding(.vertical, 10)
+                .padding(.horizontal, 14)
+                .frame(maxWidth: isSearchCollapsed ? collapsedSearchWidth : .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 999, style: .continuous))
+                .glassEffect(.regular.interactive())
+            }
+
+            if showLeftButtons {
+                if #available(iOS 26.0, *) {
+                    Button(action: {
+                        // This button is for closing the sidebar (NOT for creating a new chat).
+                        // New chat lives in the top bar (pencil icon) to avoid accidental resets.
+                        Haptics.impact(.light)
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0)) {
+                            navigationViewModel.selectedTab = .chat
+                            isOpen = false
+                        }
+                    }) {
+                        Image(systemName: "chevron.right.2")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .offset(y: -1)
+                    }
+                    .frame(width: 50, height: 50)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close sidebar")
+                    .glassEffect(.regular.interactive(), in: Circle())
+                }
+            }
+
+            if isSearchActive {
+                if #available(iOS 26.0, *) {
+                    Button(action: {
+                        Haptics.impact(.light)
+                        searchText = ""
+                        isSearchFieldFocused = false
+                    }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 50, height: 50)
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: Circle())
+                    .accessibilityLabel("Close search")
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, bottomInset + 2 + (isSearchFieldFocused ? 12 : 0))
+        .contentShape(Rectangle())
+        .animation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0), value: isSearchActive)
+        .animation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0), value: isSearchFieldFocused)
+        .zIndex(10)
+    }
 
     private func previewText(for session: ChatSession, availableWidth: CGFloat) -> String {
         let previewTargetWidth = availableWidth * 0.88
@@ -415,431 +379,139 @@ struct SidebarView: View {
     }
 }
 
-private struct InviteContact: Identifiable, Hashable {
-    let id: String
-    let givenName: String
-    let familyName: String
-    let thumbnailImageData: Data?
-    let phoneNumbers: [String]
-
-    var displayName: String {
-        let full = "\(givenName) \(familyName)".trimmingCharacters(in: .whitespacesAndNewlines)
-        return full.isEmpty ? "Unknown" : full
-    }
-
-    var primaryPhoneNumber: String? {
-        phoneNumbers.first
-    }
-}
-
-private struct AddFriendContactsSheetView: View {
+private struct FriendsSheetView: View {
     @Binding var isPresented: Bool
+    @EnvironmentObject private var friendsViewModel: FriendsViewModel
 
-    @EnvironmentObject private var linkVM: LinkViewModel
+    @State private var codeToAdd: String = ""
+    @State private var showInviteMessageComposer: Bool = false
+    @State private var inviteRecipients: [String] = []
+    @State private var inviteErrorMessage: String? = nil
 
-    @State private var authorizationStatus: CNAuthorizationStatus = CNContactStore.authorizationStatus(for: .contacts)
-    @State private var isLoadingContacts: Bool = false
-    @State private var contacts: [InviteContact] = []
-    @State private var loadError: String? = nil
-
-    @State private var activeMessageDraft: MessageDraft? = nil
-    @State private var showMessagesUnavailableAlert: Bool = false
-    @State private var showInviteLinkUnavailableAlert: Bool = false
-
-    private struct MessageDraft: Identifiable, Hashable {
-        let id = UUID()
-        let recipients: [String]
-        let body: String
+    private var cleanedCodeToAdd: String {
+        codeToAdd.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-
-    private var inviteLinkString: String? {
-        if case .shareReady(let url) = linkVM.state {
-            return url.absoluteString
-        }
-        return nil
-    }
+    private var isCodeComplete: Bool { cleanedCodeToAdd.count == 4 }
 
     var body: some View {
         NavigationStack {
-            Group {
-                switch authorizationStatus {
-                case .authorized:
-                    contentList
-                case .limited:
-                    contentList
-                case .notDetermined:
-                    loadingView(title: "Requesting Contacts…")
-                case .denied, .restricted:
-                    deniedView
-                @unknown default:
-                    deniedView
+            ScrollView {
+                VStack(spacing: 16) {
+                    VStack(spacing: 6) {
+                        Text("Your code")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text(friendsViewModel.myCode ?? "— — — —")
+                            .font(.system(size: 34, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                    }
+                    .padding(.top, 8)
+
+                    VStack(spacing: 12) {
+                        VStack(alignment: .center, spacing: 8) {
+                            Text("Add a friend")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.secondary)
+
+                            TextField("Enter 4-digit code", text: $codeToAdd)
+                                .keyboardType(.numberPad)
+                                .textContentType(.oneTimeCode)
+                                .textInputAutocapitalization(.never)
+                                .disableAutocorrection(true)
+                                .multilineTextAlignment(.center)
+                                .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                                .padding(.vertical, 12)
+                                .padding(.horizontal, 12)
+                                .background(Color(.secondarySystemBackground))
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .onChange(of: codeToAdd, initial: false) { _, newValue in
+                                    let filtered = newValue.filter { $0.isNumber }
+                                    let clipped = String(filtered.prefix(4))
+                                    if clipped != newValue {
+                                        codeToAdd = clipped
+                                    }
+                                }
+                        }
+                        .frame(maxWidth: .infinity)
+
+                        Button {
+                            Task { await friendsViewModel.addFriendByCode(cleanedCodeToAdd) }
+                        } label: {
+                            HStack(spacing: 10) {
+                                if friendsViewModel.isAddingFriend {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                }
+                                Text(friendsViewModel.isAddingFriend ? "Adding…" : "Add")
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!isCodeComplete || friendsViewModel.isAddingFriend)
+                    }
+
+                    if let msg = friendsViewModel.lastActionMessage, !msg.isEmpty {
+                        Text(msg)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.top, 4)
+                    }
+
+                    Divider()
+                        .padding(.top, 6)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Contacts")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.primary)
+
+                        InviteContactsInlineListView(
+                            onInvite: { phone in
+                                let cleaned = phone.trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard !cleaned.isEmpty else {
+                                    inviteErrorMessage = "That contact doesn't have a phone number."
+                                    return
+                                }
+                                guard InviteMessageComposerView.canSendText else {
+                                    inviteErrorMessage = "This device can't send texts."
+                                    return
+                                }
+                                inviteRecipients = [cleaned]
+                                showInviteMessageComposer = true
+                            }
+                        )
+                    }
                 }
+                .padding(16)
             }
-            .navigationTitle("Add Friend")
+            .navigationTitle("Friends")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { isPresented = false }
-                        .font(.system(size: 16, weight: .semibold))
                 }
             }
-        }
-        .task {
-            // Kick link generation (this is the same link shown in Settings)
-            await linkVM.ensureInviteReady()
-
-            await refreshAuthorizationStatus()
-            if authorizationStatus == .notDetermined {
-                await requestContactsAccess()
-            }
-            if authorizationStatus == .authorized {
-                await loadContacts()
-            }
-        }
-        .sheet(item: $activeMessageDraft) { draft in
-            MessageComposeView(
-                recipients: draft.recipients,
-                body: draft.body,
-                onFinish: { activeMessageDraft = nil }
-            )
-        }
-        .alert("Messages not available", isPresented: $showMessagesUnavailableAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("This device can’t send text messages.")
-        }
-        .alert("Invite link not ready", isPresented: $showInviteLinkUnavailableAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Open Settings → Link Partner to generate your invite link, then try again.")
-        }
-    }
-
-    private var contentList: some View {
-        List {
-            Section {
-                switch linkVM.state {
-                case .creating, .accepting, .unlinking:
-                    HStack {
-                        ProgressView()
-                        Text("Preparing your link…")
-                            .foregroundStyle(.secondary)
-                    }
-                case .linked:
-                    Text("You’re already connected. Unlink in Settings to generate a new invite link.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                case .shareReady:
-                    EmptyView()
-                case .idle, .unlinked, .error:
-                    HStack {
-                        ProgressView()
-                        Text("Preparing your link…")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            if isLoadingContacts {
-                Section {
-                    HStack {
-                        Spacer()
-                        ProgressView("Loading contacts…")
-                        Spacer()
-                    }
-                }
-            } else if let loadError {
-                Section {
-                    Text(loadError)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Section {
-                    ForEach(contacts) { contact in
-                        HStack(spacing: 12) {
-                            avatar(for: contact)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(contact.displayName)
-                                    .font(.system(size: 16, weight: .regular))
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(1)
-                                if let phone = contact.primaryPhoneNumber {
-                                    Text(phone)
-                                        .font(.system(size: 13, weight: .regular))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-                            }
-
-                            Spacer()
-
-                            Button(action: { invite(contact) }) {
-                                HStack(spacing: 8) {
-                                    Text("Invite")
-                                        .font(.system(size: 14, weight: .semibold))
-                                    Spacer(minLength: 0)
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .frame(width: 92)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color(red: 0.4, green: 0.2, blue: 0.6).opacity(0.12))
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(contact.primaryPhoneNumber == nil || inviteLinkString == nil)
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-    }
-
-    private func avatar(for contact: InviteContact) -> some View {
-        Group {
-            if let data = contact.thumbnailImageData, let image = UIImage(data: data) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                ZStack {
-                    Circle()
-                        .fill(Color(.systemGray5))
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .frame(width: 40, height: 40)
-        .clipShape(Circle())
-    }
-
-    private var deniedView: some View {
-        VStack(spacing: 12) {
-            Text("Contacts access is off.")
-                .font(.system(size: 18, weight: .semibold))
-            Text("Enable Contacts in Settings to invite friends.")
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            Button("Open Settings") {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
-            }
-            .font(.system(size: 16, weight: .semibold))
-            .padding(.top, 6)
-        }
-        .padding(20)
-    }
-
-    private func loadingView(title: String) -> some View {
-        VStack(spacing: 12) {
-            ProgressView()
-            Text(title)
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
-        }
-        .padding(20)
-    }
-
-    private func invite(_ contact: InviteContact) {
-        guard MFMessageComposeViewController.canSendText() else {
-            showMessagesUnavailableAlert = true
-            return
-        }
-        guard let phone = contact.primaryPhoneNumber else { return }
-        guard let link = inviteLinkString else {
-            showInviteLinkUnavailableAlert = true
-            return
-        }
-
-        let body = """
-Hey! I just discovered TalkToMe and I want to connect. It's a new app to foster good-quality communication, one meaningful conversation at a time.
-
-Here's the link to connect with my profile: \(link)
-"""
-
-        activeMessageDraft = MessageDraft(recipients: [phone], body: body)
-    }
-
-    private func refreshAuthorizationStatus() async {
-        let status = CNContactStore.authorizationStatus(for: .contacts)
-        await MainActor.run { authorizationStatus = status }
-    }
-
-    private func requestContactsAccess() async {
-        let store = CNContactStore()
-        let granted: Bool = await withCheckedContinuation { continuation in
-            store.requestAccess(for: .contacts) { ok, _ in
-                continuation.resume(returning: ok)
-            }
-        }
-        await refreshAuthorizationStatus()
-        if !granted {
-            await MainActor.run {
-                loadError = "Contacts permission was not granted."
-            }
-        }
-    }
-
-    private func loadContacts() async {
-        await MainActor.run {
-            isLoadingContacts = true
-            loadError = nil
-        }
-
-        let store = CNContactStore()
-        let keys: [CNKeyDescriptor] = [
-            CNContactIdentifierKey as CNKeyDescriptor,
-            CNContactGivenNameKey as CNKeyDescriptor,
-            CNContactFamilyNameKey as CNKeyDescriptor,
-            CNContactThumbnailImageDataKey as CNKeyDescriptor,
-            CNContactPhoneNumbersKey as CNKeyDescriptor
-        ]
-
-        let request = CNContactFetchRequest(keysToFetch: keys)
-        request.unifyResults = true
-        request.sortOrder = .userDefault
-
-        var results: [InviteContact] = []
-        do {
-            try store.enumerateContacts(with: request) { contact, _ in
-                let phones = contact.phoneNumbers
-                    .map { $0.value.stringValue }
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-
-                // Only show contacts that can actually be invited via SMS
-                if phones.isEmpty { return }
-
-                results.append(
-                    InviteContact(
-                        id: contact.identifier,
-                        givenName: contact.givenName,
-                        familyName: contact.familyName,
-                        thumbnailImageData: contact.thumbnailImageData,
-                        phoneNumbers: phones
-                    )
+            .task { await friendsViewModel.refreshMyCode() }
+            .sheet(isPresented: $showInviteMessageComposer) {
+                InviteMessageComposerView(
+                    recipients: inviteRecipients,
+                    body: "",
+                    isPresented: $showInviteMessageComposer
                 )
             }
-
-            await MainActor.run {
-                contacts = results
-                isLoadingContacts = false
-            }
-        } catch {
-            await MainActor.run {
-                isLoadingContacts = false
-                loadError = error.localizedDescription
+            .alert("Invite", isPresented: Binding(get: {
+                inviteErrorMessage != nil
+            }, set: { newValue in
+                if !newValue { inviteErrorMessage = nil }
+            })) {
+                Button("OK", role: .cancel) { inviteErrorMessage = nil }
+            } message: {
+                Text(inviteErrorMessage ?? "")
             }
         }
     }
 }
-
-private struct MessageComposeView: UIViewControllerRepresentable {
-    let recipients: [String]
-    let body: String
-    let onFinish: () -> Void
-
-    final class Coordinator: NSObject, MFMessageComposeViewControllerDelegate {
-        let onFinish: () -> Void
-
-        init(onFinish: @escaping () -> Void) {
-            self.onFinish = onFinish
-        }
-
-        func messageComposeViewController(_ controller: MFMessageComposeViewController, didFinishWith result: MessageComposeResult) {
-            onFinish()
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onFinish: onFinish)
-    }
-
-    func makeUIViewController(context: Context) -> MFMessageComposeViewController {
-        let vc = MFMessageComposeViewController()
-        vc.messageComposeDelegate = context.coordinator
-        vc.recipients = recipients
-        vc.body = body
-        return vc
-    }
-
-    func updateUIViewController(_ uiViewController: MFMessageComposeViewController, context: Context) {
-        // Ensure the message is always prefilled even if SwiftUI updates state around presentation timing.
-        if uiViewController.recipients != recipients {
-            uiViewController.recipients = recipients
-        }
-        if uiViewController.body != body {
-            uiViewController.body = body
-        }
-    }
-}
-
-#if DEBUG
-private struct SidebarView_PreviewHost: View {
-    @StateObject private var navigationVM = SidebarNavigationViewModel()
-    @StateObject private var sessionsVM = ChatSessionsViewModel()
-    @StateObject private var linkVM = LinkViewModel.preview(state: .linked)
-
-    @Namespace private var profileNamespace
-    @State private var isOpen: Bool = true
-
-    var body: some View {
-        SidebarView(isOpen: $isOpen, profileNamespace: profileNamespace)
-            .environmentObject(navigationVM)
-            .environmentObject(sessionsVM)
-            .environmentObject(linkVM)
-            .onAppear {
-                sessionsVM.setNavigationViewModel(navigationVM)
-                sessionsVM.setLinkViewModel(linkVM)
-                navigationVM.isOpen = true
-            }
-            .task {
-                if sessionsVM.sessions.isEmpty {
-                    sessionsVM.sessions = sampleSessions
-                    sessionsVM.unreadPartnerSessionIds = [sampleSessions[0].id]
-                }
-            }
-    }
-
-    private var sampleSessions: [ChatSession] {
-        [
-            ChatSession(
-                id: UUID(),
-                title: "Casual conversation",
-                lastUsedISO8601: "2025-11-27T12:34:56Z",
-                lastMessageContent: "Hey"
-            ),
-            ChatSession(
-                id: UUID(),
-                title: "Therapy notes",
-                lastUsedISO8601: "2025-11-23T09:15:02Z",
-                lastMessageContent: "Can we talk about what happened this week?"
-            ),
-            ChatSession(
-                id: UUID(),
-                title: "New Chat",
-                lastUsedISO8601: nil,
-                lastMessageContent: nil
-            )
-        ]
-    }
-}
-
-#Preview("SidebarView") {
-    SidebarView_PreviewHost()
-}
-#endif
-
 
 private struct ConnectionStatusPillView: View {
     @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
@@ -865,6 +537,7 @@ private struct ConnectionStatusPillView: View {
         static let backoffCapSeconds: TimeInterval = 16
     }
 
+    @MainActor
     var body: some View {
         ZStack {
             if let status = displayedStatus {
@@ -872,7 +545,6 @@ private struct ConnectionStatusPillView: View {
                     .transition(
                         .asymmetric(
                             insertion: .scale(scale: 0.96).combined(with: .opacity),
-                            // “Escape” animation: a tiny pop before fading out.
                             removal: .scale(scale: 1.06).combined(with: .opacity)
                         )
                     )
@@ -899,13 +571,10 @@ private struct ConnectionStatusPillView: View {
                 return
             }
 
-            // Only trigger catch-up when we transition offline -> online (path unsatisfied -> satisfied).
             guard wasSatisfied == false else { return }
 
-            // Reset reachability markers so the reconnect loop can decide between Connecting/Updating.
             sessionsViewModel.lastSessionsSyncSucceeded = nil
-            sessionsViewModel.lastPendingRequestsSyncSucceeded = nil
-
+            sessionsViewModel.lastSessionsSyncAt = nil
             startCatchUpSync()
         }
     }
@@ -915,20 +584,13 @@ private struct ConnectionStatusPillView: View {
         if authService.isCheckingAuth { return .connecting }
         if isReconnectUpdating { return .updating }
 
-        // If we're online but our last core sync failed *recently*, show Connecting… (cool-down prevents infinite pill).
         let now = Date()
         let recentFailureWindowSeconds: TimeInterval = ConnectivityPolicy.connectingFailureCooldownSeconds
         let sessionsFailedRecently =
             (sessionsViewModel.lastSessionsSyncSucceeded == false) &&
             ((sessionsViewModel.lastSessionsSyncAt.map { now.timeIntervalSince($0) } ?? .infinity) <= recentFailureWindowSeconds)
-        let pendingFailedRecently =
-            (sessionsViewModel.lastPendingRequestsSyncSucceeded == false) &&
-            ((sessionsViewModel.lastPendingRequestsSyncAt.map { now.timeIntervalSince($0) } ?? .infinity) <= recentFailureWindowSeconds)
-        if sessionsFailedRecently || pendingFailedRecently {
-            return .connecting
-        }
+        if sessionsFailedRecently { return .connecting }
 
-        // For first-run empty UI, keep a minimal updating indicator.
         if sessionsViewModel.isBootstrapping && sessionsViewModel.sessions.isEmpty { return .updating }
         if sessionsViewModel.isLoadingSessions && sessionsViewModel.sessions.isEmpty { return .updating }
         return nil
@@ -965,7 +627,6 @@ private struct ConnectionStatusPillView: View {
     private func startCatchUpSync() {
         reconnectTask?.cancel()
         reconnectTask = Task { @MainActor in
-            // Show cached UI immediately. Sync status should never block usability.
             await sessionsViewModel.preloadCachedSessionsIfNeeded()
 
             let hasCachedUIAtStart = !sessionsViewModel.sessions.isEmpty
@@ -976,11 +637,6 @@ private struct ConnectionStatusPillView: View {
             while Task.isCancelled == false {
                 if networkMonitor.pathStatus != .satisfied { break }
 
-                await AppSyncGate.shared.setSyncing(true)
-
-                // Avoid UI flip-flopping between Updating/Connecting when the backend is timing out:
-                // - If we already have cached UI, show Updating only on the first attempt.
-                // - If we have no cached UI, keep showing Updating for every attempt (user needs feedback).
                 if hasCachedUIAtStart && didAttemptOnce {
                     isReconnectUpdating = false
                 } else {
@@ -988,33 +644,19 @@ private struct ConnectionStatusPillView: View {
                 }
                 didAttemptOnce = true
 
-                // Reset reachability markers for this attempt.
                 sessionsViewModel.lastSessionsSyncSucceeded = nil
-                sessionsViewModel.lastPendingRequestsSyncSucceeded = nil
 
-                async let sessionsTask: Void = sessionsViewModel.loadSessions(ensurePartnerInfo: false)
-                async let pendingTask: Void = sessionsViewModel.loadPendingRequests()
-                _ = await (sessionsTask, pendingTask)
+                await sessionsViewModel.loadSessions()
 
-                await AppSyncGate.shared.setSyncing(false)
                 isReconnectUpdating = false
 
                 let sessionsOK = (sessionsViewModel.lastSessionsSyncSucceeded == true)
-                let pendingOK = (sessionsViewModel.lastPendingRequestsSyncSucceeded == true)
-                if sessionsOK && pendingOK {
-                    // Core sync succeeded: kick off non-critical work in the background.
-                    Task { @MainActor in
-                        await sessionsViewModel.loadPartnerInfo(prefetchAvatars: false)
-                        await sessionsViewModel.loadPairedAvatars()
-                        await sessionsViewModel.preloadAvatars()
-                        await sessionsViewModel.ensureProfilePictureCached()
-                    }
+                if sessionsOK {
                     return
                 }
 
                 failureCount += 1
 
-                // If we already have cached UI, don't retry forever (prevents infinite Connecting… loops).
                 if hasCachedUIAtStart {
                     let elapsed = Date().timeIntervalSince(startedAt)
                     if failureCount >= ConnectivityPolicy.maxRetryAttemptsWithCachedUI ||
@@ -1023,13 +665,23 @@ private struct ConnectionStatusPillView: View {
                     }
                 }
 
-                let capped = min(failureCount, 5) // 1,2,4,8,16s cap
+                let capped = min(failureCount, 5)
                 let delaySeconds = min(pow(2.0, Double(capped - 1)), ConnectivityPolicy.backoffCapSeconds)
                 try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
             }
 
-            await AppSyncGate.shared.setSyncing(false)
             isReconnectUpdating = false
         }
     }
 }
+
+#if DEBUG
+#Preview("SidebarView") {
+    @Previewable @State var isOpen: Bool = true
+    @Previewable @Namespace var ns
+    SidebarView(isOpen: $isOpen, profileNamespace: ns)
+        .environmentObject(SidebarNavigationViewModel())
+        .environmentObject(ChatSessionsViewModel())
+        .environmentObject(FriendsViewModel(accessTokenProvider: { "" }))
+}
+#endif

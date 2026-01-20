@@ -4,31 +4,29 @@ struct ChatView: View {
 
     @EnvironmentObject private var navigationViewModel: SidebarNavigationViewModel
     @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
+    @EnvironmentObject private var friendsViewModel: FriendsViewModel
 
     @StateObject private var viewModel: ChatViewModel
 
-    @State private var showNotLinkedAlert: Bool = false
-    @State private var showPartnerAddedBanner: Bool = false
-    @State private var partnerAddedName: String = ""
-
     @FocusState private var isInputFocused: Bool
 
-    private var isPartnerLinked: Bool {
-        sessionsViewModel.partnerInfo?.linked == true ||
-        UserDefaults.standard.bool(forKey: PreferenceKeys.partnerConnected) == true
-    }
+    @State private var showFriendPicker: Bool = false
+    @State private var pendingPartnerDraftText: String? = nil
+    @State private var isFriendPickerLoading: Bool = false
+    @State private var friendPickerErrorMessage: String? = nil
 
     init(sessionId: UUID? = nil) {
         _viewModel = StateObject(wrappedValue: ChatViewModel(sessionId: sessionId))
     }
 
+    @MainActor
     var body: some View {
         NavigationStack {
             ChatScreenView(
                 chatViewModel: viewModel,
+                onSend: { handleSendTapped() },
                 isInputFocused: $isInputFocused
             )
-            .overlay(alignment: .top) { partnerAddedBannerOverlay }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: {
@@ -41,22 +39,6 @@ struct ChatView: View {
                                 .font(.system(size: 20, weight: .medium))
                                 .foregroundColor(Color(red: 0.4, green: 0.2, blue: 0.6))
                                 .frame(width: 44, height: 44)
-
-                            let unreadCount = sessionsViewModel.unreadPartnerSessionIds.count + sessionsViewModel.pendingRequests.count
-                            if unreadCount > 0 {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color(red: 0.4, green: 0.2, blue: 0.6))
-                                    Text("\(min(unreadCount, 99))")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundColor(.white)
-                                        .minimumScaleFactor(0.7)
-                                        .lineLimit(1)
-                                }
-                                .frame(width: 16, height: 16)
-                                .offset(x: -5, y: 5)
-                                .transition(.scale.combined(with: .opacity))
-                            }
                         }
                     }
                 }
@@ -64,8 +46,47 @@ struct ChatView: View {
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
         }
+        .sheet(isPresented: $showFriendPicker) {
+            FriendPickerSheetView(
+                isPresented: $showFriendPicker,
+                friends: friendsViewModel.friends,
+                isLoading: isFriendPickerLoading,
+                errorMessage: friendPickerErrorMessage,
+                onRetry: {
+                    Task { @MainActor in
+                        await refreshFriendsForPicker()
+                    }
+                },
+                onPick: { friendId in
+                    Task { @MainActor in
+                        viewModel.selectedFriendUserId = friendId
+                        UserDefaults.standard.set(true, forKey: PreferenceKeys.partnerConnected)
+                        showFriendPicker = false
+                        if let draft = pendingPartnerDraftText {
+                            pendingPartnerDraftText = nil
+                            await viewModel.sendPartnerDraftToSelectedFriend(draft)
+                        }
+                    }
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .sendPartnerMessageFromBubble)) { note in
+            let content = (note.userInfo?["content"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !content.isEmpty else { return }
+            Task { @MainActor in
+                if isConnectedToFriendInThisChat() {
+                    await viewModel.sendPartnerDraftViaSession(content)
+                    return
+                }
+                // If not connected, we must prompt the user to pick a friend (or show the empty-state).
+                pendingPartnerDraftText = content
+                showFriendPicker = true
+                await refreshFriendsForPicker()
+            }
+        }
         .onAppear {
-            Task { await sessionsViewModel.loadPendingRequests() }
             sessionsViewModel.chatViewModel = viewModel
 
             if navigationViewModel.isOpen {
@@ -81,38 +102,6 @@ struct ChatView: View {
         .onChange(of: navigationViewModel.isOpen, initial: false) { _, newValue in
             if newValue { isInputFocused = false }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .sendPartnerMessageFromBubble)) { note in
-            if let text = note.userInfo?["content"] as? String {
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { return }
-
-                if isPartnerLinked {
-                    Task {
-                        await viewModel.sendToPartner(sessionsViewModel: sessionsViewModel, customMessage: trimmed)
-                        viewModel.partnerDrafts.markPartnerDraftAsSent(sessionId: viewModel.sessionId, messageContent: trimmed)
-                    }
-                } else {
-                    Haptics.notification(.error)
-                    showNotLinkedAlert = true
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .partnerLinkOpened)) { _ in
-            partnerAddedName = PreferenceKeys.getPartnerDisplayName()
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                showPartnerAddedBanner = true
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                if showPartnerAddedBanner {
-                    withAnimation(.easeInOut(duration: 0.35)) { showPartnerAddedBanner = false }
-                }
-            }
-        }
-        .onChange(of: sessionsViewModel.partnerInfo?.partner?.name ?? "", initial: false) { _, _ in
-            if showPartnerAddedBanner && partnerAddedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                partnerAddedName = PreferenceKeys.getPartnerDisplayName()
-            }
-        }
         .onChange(of: sessionsViewModel.chatViewKey, initial: false) { _, _ in
             if sessionsViewModel.activeSessionId == nil {
                 viewModel.sessionId = nil
@@ -124,72 +113,151 @@ struct ChatView: View {
             }
         }
         .animation(nil, value: viewModel.messages.isEmpty)
-        .alert("Not connected", isPresented: $showNotLinkedAlert) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text("Your account is not connected to a partner.")
+    }
+
+    private func handleSendTapped() {
+        Task { @MainActor in
+            // IMPORTANT: The main chat send button always sends to the AI chat.
+            // Friend selection is only required for "send to partner" actions (partner draft blocks),
+            // which are handled by `.sendPartnerMessageFromBubble`.
+            viewModel.sendMessage()
         }
     }
 
-    @ViewBuilder
-    private var partnerAddedBannerOverlay: some View {
-        if showPartnerAddedBanner {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "person.2.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.primary)
-                    .frame(width: 34, height: 34)
-                    .background {
-                        Circle().fill(.ultraThinMaterial).overlay(Circle().stroke(Color.primary.opacity(0.12), lineWidth: 1))
-                    }
-                    .shadow(color: Color.black.opacity(0.06), radius: 6, x: 0, y: 3)
+    private func isConnectedToFriendInThisChat() -> Bool {
+        // Sender side: once user picked a friend, we persist selection in the ChatViewModel.
+        if viewModel.selectedFriendUserId != nil { return true }
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("You’ve been added as a partner to " + (partnerAddedName.isEmpty ? "your partner" : partnerAddedName))
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.primary)
-                }
-                Spacer(minLength: 8)
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.35)) { showPartnerAddedBanner = false }
-                }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.primary)
-                        .frame(width: 30, height: 30)
-                        .background {
-                            Circle().fill(.ultraThinMaterial).overlay(Circle().stroke(Color.primary.opacity(0.10), lineWidth: 1))
-                        }
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                    )
-                    .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: 6)
-            )
-            .padding(.horizontal, 20)
-            .padding(.top, 10)
-            .transition(
-                .asymmetric(
-                    insertion: .scale(scale: 0.95, anchor: .top).combined(with: .opacity),
-                    removal: .scale(scale: 0.98, anchor: .top).combined(with: .opacity)
-                )
-            )
-            .animation(.easeInOut(duration: 0.35), value: showPartnerAddedBanner)
-            .zIndex(20)
+        // Recipient side: once a message has been delivered into this session, it's already a friend thread.
+        // (Those are stored as `partner_received` segments.)
+        if viewModel.messages.contains(where: { msg in
+            msg.segments.contains(where: { seg in
+                if case .partnerReceived(_) = seg { return true }
+                return false
+            })
+        }) {
+            return true
         }
+        return false
+    }
+
+    @MainActor
+    private func refreshFriendsForPicker() async {
+        isFriendPickerLoading = true
+        friendPickerErrorMessage = nil
+        do {
+            try await friendsViewModel.loadFriends()
+        } catch {
+            friendPickerErrorMessage = error.localizedDescription
+        }
+        isFriendPickerLoading = false
     }
 }
 
+#if DEBUG
 #Preview {
     ChatView()
         .environmentObject(SidebarNavigationViewModel())
         .environmentObject(ChatSessionsViewModel())
+        .environmentObject(FriendsViewModel(accessTokenProvider: { "" }))
+}
+#endif
+
+private struct FriendPickerSheetView: View {
+    @Binding var isPresented: Bool
+    let friends: [UUID]
+    let isLoading: Bool
+    let errorMessage: String?
+    let onRetry: () -> Void
+    let onPick: (UUID) -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                Text("Pick a friend")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 6)
+
+                if let errorMessage, !errorMessage.isEmpty {
+                    VStack(spacing: 10) {
+                        Text(errorMessage)
+                            .font(.system(size: 14))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+
+                        Button("Retry") {
+                            Haptics.impact(.light)
+                            onRetry()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .padding(.top, 6)
+                } else if isLoading {
+                    VStack(spacing: 10) {
+                        ProgressView()
+                        Text("Loading friends…")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 6)
+                } else if friends.isEmpty {
+                    Text("No friends yet. Add one with a 4-digit code first.")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 6)
+                } else {
+                    List {
+                        ForEach(friends, id: \.self) { id in
+                            Button {
+                                Haptics.impact(.light)
+                                onPick(id)
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Friend")
+                                            .font(.system(size: 16, weight: .semibold))
+                                            .foregroundStyle(.primary)
+                                        Text(short(id))
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 6)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .listStyle(.plain)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .navigationTitle("Send to…")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") {
+                        pendingDismiss()
+                    }
+                }
+            }
+        }
+    }
+
+    private func pendingDismiss() {
+        isPresented = false
+    }
+
+    private func short(_ id: UUID) -> String {
+        let s = id.uuidString.lowercased()
+        return String(s.prefix(8)) + "…"
+    }
 }
 

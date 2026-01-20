@@ -40,6 +40,7 @@ extension BackendService {
     }
 
     func fetchPairedAvatars(accessToken: String) async throws -> PairedAvatars {
+        // Backwards-compatible response type; server now always returns partner.url = null.
         let url = baseURL
             .appendingPathComponent("profile")
             .appendingPathComponent("avatars")
@@ -98,7 +99,7 @@ extension BackendService {
         return try jsonDecoder.decode(ProfileInfo.self, from: data)
     }
 
-    func updateProfile(accessToken: String, fullName: String?, bio: String?, partnerDisplayName: String? = nil) async throws -> ProfileUpdateResponse {
+    func updateProfile(accessToken: String, fullName: String?, bio: String?) async throws -> ProfileUpdateResponse {
         func makeRequest(at base: URL, method: String) -> URLRequest {
             let url = base
                 .appendingPathComponent("profile")
@@ -116,10 +117,6 @@ extension BackendService {
             if let bio = bio, !bio.isEmpty {
                 let encoded = bio.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? bio
                 formDataComponents.append("bio=\(encoded)")
-            }
-            if let partner = partnerDisplayName, !partner.isEmpty {
-                let encoded = partner.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? partner
-                formDataComponents.append("partner_display_name=\(encoded)")
             }
             let formDataString = formDataComponents.joined(separator: "&")
             request.httpBody = formDataString.data(using: .utf8)
@@ -148,43 +145,11 @@ extension BackendService {
         throw NSError(domain: "Backend", code: -1, userInfo: [NSLocalizedDescriptionKey: "Profile update failed on all attempts"])
     }
 
-    struct PartnerInfo: Codable {
-        let linked: Bool
-        let partner: Partner?
-    }
-
-    struct Partner: Codable {
-        let name: String
-        let avatar_url: String?
-    }
-
-    func fetchPartnerInfo(accessToken: String) async throws -> PartnerInfo {
-        let url = baseURL
-            .appendingPathComponent("profile")
-            .appendingPathComponent("partner-info")
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = BackendService.coreRequestTimeoutSeconds
-
-        let (data, response) = try await urlSession.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw NSError(domain: "Backend", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response from server"])
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            let serverMessage = decodeSimpleDetail(from: data) ?? String(data: data, encoding: .utf8) ?? "Unknown server error"
-            throw NSError(domain: "Backend", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: serverMessage])
-        }
-        return try jsonDecoder.decode(PartnerInfo.self, from: data)
-    }
-
     // MARK: - Onboarding
 
     struct OnboardingInfo: Codable {
         let full_name: String
-        let partner_display_name: String?
         let onboarding_step: String
-        let linked: Bool
     }
 
     func fetchOnboarding(accessToken: String) async throws -> OnboardingInfo {
@@ -203,7 +168,6 @@ extension BackendService {
     }
 
     struct UpdateOnboardingRequest: Codable {
-        let partner_display_name: String?
         let onboarding_step: String?
     }
 

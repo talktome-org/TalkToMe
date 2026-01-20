@@ -5,6 +5,8 @@ struct ChatScreenView: View {
 
     @ObservedObject var chatViewModel: ChatViewModel
 
+    let onSend: () -> Void
+
     @State private var inputBarHeight: CGFloat = 0
     @State private var suggestionsHeight: CGFloat = 0
     @State private var bottomSafeInset: CGFloat = 0
@@ -17,6 +19,16 @@ struct ChatScreenView: View {
     private static var cachedKeyboardHeight: CGFloat = 0
 
     let isInputFocused: FocusState<Bool>.Binding
+
+    init(
+        chatViewModel: ChatViewModel,
+        onSend: @escaping () -> Void,
+        isInputFocused: FocusState<Bool>.Binding
+    ) {
+        self._chatViewModel = ObservedObject(wrappedValue: chatViewModel)
+        self.onSend = onSend
+        self.isInputFocused = isInputFocused
+    }
 
     private var quickSuggestions: [QuickSuggestion] {
         return [
@@ -87,7 +99,7 @@ struct ChatScreenView: View {
                         onTap: { text in
                             Haptics.impact(.light)
                             chatViewModel.inputText = text
-                            chatViewModel.sendMessage()
+                            onSend()
                         }
                     )
                     .background(
@@ -115,7 +127,7 @@ struct ChatScreenView: View {
                     ),
                     isMediaPanelVisible: $isMediaPanelVisible,
                     isInputFocused: isInputFocused,
-                    send: { chatViewModel.sendMessage() },
+                    send: { onSend() },
                     stop: { chatViewModel.stopGeneration() },
                     onVoiceRecordingStart: { }
                 )
@@ -276,6 +288,7 @@ private struct SuggestionsHeightPreferenceKey: PreferenceKey {
         var body: some View {
             ChatScreenView(
                 chatViewModel: vm,
+                onSend: { vm.sendMessage() },
                 isInputFocused: $isFocused
             )
             .environmentObject(SidebarNavigationViewModel())

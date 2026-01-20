@@ -21,9 +21,11 @@ class ChatAttachment(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[UUID] = None
+    message_id: Optional[UUID] = None
     chat_history: Optional[list[ChatHistoryMessage]] = None
     previous_response_id: Optional[str] = None
     attachments: Optional[list[ChatAttachment]] = None
+    friend_user_id: Optional[UUID] = None
 
 
 class ChatResponse(BaseModel):

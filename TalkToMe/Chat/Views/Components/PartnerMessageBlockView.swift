@@ -66,4 +66,3 @@ struct PartnerMessageBlockView: View {
     }
 }
 
-

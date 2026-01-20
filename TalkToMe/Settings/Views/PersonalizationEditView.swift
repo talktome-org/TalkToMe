@@ -537,21 +537,18 @@ struct PersonalizationEditView: View {
     }
 
     // Helper to refresh avatar after upload
+    @MainActor
     private func refreshAvatarAfterUpload(oldURL: String?) async {
         // Clear old avatar from cache
         if let oldURL = oldURL {
             await AvatarCacheManager.shared.clearSpecificImage(urlString: oldURL)
         }
 
-        // Reload avatar URLs from backend
-        await sessionsVM.loadPairedAvatars()
-
         // Force refresh all avatar displays across the entire app
         await AvatarCacheManager.shared.forceRefreshAllAvatars()
 
-        // Preload new avatar immediately and ensure it's cached
-        await sessionsVM.preloadAvatars()
-        await sessionsVM.ensureProfilePictureCached()
+        // Pull the official (signed/public) avatar URL from backend so the app uses a durable URL.
+        await sessionsVM.refreshMyAvatarURL()
 
         // Force UI refresh by updating the sessionsVM state
         await MainActor.run {
@@ -568,6 +565,7 @@ struct PersonalizationEditView: View {
     }
 
     // Save all changes (profile info + avatar)
+    @MainActor
     private func saveAllChanges() async {
         await MainActor.run {
             isSaving = true

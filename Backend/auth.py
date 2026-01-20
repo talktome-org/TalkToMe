@@ -53,10 +53,31 @@ class SupabaseAuth:
         token = credentials.credentials
         return self.verify_jwt(token)
 
-# Create auth instance
-auth = SupabaseAuth()
+_auth_instance: Optional[SupabaseAuth] = None
+
+
+def _get_auth() -> SupabaseAuth:
+    """
+    Lazily initialize auth so missing env vars don't crash the app at import time.
+    Endpoints that depend on auth will return a clear error until configuration is present.
+    """
+    global _auth_instance
+    if _auth_instance is None:
+        _auth_instance = SupabaseAuth()
+    return _auth_instance
+
 
 # Dependency for protected routes
-def get_current_user(user: dict = Depends(auth.get_current_user)) -> dict:
-    return user
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    try:
+        auth = _get_auth()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Auth not configured: {str(e)}")
+
+    try:
+        return auth.verify_jwt(credentials.credentials)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid or expired token: {str(e)}")
 

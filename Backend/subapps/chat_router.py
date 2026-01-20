@@ -17,15 +17,16 @@ from Backend.crud.chat.chat_crud import (
     get_recent_user_messages,
     list_messages_for_session,
     save_message,
+    save_message_with_id,
     update_session_last_message,
 )
-from Backend.crud.user_links.link_crud import get_link_status_for_user, get_partner_user_id
-from Backend.crud.user_links.linked_sessions_crud import get_linked_session_by_relationship_and_source_session
 from Backend.crud.chat.chat_session_crud import (
     assert_session_owned_by_user,
     create_session,
     delete_session,
+    get_session_by_id,
     list_sessions_for_user,
+    attach_friendship_to_session,
     update_session_title,
 )
 from Backend.schemas.chat_models import ChatRequest, MessageDTO, MessagesResponse, SessionDTO, SessionsResponse
@@ -34,6 +35,7 @@ from Backend.database import SessionLocal
 from Backend.models.client_uploads.upload_model import Upload
 from Backend.services.chat_service import ChatService, ChatTitleService
 from Backend.services.file_signing_service import sign_upload_id
+from Backend.crud.friends.friends_crud import get_friendship_id_for_pair, list_friends_for_user
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -195,6 +197,15 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
             session_row = await create_session(user_id=user_uuid, title=None)
             session_uuid = _as_uuid(session_row["id"])
 
+        # Friend selection is OPTIONAL for AI chat.
+        # If provided, we attach the friendship to the session so partner messaging can reuse it later.
+        # (Partner messaging itself is handled via /partner/send-message, and may still require selection.)
+        if chat_request.friend_user_id is not None:
+            fid = await get_friendship_id_for_pair(user_id=user_uuid, friend_user_id=chat_request.friend_user_id)
+            if not fid:
+                raise HTTPException(status_code=400, detail="Not friends with selected user")
+            await attach_friendship_to_session(user_id=user_uuid, session_id=session_uuid, friendship_id=fid)
+
         store_as_segments = bool(chat_request.attachments)
         if store_as_segments:
             segs = []
@@ -221,7 +232,17 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
         else:
             content_to_store = chat_request.message
 
-        await save_message(user_id=user_uuid, session_id=session_uuid, role="user", content=content_to_store)
+        try:
+            await save_message_with_id(
+                user_id=user_uuid,
+                session_id=session_uuid,
+                role="user",
+                content=content_to_store,
+                message_id=chat_request.message_id,
+            )
+        except PermissionError:
+            # If the client reuses a message id that already exists for a different user/session, treat it as a bad request.
+            raise HTTPException(status_code=400, detail="Invalid message_id")
         last_preview = (chat_request.message or "").strip()
         if not last_preview and chat_request.attachments:
             has_image = False
@@ -246,99 +267,9 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
             except Exception:
                 pass
 
+        # Partner/link context has been removed (friends-only work-in-progress).
         partner_ab_context_text: Optional[str] = None
-        linked_session = None
-        try:
-            linked, relationship_id, _ = await get_link_status_for_user(user_id=user_uuid)
-            if linked and relationship_id:
-                linked_session = await get_linked_session_by_relationship_and_source_session(
-                    relationship_id=relationship_id, source_session_id=session_uuid
-                )
-                partner_session_id_str = None
-                if linked_session:
-                    cur_id = str(user_uuid)
-                    if linked_session.get("user_a_id") == cur_id:
-                        partner_session_id_str = linked_session.get("user_b_personal_session_id")
-                    elif linked_session.get("user_b_id") == cur_id:
-                        partner_session_id_str = linked_session.get("user_a_personal_session_id")
-                if partner_session_id_str:
-                    partner_user_id = await get_partner_user_id(user_id=user_uuid)
-                    if partner_user_id:
-                        partner_messages = await list_messages_for_session(
-                            user_id=partner_user_id,
-                            session_id=uuid.UUID(partner_session_id_str),
-                            limit=500,
-                        )
-
-                        try:
-                            current_messages = await list_messages_for_session(
-                                user_id=user_uuid,
-                                session_id=session_uuid,
-                                limit=500,
-                            )
-
-                            def _extract_partner_received(rows, sender_label):
-                                items = []
-                                for r in rows or []:
-                                    try:
-                                        if r.get("role") != "assistant":
-                                            continue
-                                        raw = r.get("content") or ""
-                                        obj = json.loads(raw)
-                                        meta = (obj or {}).get("_talktome") if isinstance(obj, dict) else None
-                                        if not meta or meta.get("type") != "partner_received":
-                                            continue
-                                        text = meta.get("text") or ""
-                                        created = r.get("created_at")
-                                        if created is None:
-                                            continue
-                                        items.append({"created_at": created, "sender": sender_label, "text": text})
-                                    except Exception:
-                                        continue
-                                return items
-
-                            if linked_session:
-                                cur_id = str(user_uuid)
-                                if linked_session.get("user_a_id") == cur_id:
-                                    me_label = "Partner A"
-                                    partner_label = "Partner B"
-                                else:
-                                    me_label = "Partner B"
-                                    partner_label = "Partner A"
-                            else:
-                                me_label = "Partner A"
-                                partner_label = "Partner B"
-
-                            sent_by_me = _extract_partner_received(partner_messages, me_label)
-                            sent_by_partner = _extract_partner_received(current_messages, partner_label)
-                            merged = sent_by_me + sent_by_partner
-                            merged.sort(key=lambda x: x["created_at"])
-
-                            if merged:
-                                lines = ["Messages:"]
-                                for m in merged:
-                                    try:
-                                        text = (m.get("text") or "").strip()
-                                        if text:
-                                            lines.append(f"{m['sender']}: {text}")
-                                    except Exception:
-                                        continue
-                                partner_ab_context_text = "\n".join(lines)
-                        except Exception:
-                            partner_ab_context_text = None
-        except Exception as e:
-            print(f"Context retrieval warning (stream): {e}")
-
-        try:
-            partner_letter = "A"
-            if linked_session:
-                cur_id = str(user_uuid)
-                if linked_session.get("user_a_id") == cur_id:
-                    partner_letter = "A"
-                elif linked_session.get("user_b_id") == cur_id:
-                    partner_letter = "B"
-        except Exception:
-            partner_letter = "A"
+        partner_letter = "A"
 
         state = {"final_text": "", "partner_texts": [], "segments": []}
 

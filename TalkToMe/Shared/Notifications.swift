@@ -8,10 +8,11 @@ extension Notification.Name {
     static let relationshipTotalsChanged = Notification.Name("relationship.totals.changed")
     static let avatarChanged = Notification.Name("avatar.changed")
     static let profileChanged = Notification.Name("profile.changed")
+
+    // Partner messaging (kept; linking method changed from link → code)
     static let partnerRequestOpen = Notification.Name("partner.request.open")
     static let partnerMessageOpen = Notification.Name("partner.message.open")
     static let partnerMessageReceived = Notification.Name("partner.message.received")
     static let partnerRequestAccepted = Notification.Name("partner.request.accepted")
-    static let partnerLinkOpened = Notification.Name("partner.link.opened")
     static let sendPartnerMessageFromBubble = Notification.Name("chat.partner.send.from.bubble")
 }

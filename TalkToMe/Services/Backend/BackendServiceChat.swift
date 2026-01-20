@@ -33,7 +33,9 @@ extension BackendService {
         attachments: [ChatAttachment]? = nil,
         accessToken: String,
         focusSnippet: String? = nil,
-        previousResponseId: String? = nil
+        previousResponseId: String? = nil,
+        friendUserId: UUID? = nil,
+        messageId: UUID? = nil
     ) -> AsyncStream<StreamEvent> {
         var request = URLRequest(url: baseURL
             .appendingPathComponent("chat")
@@ -47,9 +49,11 @@ extension BackendService {
         let payload = ChatRequestBody(
             message: message,
             session_id: sessionId,
+            message_id: messageId,
             chat_history: chatHistory,
             previous_response_id: previousResponseId,
-            attachments: attachments
+            attachments: attachments,
+            friend_user_id: friendUserId
         )
         request.httpBody = try? jsonEncoder.encode(payload)
         return SSEService.shared.stream(request: request)
@@ -231,9 +235,11 @@ extension BackendService {
 private struct ChatRequestBody: Codable {
     let message: String
     let session_id: UUID?
+    let message_id: UUID?
     let chat_history: [BackendService.ChatHistoryMessage]?
     let previous_response_id: String?
     let attachments: [BackendService.ChatAttachment]?
+    let friend_user_id: UUID?
 }
 
 private struct MessagesResponseBody: Codable {

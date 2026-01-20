@@ -3,7 +3,6 @@ import uuid
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
 
 from Backend.auth import get_current_user
-from Backend.crud.user_links.link_crud import get_link_status_for_user, get_partner_user_id
 from Backend.database import SessionLocal
 from Backend.models.profile.profile_model import Profile
 from Backend.crud.client_uploads.uploads_crud import create_upload
@@ -120,7 +119,6 @@ async def upload_avatar(http_request: Request, file: UploadFile = File(...), cur
 async def update_profile(
     full_name: str = Form(None),
     bio: str = Form(None),
-    partner_display_name: str = Form(None),
     current_user: dict = Depends(get_current_user),
 ):
     try:
@@ -136,10 +134,6 @@ async def update_profile(
             update_data["full_name"] = full_name
         if bio is not None:
             update_data["bio"] = bio
-        if partner_display_name is not None:
-            if len(partner_display_name) > 22:
-                raise HTTPException(status_code=400, detail="Partner name must be 22 characters or fewer")
-            update_data["partner_display_name"] = partner_display_name
 
         if not update_data:
             raise HTTPException(status_code=400, detail="No fields provided for update")
@@ -157,7 +151,6 @@ async def update_profile(
 async def update_profile_post(
     full_name: str = Form(None),
     bio: str = Form(None),
-    partner_display_name: str = Form(None),
     current_user: dict = Depends(get_current_user),
 ):
     try:
@@ -173,10 +166,6 @@ async def update_profile_post(
             update_data["full_name"] = full_name
         if bio is not None:
             update_data["bio"] = bio
-        if partner_display_name is not None:
-            if len(partner_display_name) > 22:
-                raise HTTPException(status_code=400, detail="Partner name must be 22 characters or fewer")
-            update_data["partner_display_name"] = partner_display_name
 
         if not update_data:
             raise HTTPException(status_code=400, detail="No fields provided for update")
@@ -231,21 +220,10 @@ async def get_self_and_partner_avatars(http_request: Request, current_user: dict
 
         me_source = "storage" if me_path and me_url else ("provider" if me_url else "default")
 
-        try:
-            partner_id = await get_partner_user_id(user_id=user_id)
-        except Exception:
-            partner_id = None
-
-        partner_url = None
-        partner_source = "default"
-        if partner_id:
-            p_path = _get_profile_fields(partner_id, "avatar_path").get("avatar_path")
-            partner_url = _signed_url_from_path(base_url=base, path_value=p_path) if p_path else _provider_avatar_from_admin(partner_id)
-            partner_source = "storage" if p_path and partner_url else ("provider" if partner_url else "default")
-
         return {
             "me": {"url": me_url, "source": me_source},
-            "partner": {"url": partner_url, "source": partner_source} if partner_id else {"url": None, "source": "default"},
+            # Partner linking has been removed (friends-only work-in-progress).
+            "partner": {"url": None, "source": "default"},
         }
     except HTTPException:
         raise
@@ -265,58 +243,6 @@ def _provider_avatar_from_admin(user_id: uuid.UUID) -> str | None:
         return None
 
 
-@router.get("/partner-info")
-async def get_partner_info(http_request: Request, current_user: dict = Depends(get_current_user)):
-    try:
-        try:
-            user_id = uuid.UUID(current_user.get("sub"))
-        except Exception:
-            raise HTTPException(status_code=401, detail="Invalid user ID in token")
-
-        base = _resolve_public_base_url(http_request)
-        linked, _, _ = await get_link_status_for_user(user_id=user_id)
-        if not linked:
-            return {"linked": False, "partner": None}
-
-        partner_id = await get_partner_user_id(user_id=user_id)
-        if not partner_id:
-            return {"linked": False, "partner": None}
-
-        try:
-            def extract_name_from_meta(meta_dict):
-                if not isinstance(meta_dict, dict):
-                    return "Unknown"
-                return meta_dict.get("full_name") or meta_dict.get("name") or meta_dict.get("display_name") or "Unknown"
-
-            def extract_avatar_from_meta(meta_dict):
-                if not isinstance(meta_dict, dict):
-                    return None
-                return meta_dict.get("avatar_url") or meta_dict.get("picture")
-
-            meta = _auth_user_metadata(partner_id)
-            name = extract_name_from_meta(meta if isinstance(meta, dict) else None)
-            avatar_url = extract_avatar_from_meta(meta if isinstance(meta, dict) else None)
-
-            try:
-                saved_full = (_get_profile_fields(partner_id, "full_name").get("full_name") or "").strip()
-                if saved_full:
-                    name = saved_full
-            except Exception:
-                pass
-
-            p_path = _get_profile_fields(partner_id, "avatar_path").get("avatar_path")
-            custom_avatar_url = _signed_url_from_path(base_url=base, path_value=p_path) if p_path else None
-
-            return {"linked": True, "partner": {"name": name, "avatar_url": custom_avatar_url or avatar_url}}
-        except Exception as e:
-            print(f"[Partner Info] Error fetching partner info for {partner_id}: {e}")
-            return {"linked": True, "partner": {"name": "Unknown", "avatar_url": None}}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.get("/onboarding")
 async def get_onboarding(current_user: dict = Depends(get_current_user)):
     try:
@@ -325,14 +251,11 @@ async def get_onboarding(current_user: dict = Depends(get_current_user)):
         except Exception:
             raise HTTPException(status_code=401, detail="Invalid user ID in token")
 
-        row = _get_profile_fields(user_id, "full_name", "partner_display_name", "onboarding_step")
-        linked, _, _ = await get_link_status_for_user(user_id=user_id)
+        row = _get_profile_fields(user_id, "full_name", "onboarding_step")
 
         return {
             "full_name": row.get("full_name") or "",
-            "partner_display_name": row.get("partner_display_name"),
             "onboarding_step": row.get("onboarding_step") or "none",
-            "linked": linked,
         }
     except HTTPException:
         raise
@@ -348,24 +271,18 @@ async def update_onboarding(payload: dict = Body(...), current_user: dict = Depe
         except Exception:
             raise HTTPException(status_code=401, detail="Invalid user ID in token")
 
-        allowed_keys = {"partner_display_name", "onboarding_step"}
+        allowed_keys = {"onboarding_step"}
         update_data = {k: v for k, v in (payload or {}).items() if k in allowed_keys}
 
         if not update_data:
             raise HTTPException(status_code=400, detail="No allowed fields provided")
 
-        if "partner_display_name" in update_data and update_data["partner_display_name"] is not None:
-            name_val = str(update_data["partner_display_name"]).strip()
-            if len(name_val) > 22:
-                raise HTTPException(status_code=400, detail="Partner name must be 22 characters or fewer")
-            update_data["partner_display_name"] = name_val
-
         if "onboarding_step" in update_data:
             new_step = update_data["onboarding_step"]
-            if new_step not in ("none", "asked_name", "asked_partner", "suggested_link", "completed"):
+            if new_step not in ("none", "asked_name", "completed"):
                 raise HTTPException(status_code=400, detail="Invalid onboarding_step")
             cur_step = (_get_profile_fields(user_id, "onboarding_step").get("onboarding_step") or "none") or "none"
-            order = {"none": 0, "asked_name": 1, "asked_partner": 2, "suggested_link": 3, "completed": 4}
+            order = {"none": 0, "asked_name": 1, "completed": 2}
             if order.get(new_step, -1) < order.get(cur_step, 0) and new_step != "completed":
                 raise HTTPException(status_code=400, detail="Onboarding step cannot regress")
 

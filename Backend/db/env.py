@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import importlib
 import pkgutil
@@ -12,6 +13,51 @@ from sqlalchemy import engine_from_config, pool, text
 # Ensure project root is importable so we can import Backend.* as a package/namespace package.
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
+
+def _load_dotenv_file(path: Path) -> None:
+    """
+    Minimal .env loader (no external deps).
+    Only sets keys that are not already present in os.environ.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except Exception:
+        return
+
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            continue
+
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if key in os.environ:
+            continue
+
+        # Remove surrounding quotes if present.
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+            value = value[1:-1]
+
+        os.environ[key] = value
+
+
+def _load_dotenv_if_present() -> None:
+    # Prefer project-local Backend/.env; also support repo-root .env.
+    candidates = [
+        _ROOT / "Backend" / ".env",
+        _ROOT / ".env",
+    ]
+    for p in candidates:
+        if p.exists():
+            _load_dotenv_file(p)
+
+
+_load_dotenv_if_present()
 
 from Backend.database import DATABASE_URL, Base  # noqa: E402
 

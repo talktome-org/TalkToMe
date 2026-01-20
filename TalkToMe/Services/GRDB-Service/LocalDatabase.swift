@@ -5,33 +5,64 @@ import GRDB
 final class LocalDatabase {
     static let shared = LocalDatabase()
 
-    let dbQueue: DatabaseQueue
+    private let fm = FileManager.default
+    private let lock = NSLock()
+    private var queuesByKey: [String: DatabaseQueue] = [:]
 
     private init() {
-        let fm = FileManager.default
+        // No eager DB creation. We open a per-user database lazily based on PreferenceKeys.currentUserId.
+    }
+
+    var dbQueue: DatabaseQueue {
+        let key = currentUserKey()
+        lock.lock()
+        defer { lock.unlock() }
+        if let q = queuesByKey[key] { return q }
+
+        let url = databaseURL(for: key)
+        let config = makeConfig(labelSuffix: key)
+        let q = try! DatabaseQueue(path: url.path, configuration: config)
+        try! migrator.migrate(q)
+        queuesByKey[key] = q
+        return q
+    }
+
+    private func makeConfig(labelSuffix: String) -> Configuration {
+        var config = Configuration()
+        config.label = "TalkToMe.LocalDatabase.\(labelSuffix)"
+        config.prepareDatabase { db in
+            try db.execute(sql: "PRAGMA journal_mode = WAL;")
+            try db.execute(sql: "PRAGMA foreign_keys = ON;")
+            try db.execute(sql: "PRAGMA busy_timeout = 5000;")
+        }
+        return config
+    }
+
+    private func currentUserKey() -> String {
+        let raw = UserDefaults.standard.string(forKey: PreferenceKeys.currentUserId)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if raw.isEmpty { return "unauthenticated" }
+        // File-safe key (UUIDs are already safe, but keep it defensive)
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+        let cleaned = raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
+        return String(cleaned)
+    }
+
+    private func baseDir() -> URL {
         let appSupport = try! fm.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
             create: true
         )
-
         let dir = appSupport.appendingPathComponent("TalkToMe", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
 
-        let dbURL = dir.appendingPathComponent("chat.sqlite3")
-
-        var config = Configuration()
-        config.label = "TalkToMe.LocalDatabase"
-
-        config.prepareDatabase { db in
-            try db.execute(sql: "PRAGMA journal_mode = WAL;")
-            try db.execute(sql: "PRAGMA foreign_keys = ON;")
-            try db.execute(sql: "PRAGMA busy_timeout = 5000;")
-        }
-
-        self.dbQueue = try! DatabaseQueue(path: dbURL.path, configuration: config)
-        try! migrator.migrate(dbQueue)
+    private func databaseURL(for key: String) -> URL {
+        let dir = baseDir()
+        return dir.appendingPathComponent("chat-\(key).sqlite3")
     }
 
     private var migrator: DatabaseMigrator {
@@ -77,6 +108,45 @@ final class LocalDatabase {
                 t.column("created_at", .text).notNull().indexed()
                 t.column("last_error", .text)
             }
+        }
+
+        migrator.registerMigration("outbox_add_friend_user_id") { db in
+            try db.alter(table: "outbox") { t in
+                t.add(column: "friend_user_id", .text)
+            }
+        }
+
+        migrator.registerMigration("outbox_add_message_id") { db in
+            try db.alter(table: "outbox") { t in
+                t.add(column: "message_id", .text)
+            }
+        }
+
+        // One-time cleanup for duplicates created by older clients:
+        // - local optimistic user messages used client ISO timestamps ending in 'Z'
+        // - server messages are stored with a different id and a non-'Z' timestamp
+        //
+        // After we switched to idempotent client message ids, new duplicates should stop.
+        // This migration removes existing duplicates so we can delete runtime de-dupe logic.
+        migrator.registerMigration("cleanup_optimistic_user_message_duplicates_v1") { db in
+            try db.execute(
+                sql: """
+                DELETE FROM messages
+                WHERE role = 'user'
+                  AND (created_at LIKE '%Z' OR created_at LIKE '%z')
+                  AND EXISTS (
+                    SELECT 1
+                    FROM messages m2
+                    WHERE m2.session_id = messages.session_id
+                      AND m2.user_id = messages.user_id
+                      AND m2.role = messages.role
+                      AND m2.content = messages.content
+                      AND m2.id <> messages.id
+                      AND NOT (m2.created_at LIKE '%Z' OR m2.created_at LIKE '%z')
+                      AND abs(strftime('%s', m2.created_at) - strftime('%s', messages.created_at)) <= 120
+                  )
+                """
+            )
         }
 
         return migrator
