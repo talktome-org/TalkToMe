@@ -5,11 +5,12 @@ final class FriendsViewModel: ObservableObject {
 
     @Published private(set) var myCode: String? = nil
     @Published private(set) var myCodeExpiresAt: Date? = nil
-    @Published private(set) var friends: [UUID] = []
+    @Published private(set) var friends: [FriendSummary] = []
     @Published private(set) var lastActionMessage: String? = nil
     @Published private(set) var isRefreshingMyCode: Bool = false
     @Published private(set) var isAddingFriend: Bool = false
     @Published private(set) var isLoadingFriends: Bool = false
+    @Published private(set) var friendsLoadErrorMessage: String? = nil
 
     private var accessTokenProvider: () async throws -> String
     private var userIdProvider: () -> String?
@@ -101,7 +102,17 @@ final class FriendsViewModel: ObservableObject {
                 }.value
 
                 self.friends = updatedFriends
-                self.lastActionMessage = "Added friend: \(friendId.uuidString)"
+                self.friendsLoadErrorMessage = nil
+
+                // Warm avatar images so the Friends list sheet can render immediately.
+                await warmFriendAvatars(updatedFriends)
+
+                if let added = updatedFriends.first(where: { $0.id == friendId }) {
+                    let name = added.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.lastActionMessage = name.isEmpty ? "Added friend" : "Added \(name)"
+                } else {
+                    self.lastActionMessage = "Added friend"
+                }
                 UserDefaults.standard.set(true, forKey: PreferenceKeys.partnerConnected)
             } catch {
                 self.lastActionMessage = error.localizedDescription
@@ -123,6 +134,7 @@ final class FriendsViewModel: ObservableObject {
             defer { self.loadFriendsTask = nil }
             self.isLoadingFriends = true
             defer { self.isLoadingFriends = false }
+            self.friendsLoadErrorMessage = nil
 
             do {
                 let accessTokenProvider = self.accessTokenProvider
@@ -131,13 +143,23 @@ final class FriendsViewModel: ObservableObject {
                     return try await BackendService.shared.fetchFriends(accessToken: token)
                 }.value
                 self.friends = updatedFriends
+                await warmFriendAvatars(updatedFriends)
             } catch {
                 self.lastActionMessage = error.localizedDescription
+                self.friendsLoadErrorMessage = error.localizedDescription
             }
         }
 
         loadFriendsTask = task
         await task.value
+    }
+
+    private func warmFriendAvatars(_ friends: [FriendSummary]) async {
+        let urls = friends
+            .compactMap { $0.avatarURL?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !urls.isEmpty else { return }
+        await AvatarCacheManager.shared.preloadAvatars(urls: urls)
     }
 
     private static func parseISO8601(_ iso: String) -> Date? {

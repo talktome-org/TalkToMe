@@ -16,11 +16,18 @@ struct SidebarView: View {
     @FocusState private var isSearchFieldFocused: Bool
 
     @State private var searchText: String = ""
-    @State private var showRenameSheet: Bool = false
     @State private var renameText: String = ""
     @State private var renameTargetId: UUID? = nil
-    @State private var inviteErrorMessage: String? = nil
-    @State private var showFriendsSheet: Bool = false
+
+    private enum ActiveSheet: String, Identifiable {
+        case renameConversation
+        case friendsAdd
+        case friendsList
+
+        var id: String { self.rawValue }
+    }
+
+    @State private var activeSheet: ActiveSheet? = nil
 
     private var isSearchActive: Bool {
         if isSearchFieldFocused { return true }
@@ -38,10 +45,11 @@ struct SidebarView: View {
         NavigationStack {
             GeometryReader { geometry in
                 let pinnedHeaderBar = HStack {
-                    if #available(iOS 26.0, *) {
+                    HStack {
                         Button(action: {
                             Haptics.impact(.light)
-                            presentFriendsSheet()
+                            isSearchFieldFocused = false
+                            presentSheet(.friendsAdd)
                         }) {
                             HStack(spacing: 8) {
                                 Text("Friends")
@@ -55,12 +63,34 @@ struct SidebarView: View {
                         }
                         .buttonStyle(.plain)
                         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .modifier(HeaderPillStyle())
+
+                        Spacer(minLength: 0)
                     }
+                    .frame(width: 110, height: 44, alignment: .leading)
 
                     Spacer()
                     ConnectionStatusPillView()
                     Spacer()
+
+                    HStack {
+                        Spacer(minLength: 0)
+                        Button(action: {
+                            Haptics.impact(.light)
+                            isSearchFieldFocused = false
+                            presentSheet(.friendsList)
+                        }) {
+                            Image(systemName: "person.2")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Friends list")
+                        .contentShape(Circle())
+                        .modifier(HeaderCircleStyle())
+                    }
+                    .frame(width: 110, height: 44, alignment: .trailing)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 6)
@@ -117,7 +147,7 @@ struct SidebarView: View {
                                     Button("Rename", systemImage: "pencil") {
                                         renameTargetId = session.id
                                         renameText = (session.title == ChatSession.defaultTitle) ? "" : session.title
-                                        showRenameSheet = true
+                                        presentSheet(.renameConversation)
                                     }
                                     Button(role: .destructive) {
                                         Task { await sessionsViewModel.deleteSession(session.id) }
@@ -154,60 +184,82 @@ struct SidebarView: View {
                     await sessionsViewModel.ensureProfilePictureCached()
                     // Prefetch the friend code so it's ready before the user opens the sheet.
                     await friendsViewModel.refreshMyCode()
+                    // Prefetch friends + avatars so the Friends list sheet is instant.
+                    try? await friendsViewModel.loadFriends()
                 }
             }
-            .sheet(isPresented: $showRenameSheet) {
-                VStack(spacing: 16) {
-                    Text("Rename Conversation")
-                        .font(.system(size: 20, weight: .semibold))
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .renameConversation:
+                    VStack(spacing: 16) {
+                        Text("Rename Conversation")
+                            .font(.system(size: 20, weight: .semibold))
 
-                    TextField("Title", text: $renameText)
-                        .textInputAutocapitalization(.sentences)
-                        .disableAutocorrection(true)
-                        .padding(12)
-                        .background(Color(.secondarySystemBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        TextField("Title", text: $renameText)
+                            .textInputAutocapitalization(.sentences)
+                            .disableAutocorrection(true)
+                            .padding(12)
+                            .background(Color(.secondarySystemBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                    HStack {
-                        Button("Cancel") { showRenameSheet = false }
-                        Spacer()
-                        Button("Save") {
-                            let text = renameText
-                            showRenameSheet = false
-                            if let id = renameTargetId {
-                                Task { await sessionsViewModel.renameSession(id, to: text) }
+                        HStack {
+                            Button("Cancel") { activeSheet = nil }
+                            Spacer()
+                            Button("Save") {
+                                let text = renameText
+                                activeSheet = nil
+                                if let id = renameTargetId {
+                                    Task { await sessionsViewModel.renameSession(id, to: text) }
+                                }
                             }
+                            .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .padding(.top, 6)
                     }
-                    .padding(.top, 6)
+                    .padding(20)
+                    .presentationDetents([.medium])
+
+                case .friendsAdd:
+                    FriendsSheetView(isPresented: sheetPresentedBinding(for: .friendsAdd))
+                        .environmentObject(friendsViewModel)
+                        .presentationDetents([.large])
+                        .presentationDragIndicator(.visible)
+
+                case .friendsList:
+                    FriendsListSheetView(isPresented: sheetPresentedBinding(for: .friendsList))
+                        .environmentObject(friendsViewModel)
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
                 }
-                .padding(20)
-                .presentationDetents([.medium])
-            }
-            .sheet(isPresented: $showFriendsSheet) {
-                FriendsSheetView(isPresented: $showFriendsSheet)
-                    .environmentObject(friendsViewModel)
-                    .presentationDetents([.large])
-                    .presentationDragIndicator(.visible)
             }
         }
     }
 
     @MainActor
-    private func presentFriendsSheet() {
-        // SwiftUI sometimes drops sheet presentations if `isPresented` is already true
-        // or if multiple state updates happen in the same run loop.
-        if showFriendsSheet {
-            showFriendsSheet = false
+    private func presentSheet(_ sheet: ActiveSheet) {
+        // SwiftUI can drop/ignore sheet presentations if multiple updates happen in one run loop,
+        // or if the same sheet is requested while it's already presented.
+        if activeSheet == sheet {
+            activeSheet = nil
             DispatchQueue.main.async {
-                showFriendsSheet = true
+                activeSheet = sheet
             }
         } else {
             DispatchQueue.main.async {
-                showFriendsSheet = true
+                activeSheet = sheet
             }
         }
+    }
+
+    private func sheetPresentedBinding(for sheet: ActiveSheet) -> Binding<Bool> {
+        Binding(
+            get: { activeSheet == sheet },
+            set: { newValue in
+                if !newValue {
+                    activeSheet = nil
+                }
+            }
+        )
     }
 
     private func controlsBar(bottomInset: CGFloat, availableWidth: CGFloat) -> some View {
@@ -351,6 +403,32 @@ struct SidebarView: View {
     }
 }
 
+private struct HeaderPillStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        } else {
+            content
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+    }
+}
+
+private struct HeaderCircleStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .glassEffect(.regular.interactive(), in: Circle())
+        } else {
+            content
+                .background(Color(.secondarySystemBackground))
+                .clipShape(Circle())
+        }
+    }
+}
+
 private struct FriendsSheetView: View {
     @Binding var isPresented: Bool
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
@@ -480,6 +558,88 @@ private struct FriendsSheetView: View {
                 Button("OK", role: .cancel) { inviteErrorMessage = nil }
             } message: {
                 Text(inviteErrorMessage ?? "")
+            }
+        }
+    }
+}
+
+private struct FriendsListSheetView: View {
+    @Binding var isPresented: Bool
+    @EnvironmentObject private var friendsViewModel: FriendsViewModel
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if friendsViewModel.friends.isEmpty {
+                    if friendsViewModel.isLoadingFriends {
+                        VStack(spacing: 10) {
+                            ProgressView()
+                            Text("Loading friends…")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(16)
+                    } else if let err = friendsViewModel.friendsLoadErrorMessage, !err.isEmpty {
+                        VStack(spacing: 10) {
+                            Text(err)
+                                .font(.system(size: 14))
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                            Button("Retry") {
+                                Haptics.impact(.light)
+                                Task { try? await friendsViewModel.loadFriends() }
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(16)
+                    } else {
+                        Text("No friends yet.")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .padding(16)
+                    }
+                } else {
+                    List {
+                        ForEach(friendsViewModel.friends) { friend in
+                            HStack(spacing: 10) {
+                                SidebarAvatarView(avatarURL: friend.avatarURL)
+                                    .frame(width: 36, height: 36)
+                                    .clipShape(Circle())
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(friend.fullName)
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundStyle(.primary)
+                                }
+                                Spacer()
+                            }
+                            .padding(.vertical, 6)
+                        }
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .navigationTitle("Friends")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { isPresented = false }
+                }
+                if friendsViewModel.isLoadingFriends && !friendsViewModel.friends.isEmpty {
+                    ToolbarItem(placement: .topBarLeading) {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+            }
+            .task {
+                // Don't blank the sheet on open; only load if we have nothing yet.
+                if friendsViewModel.friends.isEmpty {
+                    try? await friendsViewModel.loadFriends()
+                }
             }
         }
     }

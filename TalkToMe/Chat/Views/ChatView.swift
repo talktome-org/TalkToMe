@@ -165,7 +165,7 @@ struct ChatView: View {
 
 private struct FriendPickerSheetView: View {
     @Binding var isPresented: Bool
-    let friends: [UUID]
+    let friends: [FriendSummary]
     let isLoading: Bool
     let errorMessage: String?
     let onRetry: () -> Void
@@ -209,19 +209,20 @@ private struct FriendPickerSheetView: View {
                         .padding(.top, 6)
                 } else {
                     List {
-                        ForEach(friends, id: \.self) { id in
+                        ForEach(friends) { friend in
                             Button {
                                 Haptics.impact(.light)
-                                onPick(id)
+                                onPick(friend.id)
                             } label: {
                                 HStack {
+                                    SidebarAvatarView(avatarURL: friend.avatarURL)
+                                        .frame(width: 34, height: 34)
+                                        .clipShape(Circle())
+
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text("Friend")
+                                        Text(friend.fullName.isEmpty ? "Friend" : friend.fullName)
                                             .font(.system(size: 16, weight: .semibold))
                                             .foregroundStyle(.primary)
-                                        Text(short(id))
-                                            .font(.system(size: 13))
-                                            .foregroundStyle(.secondary)
                                     }
                                     Spacer()
                                     Image(systemName: "chevron.right")
@@ -255,9 +256,6 @@ private struct FriendPickerSheetView: View {
         isPresented = false
     }
 
-    private func short(_ id: UUID) -> String {
-        let s = id.uuidString.lowercased()
-        return String(s.prefix(8)) + "…"
-    }
+    // Intentionally no UUID display here — users should see names/providers.
 }
 

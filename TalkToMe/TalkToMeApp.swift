@@ -103,6 +103,10 @@ struct TalkToMeApp: App {
                                 await friendsVM.refreshMyCode()
                             }
                             group.addTask {
+                                // Warm friends list + avatars so the Friends sheet is instant.
+                                try? await friendsVM.loadFriends()
+                            }
+                            group.addTask {
                                 // Warm avatar URL + image cache so Settings opens with the picture already loaded.
                                 await sessionsViewModel.ensureProfilePictureCached()
                             }
@@ -144,6 +148,9 @@ struct TalkToMeApp: App {
                                 }
                                 group.addTask {
                                     await friendsVM.refreshMyCode()
+                                }
+                                group.addTask {
+                                    try? await friendsVM.loadFriends()
                                 }
                                 group.addTask {
                                     await sessionsViewModel.ensureProfilePictureCached()

@@ -21,6 +21,13 @@ class AddFriendByCodeResponse(BaseModel):
     friend_user_id: UUID
 
 
+class FriendSummary(BaseModel):
+    user_id: UUID
+    full_name: str
+    auth_provider: str
+    avatar_url: str | None = None
+
+
 class FriendsListResponse(BaseModel):
-    friends: List[UUID]
+    friends: List[FriendSummary]
 
