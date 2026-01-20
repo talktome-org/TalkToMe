@@ -61,34 +61,6 @@ struct SidebarView: View {
                     Spacer()
                     ConnectionStatusPillView()
                     Spacer()
-                    // Keep the right side the same width as the left so the status pill stays centered.
-                    HStack {
-                        Spacer(minLength: 0)
-                        if #available(iOS 26.0, *) {
-                            Button(action: {
-                                Haptics.impact(.light)
-                                // Select new chat immediately (no animation) so the main content updates
-                                // while the sidebar is still visible.
-                                withAnimation(nil) {
-                                    sessionsViewModel.startNewChat()
-                                    navigationViewModel.selectedTab = .chat
-                                }
-                                // Only animate the sidebar closing.
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8, blendDuration: 0)) {
-                                    isOpen = false
-                                }
-                            }) {
-                                Image(systemName: "square.and.pencil")
-                                    .font(.system(size: 18, weight: .semibold))
-                                    .foregroundStyle(.primary)
-                                    .frame(width: 44, height: 44)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("New chat")
-                            .glassEffect(.regular.interactive(), in: Circle())
-                        }
-                    }
-                    .frame(width: 110, height: 44)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 6)
