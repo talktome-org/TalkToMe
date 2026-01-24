@@ -331,7 +331,7 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                         except Exception:
                             continue
 
-                input_messages = chat_service.build_messages(
+                input_messages = await chat_service.build_messages(
                     session_partner_letter=partner_letter,
                     last_user_message=chat_request.message,
                     partner_ab_context_text=partner_ab_context_text,
