@@ -84,6 +84,20 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def include_object(object_, name: str | None, type_: str, reflected: bool, compare_to) -> bool:  # type: ignore[no-untyped-def]
+    """
+    Filter objects for Alembic autogenerate.
+
+    We don't manage Supabase's `auth` schema via Alembic, but many of our public
+    tables reference `auth.users`. We still enable schema reflection so FK
+    resolution works, and then exclude `auth.*` objects from diff output.
+    """
+    schema = getattr(object_, "schema", None)
+    if schema == "auth":
+        return False
+    return True
+
+
 def _quote_ident(value: str) -> str:
     # Defensive quoting for identifiers (table names) to avoid SQL injection issues.
     return '"' + value.replace('"', '""') + '"'
@@ -123,6 +137,8 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_schemas=True,
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -144,6 +160,8 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            include_schemas=True,
+            include_object=include_object,
         )
 
         with context.begin_transaction():
