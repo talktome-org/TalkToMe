@@ -35,55 +35,146 @@ async def create_session(*, user_id: uuid.UUID, title: Optional[str] = None) -> 
     return await run_in_threadpool(_insert)
 
 
-async def get_or_create_session_for_friendship(*, user_id: uuid.UUID, friendship_id: uuid.UUID, title: Optional[str] = None) -> dict:
-    def _get_or_create():
-        db = SessionLocal()
-        try:
-            existing = (
-                db.execute(
-                    select(UserChatSession)
-                    .where(UserChatSession.user_id == user_id, UserChatSession.friendship_id == friendship_id)
-                    .order_by(UserChatSession.last_message_at.desc().nullslast(), UserChatSession.created_at.desc())
-                    .limit(1)
-                )
-                .scalars()
-                .first()
-            )
-            if existing:
-                return _to_dict(existing)
-
-            sess = UserChatSession(
-                user_id=user_id,
-                title=title,
-                friendship_id=friendship_id,
-                last_message_at=datetime.now(timezone.utc),
-            )
-            db.add(sess)
-            db.commit()
-            db.refresh(sess)
-            return _to_dict(sess)
-        finally:
-            db.close()
-
-    return await run_in_threadpool(_get_or_create)
-
-
 async def attach_friendship_to_session(*, user_id: uuid.UUID, session_id: uuid.UUID, friendship_id: uuid.UUID) -> None:
     await assert_session_owned_by_user(user_id=user_id, session_id=session_id)
 
     def _update():
         db = SessionLocal()
         try:
+            row = db.execute(
+                select(UserChatSession.friendship_id)
+                .where(UserChatSession.id == session_id, UserChatSession.user_id == user_id)
+                .limit(1)
+            ).first()
+            existing = row[0] if row else None
+            if existing is not None and existing != friendship_id:
+                raise PermissionError("Session is already connected to a different friend")
+
             db.execute(
                 update(UserChatSession)
                 .where(UserChatSession.id == session_id, UserChatSession.user_id == user_id)
                 .values(friendship_id=friendship_id)
             )
             db.commit()
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 
     await run_in_threadpool(_update)
+
+
+async def ensure_linked_session_for_friendship(
+    *,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    recipient_user_id: uuid.UUID,
+    friendship_id: uuid.UUID,
+    title: Optional[str] = None,
+) -> uuid.UUID:
+    """
+    Ensure `session_id` (owned by `user_id`) is linked 1:1 to a counterpart session
+    owned by `recipient_user_id` for the given `friendship_id`.
+
+    Returns the recipient session id.
+    """
+
+    await assert_session_owned_by_user(user_id=user_id, session_id=session_id)
+
+    def _ensure() -> uuid.UUID:
+        db = SessionLocal()
+        try:
+            sender = (
+                db.execute(
+                    select(UserChatSession)
+                    .where(UserChatSession.id == session_id, UserChatSession.user_id == user_id)
+                    .with_for_update()
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            if not sender:
+                raise PermissionError("Session not found or not owned by user")
+
+            # Enforce "one chat connects to one friend".
+            if sender.friendship_id is not None and sender.friendship_id != friendship_id:
+                raise PermissionError("Session is already connected to a different friend")
+
+            # If another session already links TO this one, adopt it (repairs partial links).
+            incoming = (
+                db.execute(select(UserChatSession).where(UserChatSession.linked_session_id == sender.id).limit(1))
+                .scalars()
+                .first()
+            )
+
+            if sender.linked_session_id is not None:
+                linked = (
+                    db.execute(select(UserChatSession).where(UserChatSession.id == sender.linked_session_id).limit(1))
+                    .scalars()
+                    .first()
+                )
+                if not linked and incoming:
+                    linked = incoming
+                    sender.linked_session_id = linked.id
+                if not linked:
+                    raise PermissionError("Linked session not found")
+                if linked.user_id != recipient_user_id:
+                    raise PermissionError("Session is already linked to a different user")
+                if linked.linked_session_id is not None and linked.linked_session_id != sender.id:
+                    raise PermissionError("Linked session is already linked to another session")
+
+                # Repair missing reciprocity.
+                if linked.linked_session_id is None:
+                    linked.linked_session_id = sender.id
+                if sender.friendship_id is None:
+                    sender.friendship_id = friendship_id
+                if linked.friendship_id is None:
+                    linked.friendship_id = friendship_id
+                db.commit()
+                return uuid.UUID(str(linked.id))
+
+            if incoming:
+                if incoming.user_id != recipient_user_id:
+                    raise PermissionError("Session is already linked to a different user")
+                if incoming.friendship_id is not None and incoming.friendship_id != friendship_id:
+                    raise PermissionError("Session is already connected to a different friend")
+
+                sender.linked_session_id = incoming.id
+                if incoming.linked_session_id is None:
+                    incoming.linked_session_id = sender.id
+                if sender.friendship_id is None:
+                    sender.friendship_id = friendship_id
+                if incoming.friendship_id is None:
+                    incoming.friendship_id = friendship_id
+                db.commit()
+                return uuid.UUID(str(incoming.id))
+
+            # Create a brand new counterpart session (per-chat thread).
+            recipient = UserChatSession(
+                user_id=recipient_user_id,
+                title=title,
+                friendship_id=friendship_id,
+                linked_session_id=sender.id,
+                last_message_at=datetime.now(timezone.utc),
+            )
+            db.add(recipient)
+            db.flush()  # assign recipient.id
+
+            if sender.friendship_id is None:
+                sender.friendship_id = friendship_id
+            sender.linked_session_id = recipient.id
+
+            db.commit()
+            return uuid.UUID(str(recipient.id))
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    return await run_in_threadpool(_ensure)
 
 
 async def list_sessions_for_user(*, user_id: uuid.UUID, limit: int = 100, offset: int = 0) -> List[dict]:
@@ -178,37 +269,42 @@ async def delete_session(*, user_id: uuid.UUID, session_id: uuid.UUID) -> None:
     def _delete():
         db = SessionLocal()
         try:
-            # If this session is linked to a friendship thread, delete BOTH users' sessions for that friendship.
-            # Otherwise, delete just the one session row.
             row = (
                 db.execute(
-                    select(UserChatSession.id, UserChatSession.friendship_id)
+                    select(UserChatSession.id, UserChatSession.linked_session_id)
                     .where(UserChatSession.id == session_id, UserChatSession.user_id == user_id)
                     .limit(1)
                 )
                 .first()
             )
-            friendship_id: Optional[uuid.UUID] = None
+            linked_id: Optional[uuid.UUID] = None
             if row:
-                friendship_id = row[1]
+                linked_id = row[1]
 
-            session_ids_to_delete: list[uuid.UUID]
-            if friendship_id:
-                session_ids_to_delete = [
-                    r[0]
-                    for r in db.execute(
-                        select(UserChatSession.id).where(UserChatSession.friendship_id == friendship_id)
-                    ).all()
-                    if r and r[0] is not None
-                ]
+            # Delete this session, and also delete its linked counterpart ONLY if it points back.
+            session_ids_to_delete: list[uuid.UUID] = [session_id]
+            if linked_id:
+                other = db.execute(
+                    select(UserChatSession.id, UserChatSession.linked_session_id).where(UserChatSession.id == linked_id).limit(1)
+                ).first()
+                if other and other[1] == session_id:
+                    session_ids_to_delete.append(linked_id)
             else:
-                session_ids_to_delete = [session_id]
+                # Also support the inverse case: another session points to this one, but this row has no outgoing link.
+                incoming = db.execute(
+                    select(UserChatSession.id).where(UserChatSession.linked_session_id == session_id).limit(1)
+                ).first()
+                if incoming and incoming[0] is not None:
+                    session_ids_to_delete.append(incoming[0])
 
             # Delete messages first (backend FK may not be ON DELETE CASCADE everywhere).
             if session_ids_to_delete:
                 db.execute(delete(UserChatMessage).where(UserChatMessage.session_id.in_(session_ids_to_delete)))
                 db.execute(delete(UserChatSession).where(UserChatSession.id.in_(session_ids_to_delete)))
             db.commit()
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 

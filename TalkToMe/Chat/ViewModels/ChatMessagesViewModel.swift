@@ -5,8 +5,6 @@ final class ChatMessagesViewModel: ObservableObject {
 
     struct MessagesCacheEntry {
         let messages: [ChatMessage]
-        /// Timestamp of the last *network* refresh for this session.
-        /// Loading from GRDB should not mark the cache as "fresh" (otherwise we can get stuck showing partial local history).
         let lastLoaded: Date
     }
 

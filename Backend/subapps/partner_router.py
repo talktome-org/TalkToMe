@@ -10,8 +10,7 @@ from pydantic import BaseModel
 from Backend.auth import get_current_user
 from Backend.crud.chat.chat_crud import save_message, update_session_last_message
 from Backend.crud.chat.chat_session_crud import (
-    attach_friendship_to_session,
-    get_or_create_session_for_friendship,
+    ensure_linked_session_for_friendship,
     get_session_by_id,
     touch_session,
     update_session_title,
@@ -51,6 +50,13 @@ async def send_message(request: SendPartnerMessageRequest, current_user: dict = 
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    if not request.session_id:
+        raise HTTPException(status_code=400, detail="session_id required")
+
+    sender_session = await get_session_by_id(user_id=user_id, session_id=request.session_id)
+    if not sender_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
     friendship_id: Optional[uuid.UUID] = None
 
     # Determine friendship_id (code-based connection).
@@ -60,26 +66,28 @@ async def send_message(request: SendPartnerMessageRequest, current_user: dict = 
             raise HTTPException(status_code=400, detail="You are not connected to that friend")
     else:
         # If session already has a friendship, use it. Otherwise require friend_user_id.
-        if request.session_id:
-            sess = await get_session_by_id(user_id=user_id, session_id=request.session_id)
-            if not sess:
-                raise HTTPException(status_code=404, detail="Session not found")
-            fid = sess.get("friendship_id")
-            if fid:
-                try:
-                    friendship_id = uuid.UUID(str(fid))
-                except Exception:
-                    friendship_id = None
+        fid = sender_session.get("friendship_id")
+        if fid:
+            try:
+                friendship_id = uuid.UUID(str(fid))
+            except Exception:
+                friendship_id = None
 
         if not friendship_id:
             raise HTTPException(status_code=400, detail="Friend selection required")
 
-    # Ensure the sender session is connected (auto-connect on first send).
-    if request.session_id:
+    # Enforce "one chat connects to one friend" (prevent switching a session's friend).
+    existing_fid = sender_session.get("friendship_id")
+    if existing_fid and friendship_id:
         try:
-            await attach_friendship_to_session(user_id=user_id, session_id=request.session_id, friendship_id=friendship_id)
-        except PermissionError as e:
-            raise HTTPException(status_code=403, detail=str(e))
+            existing_uuid = uuid.UUID(str(existing_fid))
+            if existing_uuid != friendship_id:
+                raise HTTPException(status_code=400, detail="Session is already connected to a different friend")
+        except HTTPException:
+            raise
+        except Exception:
+            # If we can't parse, allow backend to handle as a normal "friend selection required" flow.
+            pass
 
     # Resolve recipient user_id from friendship.
     def _get_other_user():
@@ -100,23 +108,25 @@ async def send_message(request: SendPartnerMessageRequest, current_user: dict = 
     if not recipient_user_id or recipient_user_id == user_id:
         raise HTTPException(status_code=400, detail="Invalid friendship")
 
-    # Create/get recipient session bound to this friendship.
-    recipient_session = await get_or_create_session_for_friendship(
-        user_id=recipient_user_id,
-        friendship_id=friendship_id,
-        title=None,
-    )
-    recipient_session_id = uuid.UUID(str(recipient_session["id"]))
+    # Ensure a 1:1 linked session exists for this sender session.
+    try:
+        recipient_session_id = await ensure_linked_session_for_friendship(
+            user_id=user_id,
+            session_id=request.session_id,
+            recipient_user_id=recipient_user_id,
+            friendship_id=friendship_id,
+            title=None,
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
 
     # Make the title match the sender's AI-generated title (first conversation title).
     try:
-        if request.session_id:
-            sender_sess = await get_session_by_id(user_id=user_id, session_id=request.session_id)
-            sender_title = (sender_sess or {}).get("title") if sender_sess else None
-            if isinstance(sender_title, str):
-                sender_title = sender_title.strip()
-            if sender_title and sender_title != "New Chat":
-                await update_session_title(user_id=recipient_user_id, session_id=recipient_session_id, title=sender_title)
+        sender_title = (sender_session or {}).get("title") if sender_session else None
+        if isinstance(sender_title, str):
+            sender_title = sender_title.strip()
+        if sender_title and sender_title != "New Chat":
+            await update_session_title(user_id=recipient_user_id, session_id=recipient_session_id, title=sender_title)
     except Exception:
         pass
 

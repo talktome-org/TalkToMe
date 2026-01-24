@@ -22,6 +22,26 @@ final class PartnerDraftsViewModel: ObservableObject {
         return sentPartnerDrafts.contains(makeKey(sessionId: sessionId, messageContent: messageContent))
     }
 
+    func rekeySentDrafts(oldSessionId: UUID, newSessionId: UUID) {
+        guard oldSessionId != newSessionId else { return }
+        let oldPrefix = oldSessionId.uuidString + "_"
+        let newPrefix = newSessionId.uuidString + "_"
+
+        var changed = false
+        let updated: Set<String> = Set(sentPartnerDrafts.map { key in
+            if key.hasPrefix(oldPrefix) {
+                changed = true
+                return newPrefix + key.dropFirst(oldPrefix.count)
+            }
+            return key
+        })
+
+        if changed {
+            sentPartnerDrafts = updated
+            saveSentDrafts()
+        }
+    }
+
     private func loadSentDrafts() {
         sentPartnerDrafts = Set(UserDefaults.standard.stringArray(forKey: Self.globalSentDraftsKey) ?? [])
     }
@@ -31,7 +51,9 @@ final class PartnerDraftsViewModel: ObservableObject {
     }
 
     private func makeKey(sessionId: UUID, messageContent: String) -> String {
-        let contentKey = String(messageContent.prefix(100))
+        // Normalize so minor whitespace differences don't flip "sent" state across reloads.
+        let normalized = messageContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let contentKey = String(normalized.prefix(100))
         return "\(sessionId.uuidString)_\(contentKey)"
     }
 }

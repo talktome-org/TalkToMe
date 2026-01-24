@@ -401,25 +401,38 @@ final class ChatSessionsViewModel: ObservableObject {
 #if DEBUG
         debugLog("[ChatSessionsVM] chatSessionRekeyed old=\(oldId.uuidString) new=\(newId.uuidString) active=\(activeSessionId?.uuidString ?? "nil")")
 #endif
-        let oldIdx = self.sessions.firstIndex(where: { $0.id == oldId })
-        let newIdx = self.sessions.firstIndex(where: { $0.id == newId })
+        let oldSession = self.sessions.first(where: { $0.id == oldId })
+        let serverSession = self.sessions.first(where: { $0.id == newId })
 
-        if let oldIdx {
-            // If we already have a server session row, remove it before rekeying to prevent duplicates.
-            if let newIdx, newIdx != oldIdx {
-                self.sessions.remove(at: newIdx)
-            }
+        // Remove any existing server row first, then update/insert deterministically.
+        // (Avoid index-shift bugs when newIdx < oldIdx.)
+        self.sessions.removeAll(where: { $0.id == newId })
 
-            let item = self.sessions[oldIdx]
-            self.sessions[oldIdx] = ChatSession(
+        if let idx = self.sessions.firstIndex(where: { $0.id == oldId }) {
+            let base = oldSession ?? self.sessions[idx]
+
+            let mergedTitle: String = {
+                // Prefer a non-default server title if we have it.
+                if let serverSession, serverSession.title != ChatSession.defaultTitle {
+                    return serverSession.title
+                }
+                return base.title
+            }()
+
+            let mergedLastUsed = serverSession?.lastUsedISO8601 ?? base.lastUsedISO8601
+            let mergedLastMessage = serverSession?.lastMessageContent ?? base.lastMessageContent
+
+            self.sessions[idx] = ChatSession(
                 id: newId,
-                title: item.title,
-                lastUsedISO8601: item.lastUsedISO8601,
-                lastMessageContent: item.lastMessageContent
+                title: mergedTitle,
+                lastUsedISO8601: mergedLastUsed,
+                lastMessageContent: mergedLastMessage
             )
-        } else {
-            // If the old session isn't present, nothing to merge.
-            // (This can happen if sessions were refreshed from server before the local stub was inserted.)
+        } else if let serverSession {
+            // If the old session isn't present (e.g. server refresh replaced list), ensure the new one exists.
+            if !self.sessions.contains(where: { $0.id == newId }) {
+                self.sessions.insert(serverSession, at: 0)
+            }
         }
 
         if self.activeSessionId == oldId {

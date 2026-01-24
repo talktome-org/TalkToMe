@@ -116,7 +116,6 @@ final class FriendsViewModel: ObservableObject {
                 } else {
                     self.lastActionMessage = "Added friend"
                 }
-                UserDefaults.standard.set(true, forKey: PreferenceKeys.partnerConnected)
             } catch {
                 self.lastActionMessage = error.localizedDescription
             }
@@ -201,7 +200,6 @@ final class FriendsViewModel: ObservableObject {
             UserDefaults.standard.set(url, forKey: PreferenceKeys.partnerAvatarURL)
         }
         UserDefaults.standard.set(partnerId.uuidString, forKey: PreferenceKeys.partnerUserId)
-        UserDefaults.standard.set(true, forKey: PreferenceKeys.partnerConnected)
     }
 
     private static func parseISO8601(_ iso: String) -> Date? {

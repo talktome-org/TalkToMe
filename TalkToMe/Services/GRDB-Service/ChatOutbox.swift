@@ -112,15 +112,25 @@ final class ChatOutboxProcessor {
     }
 
     private func flushChatMessage(_ item: OutboxItem) async throws {
-        guard let localSid = UUID(uuidString: item.session_id) else { throw NSError() }
-        let existingServer = item.server_session_id.flatMap { UUID(uuidString: $0) }
+        // The outbox table can be mutated mid-flush (e.g. when a previous item triggers a local→server rekey).
+        // Always reload the latest row by id so we don't act on stale session/server ids.
+        let current: OutboxItem
+        do {
+            guard let fresh = try await fetchItem(id: item.id) else { return }
+            current = fresh
+        } catch {
+            current = item
+        }
+
+        guard let localSid = UUID(uuidString: current.session_id) else { throw NSError() }
+        let existingServer = current.server_session_id.flatMap { UUID(uuidString: $0) }
         let serverSid = try await ensureServerSessionId(localSessionId: localSid, existing: existingServer)
 
-        try await updateItem(item.id, status: "sending", serverSessionId: serverSid.uuidString, lastError: nil)
+        try await updateItem(current.id, status: "sending", serverSessionId: serverSid.uuidString, lastError: nil)
 
         let accessToken = try await requireAccessToken()
 
-        let attachments = decodeAttachments(item.attachments_json)
+        let attachments = decodeAttachments(current.attachments_json)
         var uploaded: [BackendService.ChatAttachment] = []
         if !attachments.isEmpty {
             for att in attachments {
@@ -143,10 +153,10 @@ final class ChatOutboxProcessor {
             }
         }
 
-        let friendUserId = item.friend_user_id.flatMap { UUID(uuidString: $0) }
-        let messageId = item.message_id.flatMap { UUID(uuidString: $0) }
+        let friendUserId = current.friend_user_id.flatMap { UUID(uuidString: $0) }
+        let messageId = current.message_id.flatMap { UUID(uuidString: $0) }
         let stream = BackendService.shared.streamChatMessage(
-            item.message,
+            current.message,
             sessionId: serverSid,
             chatHistory: nil,
             attachments: uploaded.isEmpty ? nil : uploaded,
@@ -160,11 +170,11 @@ final class ChatOutboxProcessor {
         for await event in stream {
             switch event {
             case .done:
-                try await updateItem(item.id, status: "sent")
+                try await updateItem(current.id, status: "sent")
                 let previewToSend: String = {
-                    let trimmed = item.message.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let trimmed = current.message.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty { return trimmed }
-                    let atts = decodeAttachments(item.attachments_json)
+                    let atts = decodeAttachments(current.attachments_json)
                     if atts.isEmpty { return "" }
                     let hasImage = atts.contains(where: { $0.type == "image" })
                     return hasImage ? "Sent a photo." : "Sent an attachment."
@@ -209,6 +219,14 @@ final class ChatOutboxProcessor {
                 .filter(sql: "status IN (?, ?)", arguments: ["pending", "failed"])
                 .order(Column("created_at").asc)
                 .fetchAll(db)
+        }
+    }
+
+    private func fetchItem(id: String) async throws -> OutboxItem? {
+        try await LocalDatabase.shared.dbQueue.read { db in
+            try OutboxItem
+                .filter(Column("id") == id)
+                .fetchOne(db)
         }
     }
 

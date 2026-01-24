@@ -31,6 +31,13 @@ class UserChatSession(Base):
         nullable=True,
         index=True,
     )
+    linked_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("user_chat_sessions.id", name="user_chat_sessions_linked_session_id_fkey"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
 
 
 class UserChatMessage(Base):

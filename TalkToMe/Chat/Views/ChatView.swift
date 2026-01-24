@@ -60,7 +60,6 @@ struct ChatView: View {
                 onPick: { friendId in
                     Task { @MainActor in
                         viewModel.selectedFriendUserId = friendId
-                        UserDefaults.standard.set(true, forKey: PreferenceKeys.partnerConnected)
                         UserDefaults.standard.set(friendId.uuidString, forKey: PreferenceKeys.partnerUserId)
                         if let picked = friendsViewModel.friends.first(where: { $0.id == friendId }) {
                             let name = picked.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -86,7 +85,7 @@ struct ChatView: View {
             let content = (note.userInfo?["content"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !content.isEmpty else { return }
             Task { @MainActor in
-                if isConnectedToFriendInThisChat() {
+                if viewModel.isConnectedToFriendInThisChat {
                     await viewModel.sendPartnerDraftViaSession(content)
                     return
                 }
@@ -132,23 +131,6 @@ struct ChatView: View {
             // which are handled by `.sendPartnerMessageFromBubble`.
             viewModel.sendMessage()
         }
-    }
-
-    private func isConnectedToFriendInThisChat() -> Bool {
-        // Sender side: once user picked a friend, we persist selection in the ChatViewModel.
-        if viewModel.selectedFriendUserId != nil { return true }
-
-        // Recipient side: once a message has been delivered into this session, it's already a friend thread.
-        // (Those are stored as `partner_received` segments.)
-        if viewModel.messages.contains(where: { msg in
-            msg.segments.contains(where: { seg in
-                if case .partnerReceived(_) = seg { return true }
-                return false
-            })
-        }) {
-            return true
-        }
-        return false
     }
 
     @MainActor

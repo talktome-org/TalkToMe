@@ -78,6 +78,21 @@ class ChatViewModel: ObservableObject {
     private var refreshTimer: Timer?
     private var cancellables: Set<AnyCancellable> = []
 
+    /// True when this chat session is connected to a friend thread (sender picked a friend,
+    /// or recipient has received partner messages in this session).
+    var isConnectedToFriendInThisChat: Bool {
+        // Sender-side: once user picked a friend, we persist selection in the ChatViewModel.
+        if selectedFriendUserId != nil { return true }
+
+        // Recipient-side: once a message has been delivered into this session, it's already a friend thread.
+        return messages.contains(where: { msg in
+            msg.segments.contains(where: { seg in
+                if case .partnerReceived(_) = seg { return true }
+                return false
+            })
+        })
+    }
+
     private static func friendKey(for sessionId: UUID) -> String {
         "session_friend_user_id_\(sessionId.uuidString)"
     }
@@ -116,6 +131,11 @@ class ChatViewModel: ObservableObject {
 
     init(sessionId: UUID? = nil) {
         self.sessionId = sessionId
+        if let sid = sessionId,
+           let raw = UserDefaults.standard.string(forKey: Self.friendKey(for: sid)),
+           let fid = UUID(uuidString: raw) {
+            self.selectedFriendUserId = fid
+        }
         self.chatMessagesVM = ChatMessagesViewModel(sessionId: sessionId)
         self.messages = chatMessagesVM.messages
         self.isLoadingHistory = chatMessagesVM.isLoadingHistory
@@ -160,6 +180,7 @@ class ChatViewModel: ObservableObject {
                 else { return }
                 if self.sessionId == oldId {
                     self.movePersistedFriendUserId(from: oldId, to: newId)
+                    self.partnerDrafts.rekeySentDrafts(oldSessionId: oldId, newSessionId: newId)
                     self.sessionId = newId
                     self.selectedFriendUserId = self.loadPersistedFriendUserId(for: newId)
                     await self.presentSession(newId)
@@ -454,6 +475,21 @@ class ChatViewModel: ObservableObject {
         }
 		updateCacheForCurrentSession()
 
+        // Snapshot stream context immediately so it can't accidentally switch sessions mid-send.
+        // (This prevents cross-chat contamination if the user navigates while we await network work.)
+        let initialMessagesForStream = self.messages
+        let initialAssistantPlaceholderId = self.currentAssistantMessageId
+        let chatHistoryForStream: [BackendService.ChatHistoryMessage] = initialMessagesForStream.dropLast(2).map { message in
+            let plain = message.segments.compactMap { seg -> String? in
+                if case .text(let t) = seg { return t }
+                return nil
+            }.joined()
+            return BackendService.ChatHistoryMessage(
+                role: message.isFromUser ? "user" : "assistant",
+                content: plain
+            )
+        }
+
         Task { [weak self] in
             guard let self = self else { return }
             guard let accessToken = await authService.getAccessToken() else {
@@ -461,13 +497,16 @@ class ChatViewModel: ObservableObject {
                 return
             }
 
+            // IMPORTANT: Pin all stream/session identifiers to the session the user actually sent from.
+            // `self.sessionId` can change while we await (e.g. user switches chats), and we must never
+            // accidentally send a message into a different session.
             let localSessionIdForSend = sid
             let createdLocalSessionIdForSend = createdLocalSessionId
-            let requestSessionIdForStream: UUID? = (createdLocalSessionIdForSend != nil) ? nil : self.sessionId
+            let requestSessionIdForStream: UUID? = (createdLocalSessionIdForSend != nil) ? nil : localSessionIdForSend
 
             await MainActor.run { self.isStreaming = true }
-            await MainActor.run { if let sid = self.sessionId { self.currentStreamingSessionId = sid } }
-            let bgName = await MainActor.run { "chat_stream_" + (self.sessionId?.uuidString ?? "unknown") }
+            await MainActor.run { self.currentStreamingSessionId = localSessionIdForSend }
+            let bgName = "chat_stream_" + localSessionIdForSend.uuidString
             let bgTask: UIBackgroundTaskIdentifier? = Self.beginBackgroundTask(name: bgName) { [weak self] in
                 guard let self = self else { return }
                 Task { @MainActor in
@@ -479,7 +518,7 @@ class ChatViewModel: ObservableObject {
                     self.updateCacheForCurrentSession()
                 }
             }
-            self.debugLog("[ChatVM] stream starting (manager); sessionId=\(String(describing: self.sessionId)) messagesCount=\(self.messages.count)")
+            self.debugLog("[ChatVM] stream starting (manager); sessionId=\(localSessionIdForSend.uuidString) messagesCount=\(self.messages.count)")
 
             var uploaded: [BackendService.ChatAttachment] = []
             if !attachmentsToSend.isEmpty {
@@ -542,28 +581,18 @@ class ChatViewModel: ObservableObject {
                 }
             }
 
-            let chatHistory = self.messages.dropLast(2).map { message in
-                let plain = message.segments.compactMap { seg -> String? in
-                    if case .text(let t) = seg { return t }
-                    return nil
-                }.joined()
-                return BackendService.ChatHistoryMessage(
-                    role: message.isFromUser ? "user" : "assistant",
-                    content: plain
-                )
-            }
+            let chatHistory = chatHistoryForStream
 
             var accumulated = ""
             var currentSegments: [MessageSegment] = []
             var sawToolStart = false
             var sawPartnerMessage = false
             var eventCounter = 0
-            var streamSessionId: UUID? = self.sessionId
-            let (initialMessagesForStream, initialAssistantPlaceholderId): ([ChatMessage], UUID?) = await MainActor.run { (self.messages, self.currentAssistantMessageId) }
-
+            // Track which session incoming SSE events belong to.
+            // Start with the session-at-send id; backend will emit a `session` event that may rekey it.
+            var streamSessionId: UUID? = requestSessionIdForStream ?? localSessionIdForSend
             let prevId: String? = {
-                if let sid = self.sessionId { return self.responseIdBySession[sid] }
-                return nil
+                return self.responseIdBySession[localSessionIdForSend]
             }()
 
             let streamToken = UUID()
