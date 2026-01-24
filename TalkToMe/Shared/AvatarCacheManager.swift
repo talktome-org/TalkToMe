@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import UIKit
+import CryptoKit
 
 @MainActor
 class AvatarCacheManager: ObservableObject {
@@ -89,6 +90,13 @@ class AvatarCacheManager: ObservableObject {
             memoryCache.setObject(image, forKey: urlString as NSString)
             return image
         }
+        if let diskImage = loadFromDiskIfCached(urlString: urlString) {
+            memoryCache.setObject(diskImage, forKey: urlString as NSString)
+            Task { @MainActor in
+                self.cachedAvatars[urlString] = diskImage
+            }
+            return diskImage
+        }
         if let url = URL(string: urlString), let urlCache = urlSession.configuration.urlCache {
             let request = URLRequest(url: url, cachePolicy: .returnCacheDataDontLoad, timeoutInterval: 0.1)
             if let cached = urlCache.cachedResponse(for: request) {
@@ -97,6 +105,7 @@ class AvatarCacheManager: ObservableObject {
                     Task { @MainActor in
                         self.cachedAvatars[urlString] = image
                     }
+                    saveToDisk(urlString: urlString, data: cached.data)
                     return image
                 }
             }
@@ -110,6 +119,7 @@ class AvatarCacheManager: ObservableObject {
             cachedAvatars.removeAll()
         }
         urlSession.configuration.urlCache?.removeAllCachedResponses()
+        clearDiskCache()
     }
 
     func forceRefreshAllAvatars() async {
@@ -150,6 +160,7 @@ class AvatarCacheManager: ObservableObject {
 
             memoryCache.setObject(image, forKey: urlString as NSString)
             cachedAvatars[urlString] = image
+            saveToDisk(urlString: urlString, data: data)
 
             return image
 
@@ -157,6 +168,50 @@ class AvatarCacheManager: ObservableObject {
             print("Failed to load avatar image from \(urlString): \(error)")
             return nil
         }
+    }
+
+    // MARK: - Disk cache (independent of HTTP caching headers)
+
+    nonisolated private func currentUserKey() -> String {
+        let raw = UserDefaults.standard.string(forKey: PreferenceKeys.currentUserId)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if raw.isEmpty { return "unauthenticated" }
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+        let cleaned = raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
+        return String(cleaned)
+    }
+
+    nonisolated private func diskCacheDirectory() -> URL {
+        let fm = FileManager.default
+        let base = (try? fm.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
+            ?? fm.temporaryDirectory
+        let dir = base.appendingPathComponent("TalkToMe/AvatarCache/\(currentUserKey())", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    nonisolated private func diskURL(for urlString: String) -> URL {
+        let digest = SHA256.hash(data: Data(urlString.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return diskCacheDirectory().appendingPathComponent(hex).appendingPathExtension("img")
+    }
+
+    private func loadFromDiskIfCached(urlString: String) -> UIImage? {
+        let fileURL = diskURL(for: urlString)
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        return UIImage(data: data)
+    }
+
+    private func saveToDisk(urlString: String, data: Data) {
+        let fileURL = diskURL(for: urlString)
+        // Best-effort; avoid blocking UI with errors.
+        try? data.write(to: fileURL, options: [.atomic])
+    }
+
+    private func clearDiskCache() {
+        let fm = FileManager.default
+        let dir = diskCacheDirectory()
+        try? fm.removeItem(at: dir)
     }
 }
 

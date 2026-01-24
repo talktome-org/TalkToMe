@@ -51,19 +51,15 @@ struct SidebarView: View {
                             isSearchFieldFocused = false
                             presentSheet(.friendsAdd)
                         }) {
-                            HStack(spacing: 8) {
-                                Text("Friends")
-                                    .font(.system(size: 15, weight: .semibold))
-                                Image(systemName: "plus")
-                                    .font(.system(size: 16, weight: .semibold))
-                            }
-                            .foregroundColor(.primary)
-                            .padding(.horizontal, 12)
-                            .frame(height: 44)
+                            Image(systemName: "plus")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .frame(width: 44, height: 44)
                         }
                         .buttonStyle(.plain)
-                        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .modifier(HeaderPillStyle())
+                        .accessibilityLabel("Add friend")
+                        .contentShape(Circle())
+                        .modifier(HeaderCircleStyle())
 
                         Spacer(minLength: 0)
                     }
@@ -75,6 +71,10 @@ struct SidebarView: View {
 
                     HStack {
                         Spacer(minLength: 0)
+                        if !friendsViewModel.friends.isEmpty {
+                            FriendsDominoAvatarsView(friends: Array(friendsViewModel.friends.prefix(4)))
+                                .accessibilityHidden(true)
+                        }
                         Button(action: {
                             Haptics.impact(.light)
                             isSearchFieldFocused = false
@@ -429,6 +429,36 @@ private struct HeaderCircleStyle: ViewModifier {
                 .background(Color(.secondarySystemBackground))
                 .clipShape(Circle())
         }
+    }
+}
+
+private struct FriendsDominoAvatarsView: View {
+    let friends: [FriendSummary]
+
+    private let avatarSize: CGFloat = 22
+    private let step: CGFloat = 9
+
+    var body: some View {
+        let shown = Array(friends.prefix(4))
+        let totalWidth = avatarSize + step * CGFloat(max(0, shown.count - 1))
+
+        ZStack(alignment: .leading) {
+            ForEach(Array(shown.enumerated()), id: \.element.id) { index, friend in
+                SidebarAvatarView(avatarURL: friend.avatarURL)
+                    .frame(width: avatarSize, height: avatarSize)
+                    .clipShape(Circle())
+                    .overlay(
+                        Circle()
+                            .stroke(Color(.systemBackground).opacity(0.90), lineWidth: 1.25)
+                    )
+                    .shadow(color: .black.opacity(0.10), radius: 2, x: 0, y: 1)
+                    .offset(x: CGFloat(index) * step)
+                    // Keep visual stacking consistent with the friends array ordering:
+                    // first friend is the "top/front" avatar.
+                    .zIndex(Double(shown.count - index))
+            }
+        }
+        .frame(width: totalWidth, height: 44, alignment: .center)
     }
 }
 

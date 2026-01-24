@@ -61,6 +61,11 @@ class ChatViewModel: ObservableObject {
     @Published var isAssistantTyping: Bool = false
     @Published var initialJumpToken: Int = 0
 
+    // We want to scroll to the bottom as soon as the first non-empty message list arrives
+    // (from GRDB or memory cache). Waiting for the network refresh causes the "latest message appears later"
+    // effect on cold starts.
+    private var pendingInitialJump: Bool = false
+
     private let backend = BackendService.shared
     private let authService = AuthService.shared
     private let chatMessagesVM: ChatMessagesViewModel
@@ -143,7 +148,12 @@ class ChatViewModel: ObservableObject {
         chatMessagesVM.$messages
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newMessages in
-                self?.messages = newMessages
+                guard let self else { return }
+                self.messages = newMessages
+                if self.pendingInitialJump, !newMessages.isEmpty {
+                    self.pendingInitialJump = false
+                    self.initialJumpToken &+= 1
+                }
             }
             .store(in: &cancellables)
 
@@ -161,10 +171,11 @@ class ChatViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // On init we want to jump to the latest message as soon as history loads (GRDB or network).
+        pendingInitialJump = true
         Task { [weak self] in
             guard let self = self else { return }
             await self.loadHistory()
-            if !self.messages.isEmpty { self.initialJumpToken &+= 1 }
         }
 
         let sessionRekeyed = NotificationCenter.default.addObserver(
@@ -281,13 +292,20 @@ class ChatViewModel: ObservableObject {
             }
             self.isLoading = (self.currentStreamingSessionId == id)
             self.isAssistantTyping = false
+            // Trigger an initial jump as soon as cached messages land (GRDB/memory), not after network refresh.
+            self.pendingInitialJump = true
         }
 
         await chatMessagesVM.presentSession(id)
         await MainActor.run {
             self.messages = chatMessagesVM.messages
             self.isLoadingHistory = chatMessagesVM.isLoadingHistory
-            if !self.messages.isEmpty { self.initialJumpToken &+= 1 }
+            // If messages only become available after `presentSession` completes (edge case),
+            // ensure we still jump once.
+            if self.pendingInitialJump, !self.messages.isEmpty {
+                self.pendingInitialJump = false
+                self.initialJumpToken &+= 1
+            }
         }
     }
 

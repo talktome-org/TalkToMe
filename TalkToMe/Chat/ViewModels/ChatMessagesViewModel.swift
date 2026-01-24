@@ -180,6 +180,8 @@ final class ChatMessagesViewModel: ObservableObject {
                 return
             }
             let dtos = try await BackendService.shared.fetchMessages(sessionId: sid, accessToken: accessToken)
+            // Persist first so a cold-start open reads from GRDB immediately (no "loads after a second" flash).
+            await ChatStore.shared.upsertMessages(dtos)
             guard let userId = resolvedCurrentUserId() else { self.isLoadingHistory = false; return }
             var mapped = dtos.map { ChatMessage(dto: $0, currentUserId: userId) }
 
@@ -206,9 +208,6 @@ final class ChatMessagesViewModel: ObservableObject {
             }
             applyMessages(mapped, reason: "loadHistory.network")
             Self.sharedMessagesCache[sid] = MessagesCacheEntry(messages: mapped, lastLoaded: Date())
-            Task.detached {
-                await ChatStore.shared.upsertMessages(dtos)
-            }
 
         } catch {
             debugLog("[ChatMessagesVM] Failed to load history: \(error)")

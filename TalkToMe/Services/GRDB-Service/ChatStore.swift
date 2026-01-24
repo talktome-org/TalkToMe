@@ -334,7 +334,11 @@ final class ChatStore {
             wrote = false
         }
         guard wrote else { return }  // Cache ONLY if messages were successfully written
-        await cacheAttachmentsIfNeeded(from: dtos)
+        // Attachment caching can involve network I/O; don't block message persistence on it.
+        // Messages are already committed at this point, so chat navigation stays instant even if attachment caching is deferred.
+        Task.detached { [dtos] in
+            await ChatStore.shared.cacheAttachmentsIfNeeded(from: dtos)
+        }
     }
 
 

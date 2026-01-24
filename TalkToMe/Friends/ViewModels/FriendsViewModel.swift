@@ -21,6 +21,7 @@ final class FriendsViewModel: ObservableObject {
     private enum Cache {
         static let myCodeKey = "FriendsViewModel.myCode"
         static let myCodeExpiresAtKey = "FriendsViewModel.myCodeExpiresAt"
+        static let friendsKey = "FriendsViewModel.friends"
     }
 
     init(
@@ -30,6 +31,7 @@ final class FriendsViewModel: ObservableObject {
         self.accessTokenProvider = accessTokenProvider
         self.userIdProvider = userIdProvider
         restoreMyCodeFromCache()
+        restoreFriendsFromCache()
     }
 
     func refreshMyCode(force: Bool = false) async {
@@ -110,6 +112,8 @@ final class FriendsViewModel: ObservableObject {
                 // Persist "partner" defaults so partner message UI can render name/avatar instantly.
                 self.updatePartnerDefaults(from: updatedFriends, preferredPartnerUserId: friendId)
 
+                self.persistFriendsToCache(updatedFriends)
+
                 if let added = updatedFriends.first(where: { $0.id == friendId }) {
                     let name = added.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
                     self.lastActionMessage = name.isEmpty ? "Added friend" : "Added \(name)"
@@ -147,6 +151,7 @@ final class FriendsViewModel: ObservableObject {
                 self.friends = updatedFriends
                 await warmFriendAvatars(updatedFriends)
                 self.updatePartnerDefaults(from: updatedFriends, preferredPartnerUserId: nil)
+                self.persistFriendsToCache(updatedFriends)
             } catch {
                 self.lastActionMessage = error.localizedDescription
                 self.friendsLoadErrorMessage = error.localizedDescription
@@ -245,6 +250,23 @@ final class FriendsViewModel: ObservableObject {
         if let expiresAt = myCodeExpiresAt {
             UserDefaults.standard.set(expiresAt.timeIntervalSince1970, forKey: expiresKey)
         }
+    }
+
+    private func restoreFriendsFromCache() {
+        let key = cacheKey(Cache.friendsKey)
+        guard let raw = UserDefaults.standard.data(forKey: key) else { return }
+        let decoded = (try? JSONDecoder().decode([FriendSummary].self, from: raw)) ?? []
+        if !decoded.isEmpty {
+            friends = decoded
+            // Best-effort warm so the sidebar domino avatars render immediately.
+            Task { await warmFriendAvatars(decoded) }
+        }
+    }
+
+    private func persistFriendsToCache(_ friends: [FriendSummary]) {
+        let key = cacheKey(Cache.friendsKey)
+        guard let data = try? JSONEncoder().encode(friends) else { return }
+        UserDefaults.standard.set(data, forKey: key)
     }
 }
 
