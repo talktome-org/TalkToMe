@@ -12,8 +12,8 @@ load_dotenv(dotenv_path=ROOT / ".env")
 if str(PARENT) not in sys.path:
     sys.path.insert(0, str(PARENT))
 
-from Backend.Services.document_service import DocumentProcessor
-from Backend.Services.embedding_service import EmbeddingService
+from Backend.services.document_service import DocumentProcessor
+from Backend.services.embedding_service import EmbeddingService
 from Backend.crud.books.rag_crud import delete_chunks_by_source, insert_chunks_batch, upsert_document
 
 
