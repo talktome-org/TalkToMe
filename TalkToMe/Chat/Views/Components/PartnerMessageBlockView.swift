@@ -5,32 +5,27 @@ struct PartnerMessageBlockView: View {
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
 
     let text: String
-
-    @AppStorage(PreferenceKeys.partnerUserId) private var cachedPartnerUserId: String = ""
-    @AppStorage(PreferenceKeys.partnerName) private var cachedPartnerName: String = ""
-    @AppStorage(PreferenceKeys.partnerAvatarURL) private var cachedPartnerAvatarURL: String = ""
+    let senderUserId: UUID?
 
     var body: some View {
         VStack(alignment: .leading) {
             HStack {
                 HStack(spacing: 6) {
                     let resolvedFriend: FriendSummary? = {
-                        let friends = friendsViewModel.friends
-                        if let id = UUID(uuidString: cachedPartnerUserId),
-                           let match = friends.first(where: { $0.id == id }) {
-                            return match
-                        }
-                        if friends.count == 1 {
-                            return friends.first
-                        }
-                        return nil
+                        guard let senderUserId else { return nil }
+                        return friendsViewModel.friends.first(where: { $0.id == senderUserId })
                     }()
 
-                    let resolvedName = (resolvedFriend?.fullName ?? cachedPartnerName).trimmingCharacters(in: .whitespacesAndNewlines)
+                    // If we can't resolve the sender from the friends list yet, fall back to the user's linked partner prefs.
+                    // (This is correct for direct partner messages, and avoids showing a random last-picked "send to" friend.)
+                    let fallbackName = PreferenceKeys.getPartnerDisplayName()
+                    let resolvedName = (resolvedFriend?.fullName ?? fallbackName).trimmingCharacters(in: .whitespacesAndNewlines)
                     let nameToShow = resolvedName.isEmpty ? "Partner" : resolvedName
                     let firstName = nameToShow.split(separator: " ").first.map(String.init)
 
-                    let avatarURL = (resolvedFriend?.avatarURL ?? cachedPartnerAvatarURL).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let fallbackAvatarURL = (UserDefaults.standard.string(forKey: PreferenceKeys.partnerAvatarURL) ?? "")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let avatarURL = (resolvedFriend?.avatarURL ?? fallbackAvatarURL).trimmingCharacters(in: .whitespacesAndNewlines)
 
                     AvatarCacheManager.shared.cachedAsyncImage(
                         urlString: avatarURL.isEmpty ? nil : avatarURL,

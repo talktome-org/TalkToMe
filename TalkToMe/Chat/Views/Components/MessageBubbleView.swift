@@ -48,7 +48,10 @@ struct MessageBubbleView: View {
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     if message.isFromPartnerUser {
-                        PartnerMessageBlockView(text: plainText(from: message.segments))
+                        PartnerMessageBlockView(
+                            text: plainText(from: message.segments),
+                            senderUserId: message.senderUserId
+                        )
                     } else
                     if !message.segments.isEmpty {
                         let attachmentSegments = message.segments.filter { isAttachmentSegment($0) }
@@ -71,7 +74,12 @@ struct MessageBubbleView: View {
                                 if !text.isEmpty {
                                     let isSent = chatViewModel.partnerDrafts.isPartnerDraftSent(sessionId: chatViewModel.sessionId, messageContent: text)
                                     let isLinked = chatViewModel.isConnectedToFriendInThisChat
-                                    PartnerDraftBlockView(initialText: text, isSent: isSent, isLinked: isLinked) { action in
+                                    PartnerDraftBlockView(
+                                        initialText: text,
+                                        isSent: isSent,
+                                        isLinked: isLinked,
+                                        recipientUserId: chatViewModel.selectedFriendUserId
+                                    ) { action in
                                         switch action {
                                         case .send(let edited):
                                             onSendToPartner?(edited)
@@ -82,7 +90,7 @@ struct MessageBubbleView: View {
                                 }
                             case .partnerReceived(let text):
                                 if !text.isEmpty {
-                                    PartnerMessageBlockView(text: text)
+                                    PartnerMessageBlockView(text: text, senderUserId: message.senderUserId)
                                         .id("partner_received_\(text.hashValue)")
                                         .padding(.top, 6)
                                 }

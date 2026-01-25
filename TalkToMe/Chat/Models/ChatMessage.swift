@@ -12,6 +12,9 @@ enum MessageSegment: Equatable {
 
 struct ChatMessage: Identifiable {
     let id: UUID
+    /// Backend `user_id` for the author (when available).
+    /// For locally-created/inferred messages this may be nil.
+    let senderUserId: UUID?
     let segments: [MessageSegment]
     let isFromUser: Bool
     let isFromPartnerUser: Bool
@@ -61,8 +64,17 @@ struct ChatMessage: Identifiable {
         )
     }
 
-    init(id: UUID = UUID(), segments: [MessageSegment], isFromUser: Bool, isFromPartnerUser: Bool = false, timestamp: Date = Date(), isToolLoading: Bool = false) {
+    init(
+        id: UUID = UUID(),
+        senderUserId: UUID? = nil,
+        segments: [MessageSegment],
+        isFromUser: Bool,
+        isFromPartnerUser: Bool = false,
+        timestamp: Date = Date(),
+        isToolLoading: Bool = false
+    ) {
         self.id = id
+        self.senderUserId = senderUserId
         self.segments = segments
         self.isFromUser = isFromUser
         self.isFromPartnerUser = isFromPartnerUser
@@ -81,12 +93,18 @@ struct ChatMessage: Identifiable {
     }
 
     init(dto: BackendService.ChatMessageDTO, currentUserId: UUID) {
-        self.id = dto.id
+        let id = dto.id
+        let timestamp = ChatMessage.parseISO8601(dto.created_at) ?? Date()
+
+        // NOTE: `dto.user_id` is the *row owner* (for RLS) and is not always the "sender"
+        // (e.g. partner messages are stored as `assistant` messages owned by the recipient).
+        var senderUserId: UUID? = (dto.role == "user") ? dto.user_id : nil
+
         let isOwnUserRole = (dto.user_id == currentUserId) && dto.role == "user"
-        self.isFromUser = isOwnUserRole
-        self.isFromPartnerUser = (dto.user_id != currentUserId) && dto.role == "user"
-        self.timestamp = ChatMessage.parseISO8601(dto.created_at) ?? Date()
-        self.isToolLoading = false
+        let isFromUser = isOwnUserRole
+        let isFromPartnerUser = (dto.user_id != currentUserId) && dto.role == "user"
+
+        var segments: [MessageSegment] = dto.content.isEmpty ? [] : [.text(dto.content)]
 
         if let obj = ChatMessage.tryDecodeJSONDictionary(from: dto.content) {
             let talktome = (obj["_talktome"] as? [String: Any]) ?? ChatMessage.tryDecodeJSONDictionary(from: obj["_talktome"]) ?? [:]
@@ -123,9 +141,17 @@ struct ChatMessage: Identifiable {
                         }
                     }
                 }
-                self.segments = segs.isEmpty ? [.text("")] : segs
-                return
+                segments = segs.isEmpty ? [.text("")] : segs
             } else if type == "partner_received" {
+                // Backend includes the true sender id for partner messages.
+                if senderUserId == nil {
+                    let raw = (talktome["sender_user_id"] as? String)
+                        ?? (talktome["senderUserId"] as? String)
+                        ?? (talktome["from_user_id"] as? String)
+                    if let raw, let uid = UUID(uuidString: raw) {
+                        senderUserId = uid
+                    }
+                }
                 if let text = talktome["text"] as? String {
                     let body = obj["body"] as? String ?? ""
                     var segs: [MessageSegment] = []
@@ -135,12 +161,18 @@ struct ChatMessage: Identifiable {
                     if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         segs.append(.partnerReceived(text))
                     }
-                    self.segments = segs.isEmpty ? [.text("")] : segs
-                    return
+                    segments = segs.isEmpty ? [.text("")] : segs
                 }
             }
         }
-        self.segments = dto.content.isEmpty ? [] : [.text(dto.content)]
+
+        self.id = id
+        self.senderUserId = senderUserId
+        self.segments = segments
+        self.isFromUser = isFromUser
+        self.isFromPartnerUser = isFromPartnerUser
+        self.timestamp = timestamp
+        self.isToolLoading = false
     }
 
     private static func parseISO8601(_ iso: String?) -> Date? {

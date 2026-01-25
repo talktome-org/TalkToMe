@@ -60,16 +60,6 @@ struct ChatView: View {
                 onPick: { friendId in
                     Task { @MainActor in
                         viewModel.selectedFriendUserId = friendId
-                        UserDefaults.standard.set(friendId.uuidString, forKey: PreferenceKeys.partnerUserId)
-                        if let picked = friendsViewModel.friends.first(where: { $0.id == friendId }) {
-                            let name = picked.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !name.isEmpty {
-                                UserDefaults.standard.set(name, forKey: PreferenceKeys.partnerName)
-                            }
-                            if let url = picked.avatarURL?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty {
-                                UserDefaults.standard.set(url, forKey: PreferenceKeys.partnerAvatarURL)
-                            }
-                        }
                         showFriendPicker = false
                         if let draft = pendingPartnerDraftText {
                             pendingPartnerDraftText = nil

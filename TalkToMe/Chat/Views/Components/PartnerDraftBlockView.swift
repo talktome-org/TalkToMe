@@ -4,6 +4,8 @@ struct PartnerDraftBlockView: View {
 
     enum Action { case send(String) }
 
+    @EnvironmentObject private var friendsViewModel: FriendsViewModel
+
     @State private var text: String
     @State private var measuredTextHeight: CGFloat = 0
     @State private var isConfirmingNormalSend: Bool = false
@@ -12,14 +14,20 @@ struct PartnerDraftBlockView: View {
     let initialText: String
     let isSent: Bool
     let isLinked: Bool
+    let recipientUserId: UUID?
     let onAction: (Action) -> Void
 
-    @AppStorage(PreferenceKeys.partnerName) private var cachedPartnerName: String = ""
-
-    init(initialText: String, isSent: Bool = false, isLinked: Bool = true, onAction: @escaping (Action) -> Void) {
+    init(
+        initialText: String,
+        isSent: Bool = false,
+        isLinked: Bool = true,
+        recipientUserId: UUID?,
+        onAction: @escaping (Action) -> Void
+    ) {
         self.initialText = initialText
         self.isSent = isSent
         self.isLinked = isLinked
+        self.recipientUserId = recipientUserId
         self._text = State(initialValue: initialText)
         self.onAction = onAction
     }
@@ -109,9 +117,12 @@ struct PartnerDraftBlockView: View {
                         ZStack {
                             if isLinked && (isSent || showSentLocally) {
                                 HStack(spacing: 6) {
-                                    let resolved = cachedPartnerName.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    let fullName = resolved.isEmpty ? "Partner" : resolved
-                                    let firstName = fullName.split(separator: " ").first.map(String.init) ?? "Partner"
+                                    let resolvedFriend: FriendSummary? = {
+                                        guard let recipientUserId else { return nil }
+                                        return friendsViewModel.friends.first(where: { $0.id == recipientUserId })
+                                    }()
+                                    let fullName = (resolvedFriend?.fullName ?? "Friend").trimmingCharacters(in: .whitespacesAndNewlines)
+                                    let firstName = fullName.split(separator: " ").first.map(String.init) ?? "Friend"
                                     Text("Sent to \(firstName)")
                                         .font(.subheadline)
                                         .foregroundColor(Color.secondary)
@@ -190,7 +201,11 @@ private struct HeightReader: View {
 }
 
 #Preview {
-    PartnerDraftBlockView(initialText: "Hey love — I've been feeling a bit overwhelmed lately and could use a little extra help this week.", isSent: false) { _ in }
+    PartnerDraftBlockView(
+        initialText: "Hey love — I've been feeling a bit overwhelmed lately and could use a little extra help this week.",
+        isSent: false,
+        recipientUserId: nil
+    ) { _ in }
         .padding()
 }
 

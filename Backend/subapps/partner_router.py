@@ -131,7 +131,9 @@ async def send_message(request: SendPartnerMessageRequest, current_user: dict = 
         pass
 
     # Store message as an assistant message with TalkToMe metadata.
-    payload = json.dumps({"_talktome": {"type": "partner_received", "text": message}})
+    # IMPORTANT: `user_id` on chat message rows is the *recipient/session owner* (RLS),
+    # so we include the real sender id in metadata for the client UI.
+    payload = json.dumps({"_talktome": {"type": "partner_received", "text": message, "sender_user_id": str(user_id)}})
     await save_message(user_id=recipient_user_id, session_id=recipient_session_id, role="assistant", content=payload)
     # Keep the sidebar preview human-readable.
     await update_session_last_message(session_id=recipient_session_id, content=message[:120])

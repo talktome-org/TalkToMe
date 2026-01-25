@@ -273,15 +273,26 @@ struct CachedAsyncImageView: View {
                 fallback()
             }
         }
-        .task {
-            await loadImage()
+        // Important: `@State` persists across view updates; if `urlString` changes (cell reuse / list diffing),
+        // we must re-run the load and reset state. Using `task(id:)` cancels stale tasks automatically.
+        .task(id: urlString) {
+            await loadImage(for: urlString)
         }
     }
 
-    private func loadImage() async {
-        isLoading = true
-        defer { isLoading = false }
+    private func loadImage(for urlString: String) async {
+        // Prime from cache immediately so we render correctly on the first frame.
+        let cached = cacheManager.getImageIfCached(urlString: urlString)
+        await MainActor.run {
+            self.image = cached
+            self.isLoading = (cached == nil)
+        }
+        if cached != nil { return }
 
-        image = await cacheManager.getCachedImage(urlString: urlString)
+        let fetched = await cacheManager.getCachedImage(urlString: urlString)
+        await MainActor.run {
+            self.image = fetched
+            self.isLoading = false
+        }
     }
 }
