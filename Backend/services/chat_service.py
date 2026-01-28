@@ -14,8 +14,8 @@ def _backend_root() -> Path:
 class ChatService:
     def __init__(self):
         self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.model = "gpt-5-mini"
-        self.vision_model = "gpt-5-mini"
+        self.model = "gpt-5.2"
+        self.vision_model = "gpt-5.2"
 
         prompt_path = _backend_root() / "resources" / "chat_prompt.txt"
         with open(prompt_path, "r", encoding="utf-8") as f:
@@ -66,7 +66,7 @@ class ChatService:
             model=self.vision_model if any(isinstance(m.get("content"), list) for m in messages) else self.model,
             input=messages,
             text={"verbosity": "medium"},
-            reasoning={"effort": "minimal"},
+            reasoning={"effort": "medium"},
             previous_response_id=previous_response_id,
         )
 
@@ -74,7 +74,7 @@ class ChatService:
 class ChatTitleService:
     def __init__(self):
         self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.model = "gpt-5-mini"
+        self.model = "gpt-5.2"
 
         prompt_path = _backend_root() / "resources" / "chat_title_generation_prompt.txt"
         with open(prompt_path, "r", encoding="utf-8") as f:

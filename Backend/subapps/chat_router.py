@@ -36,11 +36,59 @@ from Backend.models.client_uploads.upload_model import Upload
 from Backend.services.chat_service import ChatService, ChatTitleService
 from Backend.services.file_signing_service import sign_upload_id
 from Backend.crud.friends.friends_crud import get_friendship_id_for_pair, list_friends_for_user
+from Backend.models.profile.profile_model import Profile
+from Backend.models.friends.friendship_model import Friendship
+from sqlalchemy import select, text
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 chat_service = ChatService()
 chat_title_service = ChatTitleService()
+
+
+async def _resolve_friend_display_name(*, user_id: uuid.UUID) -> Optional[str]:
+    """
+    Best-effort display name for a user:
+    - profiles.full_name
+    - auth.users.raw_user_meta_data full_name/name
+    """
+
+    def _select():
+        db = SessionLocal()
+        try:
+            prof = db.get(Profile, user_id)
+            if prof is not None:
+                n = (getattr(prof, "full_name", None) or "").strip()
+                if n:
+                    return n
+            row = db.execute(text("select raw_user_meta_data from auth.users where id = :id"), {"id": str(user_id)}).first()
+            meta = row[0] if row and isinstance(row[0], dict) else {}
+            if isinstance(meta, dict):
+                n = (meta.get("full_name") or meta.get("name") or "").strip()
+                if n:
+                    return n
+            return None
+        finally:
+            db.close()
+
+    return await run_in_threadpool(_select)
+
+
+async def _resolve_other_user_id_from_friendship(*, friendship_id: uuid.UUID, current_user_id: uuid.UUID) -> Optional[uuid.UUID]:
+    def _select():
+        db = SessionLocal()
+        try:
+            row = db.execute(
+                select(Friendship.user_low_id, Friendship.user_high_id).where(Friendship.id == friendship_id).limit(1)
+            ).first()
+            if not row:
+                return None
+            low, high = uuid.UUID(str(row[0])), uuid.UUID(str(row[1]))
+            return high if low == current_user_id else low
+        finally:
+            db.close()
+
+    return await run_in_threadpool(_select)
 
 def _as_uuid(value) -> uuid.UUID:
     if isinstance(value, uuid.UUID):
@@ -267,8 +315,33 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
             except Exception:
                 pass
 
-        # Partner/link context has been removed (friends-only work-in-progress).
+        # Provide minimal context about who the "other person" is (if selected / attached).
         partner_ab_context_text: Optional[str] = None
+        try:
+            other_user_id: Optional[uuid.UUID] = None
+            if chat_request.friend_user_id is not None:
+                other_user_id = chat_request.friend_user_id
+            else:
+                sess = await get_session_by_id(user_id=user_uuid, session_id=session_uuid)
+                fid = sess.get("friendship_id") if isinstance(sess, dict) else None
+                if fid:
+                    try:
+                        fid_uuid = uuid.UUID(str(fid))
+                        other_user_id = await _resolve_other_user_id_from_friendship(
+                            friendship_id=fid_uuid, current_user_id=user_uuid
+                        )
+                    except Exception:
+                        other_user_id = None
+
+            if other_user_id:
+                other_name = await _resolve_friend_display_name(user_id=other_user_id)
+                if other_name:
+                    partner_ab_context_text = (
+                        "Context:\n"
+                        f"- The other person in this chat is named {other_name}.\n"
+                    )
+        except Exception:
+            partner_ab_context_text = None
         partner_letter = "A"
 
         state = {"final_text": "", "partner_texts": [], "segments": []}

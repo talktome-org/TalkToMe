@@ -1,13 +1,17 @@
 import SwiftUI
 
 struct MarkdownRendererView: View {
-    let markdown: String
+    private enum Layout {
+        static let defaultTopPadding: CGFloat = 30
+        static let dividerPadding: CGFloat = 30
+        static let paragraphAfterFirstHeadingPadding: CGFloat = 22
+        static let headingFontSize: CGFloat = 24
+        static let dividerHeight: CGFloat = 1
+        static let dividerOpacity: CGFloat = 0.1
+    }
 
-    private let dividerTopSpacing: CGFloat = 30
-    private let dividerBottomSpacing: CGFloat = 30
-
-    private enum Block: Equatable {
-        case heading(level: Int, text: String)
+    private enum Block {
+        case heading(text: String)
         case unorderedList(items: [String])
         case orderedList(items: [String])
         case paragraph(String)
@@ -15,70 +19,69 @@ struct MarkdownRendererView: View {
         case quote(String)
     }
 
-    private struct BlockItem: Identifiable, Equatable {
-        let id = UUID()
-        let block: Block
+    private let blocks: [Block]
+    private let firstHeadingIndex: Int?
+
+    init(markdown: String) {
+        let parsed = Self.parseBlocks(markdown)
+        self.blocks = parsed
+        self.firstHeadingIndex = parsed.firstIndex { block in
+            if case .heading = block { return true }
+            return false
+        }
     }
 
     var body: some View {
-        let items = parse(markdown)
-        let firstHeadingIndex = items.firstIndex { if case .heading = $0.block { return true } else { return false } }
-        return VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                let prev: Block? = index > 0 ? items[index - 1].block : nil
-                let top = topPadding(previous: prev, current: item.block, currentIndex: index, firstHeadingIndex: firstHeadingIndex)
-                switch item.block {
-                case .heading(_, let text):
-                    let showDivider = shouldInsertDivider(beforeHeadingAt: index, previous: prev, firstHeadingIndex: firstHeadingIndex)
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(blocks.indices, id: \.self) { index in
+                let block = blocks[index]
+                let previous: Block? = index > 0 ? blocks[index - 1] : nil
+                let top = topPadding(previous: previous, current: block, index: index)
+
+                switch block {
+                case .heading(let text):
+                    let showDivider = shouldInsertDivider(beforeHeadingAt: index, previous: previous)
                     VStack(alignment: .leading, spacing: 0) {
                         if showDivider {
-                            Divider()
-                                .opacity(0.3)
-                                .padding(.top, dividerTopSpacing)
+                            dividerView()
+                                .padding(.top, Layout.dividerPadding)
                         }
-                        Group {
-                            if let attributed = try? AttributedString(
-                                markdown: text,
-
-                                options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-                            ) {
-                                Text(attributed)
-                            } else {
-                                Text(text)
-                            }
-                        }
-                        .font(.system(size: 21, weight: .semibold))
-                        .padding(.top, showDivider ? dividerBottomSpacing : top)
+                        headingText(text)
+                            .padding(.top, showDivider ? Layout.dividerPadding : top)
                     }
+
                 case .unorderedList(let items):
                     VStack(alignment: .leading, spacing: 16) {
-                        ForEach(Array(items.enumerated()), id: \.0) { _, raw in
+                        ForEach(items.indices, id: \.self) { i in
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Text("•")
-                                    .font(.system(size: 13, weight: .bold))
+                                    .font(.body.weight(.bold))
                                     .baselineOffset(2)
-                                inlineText(raw)
+                                inlineText(items[i])
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
                         .padding(.horizontal, 6)
                     }
                     .padding(.top, top)
+
                 case .orderedList(let items):
                     VStack(alignment: .leading, spacing: 12) {
-                        ForEach(Array(items.enumerated()), id: \.0) { idx, raw in
+                        ForEach(items.indices, id: \.self) { i in
                             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                                Text("\(idx + 1).")
-                                    .font(.system(size: 17, weight: .semibold))
-                                inlineText(raw)
+                                Text("\(i + 1).")
+                                    .font(.body.weight(.semibold))
+                                inlineText(items[i])
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
                     }
                     .padding(.top, top)
+
                 case .paragraph(let text):
                     inlineText(text)
                         .padding(.top, top)
+
                 case .quote(let text):
                     HStack(alignment: .top, spacing: 10) {
                         Rectangle()
@@ -88,9 +91,9 @@ struct MarkdownRendererView: View {
                         inlineText(text)
                     }
                     .padding(.top, top)
+
                 case .rule:
-                    Divider()
-                        .opacity(0.3)
+                    dividerView()
                         .padding(.top, top)
                 }
             }
@@ -98,78 +101,156 @@ struct MarkdownRendererView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func dividerView() -> some View {
+        Rectangle()
+            .fill(Color.secondary.opacity(Layout.dividerOpacity))
+            .frame(height: Layout.dividerHeight)
+            .accessibilityHidden(true)
+    }
+
     private func inlineText(_ text: String) -> some View {
         let transformed = applyInlineTypography(to: text)
-        if let attributed = try? AttributedString(markdown: transformed, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-            return Text(attributed)
-                .font(.system(size: 17, weight: .regular))
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .layoutPriority(1)
+        let rendered: Text
+        if let attributed = try? AttributedString(
+            markdown: transformed,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            rendered = Text(attributed)
         } else {
-            return Text(transformed)
-                .font(.system(size: 17, weight: .regular))
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .layoutPriority(1)
+            rendered = Text(transformed)
         }
+
+        return rendered
+            .font(.body)
+            .lineSpacing(2)
+            .fixedSize(horizontal: false, vertical: true)
+            .layoutPriority(1)
+    }
+
+    private func headingText(_ text: String) -> some View {
+        let rendered: Text
+        if let attributed = try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            rendered = Text(attributed)
+        } else {
+            rendered = Text(text)
+        }
+
+        return rendered
+            .font(.system(size: Layout.headingFontSize, weight: .semibold))
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func applyInlineTypography(to input: String) -> String {
-        var s = input
-        s = stripFullSentenceItalics(s)
-        s = s.replacingOccurrences(of: "->", with: " → ")
-        s = s.replacingOccurrences(of: "<-", with: " ← ")
-        s = s.replacingOccurrences(of: " --- ", with: " — ")
-        s = s.replacingOccurrences(of: " -- ", with: " — ")
-        s = s.replacingOccurrences(of: " - ", with: " — ")
-        s = s.replacingOccurrences(of: "—", with: " — ")
-        s = s.replacingOccurrences(of: "→", with: " → ")
-        s = s.replacingOccurrences(of: "←", with: " ← ")
-        while s.contains("  ") { s = s.replacingOccurrences(of: "  ", with: " ") }
-        return s
+        let stripped = stripWrappingEmphasis(input)
+        return transformOutsideInlineCode(stripped) { segment in
+            var s = segment
+            s = s.replacingOccurrences(of: "->", with: " → ")
+            s = s.replacingOccurrences(of: "<-", with: " ← ")
+            s = s.replacingOccurrences(of: " --- ", with: " — ")
+            s = s.replacingOccurrences(of: " -- ", with: " — ")
+            s = s.replacingOccurrences(of: "→", with: " → ")
+            s = s.replacingOccurrences(of: "←", with: " ← ")
+            return collapseExtraSpaces(s)
+        }
     }
 
-    private func stripFullSentenceItalics(_ input: String) -> String {
+    private func stripWrappingEmphasis(_ input: String) -> String {
         let trimmed = input.trimmingCharacters(in: .whitespaces)
         if trimmed.hasPrefix("*") && trimmed.hasSuffix("*") {
             let inner = String(trimmed.dropFirst().dropLast())
-            if !inner.contains("*") && !inner.contains("**") {
+            if !inner.contains("*") {
                 return inner
             }
         }
         if trimmed.hasPrefix("_") && trimmed.hasSuffix("_") {
             let inner = String(trimmed.dropFirst().dropLast())
-            if !inner.contains("_") && !inner.contains("__") {
+            if !inner.contains("_") {
                 return inner
             }
         }
         return input
     }
 
-    private func topPadding(previous: Block?, current: Block, currentIndex: Int, firstHeadingIndex: Int?) -> CGFloat {
-        if currentIndex == 0 { return 0 }
-        if case .rule = current { return dividerTopSpacing }
-        if case .rule? = previous { return dividerBottomSpacing }
+    private func topPadding(previous: Block?, current: Block, index: Int) -> CGFloat {
+        if index == 0 { return 0 }
+        if case .rule = current { return Layout.dividerPadding }
+        if case .rule? = previous { return Layout.dividerPadding }
 
         if case .heading = previous, case .paragraph = current {
-            if let first = firstHeadingIndex, currentIndex - 1 == first { return 22 }
-            return 30
+            if let first = firstHeadingIndex, index - 1 == first { return Layout.paragraphAfterFirstHeadingPadding }
+            return Layout.defaultTopPadding
         }
 
-        return 30
+        return Layout.defaultTopPadding
     }
 
-    private func shouldInsertDivider(beforeHeadingAt index: Int, previous: Block?, firstHeadingIndex: Int?) -> Bool {
+    private func shouldInsertDivider(beforeHeadingAt index: Int, previous: Block?) -> Bool {
         if index == 0 { return false }
         if let first = firstHeadingIndex, index == first { return false }
         if case .rule? = previous { return false }
         return true
     }
 
-    private func parse(_ input: String) -> [BlockItem] {
+    private func transformOutsideInlineCode(_ input: String, transform: (String) -> String) -> String {
+        guard input.contains("`") else { return transform(input) }
+
+        var result = ""
+        result.reserveCapacity(input.count)
+
+        var index = input.startIndex
+        while index < input.endIndex {
+            if input[index] == "`" {
+                var runEnd = index
+                while runEnd < input.endIndex, input[runEnd] == "`" {
+                    runEnd = input.index(after: runEnd)
+                }
+                let runLength = input.distance(from: index, to: runEnd)
+                let delimiter = String(repeating: "`", count: runLength)
+
+                if let closingRange = input.range(of: delimiter, range: runEnd..<input.endIndex) {
+                    let codeEnd = closingRange.upperBound
+                    result.append(contentsOf: input[index..<codeEnd])
+                    index = codeEnd
+                } else {
+                    result.append(contentsOf: transform(String(input[index...])))
+                    break
+                }
+            } else {
+                let nextTick = input[index...].firstIndex(of: "`") ?? input.endIndex
+                result.append(contentsOf: transform(String(input[index..<nextTick])))
+                index = nextTick
+            }
+        }
+
+        return result
+    }
+
+    private func collapseExtraSpaces(_ input: String) -> String {
+        var result = ""
+        result.reserveCapacity(input.count)
+
+        var previousWasSpace = false
+        for ch in input {
+            if ch == " " {
+                if !previousWasSpace {
+                    result.append(ch)
+                    previousWasSpace = true
+                }
+            } else {
+                result.append(ch)
+                previousWasSpace = false
+            }
+        }
+
+        return result
+    }
+
+    private static func parseBlocks(_ input: String) -> [Block] {
         let lines = input.split(omittingEmptySubsequences: false, whereSeparator: { $0.isNewline }).map { String($0) }
-        var items: [BlockItem] = []
+        var blocks: [Block] = []
 
         var paragraphBuffer: [String] = []
         var ulBuffer: [String] = []
@@ -179,75 +260,62 @@ struct MarkdownRendererView: View {
         func flushParagraph() {
             if !paragraphBuffer.isEmpty {
                 let text = paragraphBuffer.joined(separator: " ").trimmingCharacters(in: .whitespaces)
-                items.append(BlockItem(block: .paragraph(text)))
+                blocks.append(.paragraph(text))
                 paragraphBuffer.removeAll()
             }
         }
         func flushUL() {
             if !ulBuffer.isEmpty {
-                if ulBuffer.count == 1,
-                   let last = items.last,
-                   case .heading = last.block,
-                   !ulBuffer[0].trimmingCharacters(in: .whitespaces).hasSuffix("?") {
-                    items.append(BlockItem(block: .paragraph(ulBuffer[0])))
-                } else {
-                    items.append(BlockItem(block: .unorderedList(items: ulBuffer)))
-                }
+                blocks.append(.unorderedList(items: ulBuffer))
                 ulBuffer.removeAll()
             }
         }
         func flushOL() {
             if !olBuffer.isEmpty {
-                items.append(BlockItem(block: .orderedList(items: olBuffer)))
+                blocks.append(.orderedList(items: olBuffer))
                 olBuffer.removeAll()
             }
         }
         func flushQuote() {
             if !quoteBuffer.isEmpty {
                 let text = quoteBuffer.joined(separator: " ").trimmingCharacters(in: .whitespaces)
-                items.append(BlockItem(block: .quote(text)))
+                blocks.append(.quote(text))
                 quoteBuffer.removeAll()
             }
         }
+        func flushAll() {
+            flushParagraph()
+            flushUL()
+            flushOL()
+            flushQuote()
+        }
 
-        var idx = 0
-        while idx < lines.count {
-            let raw = lines[idx]
+        for raw in lines {
             let line = raw.trimmingCharacters(in: CharacterSet.whitespaces)
 
             if line.isEmpty {
-                flushParagraph(); flushUL(); flushQuote()
-                idx += 1
+                flushAll()
                 continue
             }
 
-            let isOrdered = line.range(of: "^\\d+\\.\\s+", options: .regularExpression) != nil
-            if !olBuffer.isEmpty && !isOrdered {
-                flushOL()
-            }
-
             if line == "---" || line == "***" || line == "___" {
-                flushParagraph(); flushUL(); flushOL(); flushQuote()
-                items.append(BlockItem(block: .rule))
-                idx += 1
+                flushAll()
+                blocks.append(.rule)
                 continue
             }
 
             if line.hasPrefix("#") {
                 let hashes = line.prefix { $0 == "#" }
                 let after = line.dropFirst(hashes.count).trimmingCharacters(in: CharacterSet.whitespaces)
-                let level = min(max(hashes.count, 1), 3)
-                flushParagraph(); flushUL(); flushOL(); flushQuote()
-                items.append(BlockItem(block: .heading(level: level, text: String(after))))
-                idx += 1
+                flushAll()
+                blocks.append(.heading(text: String(after)))
                 continue
             }
 
-            if let range = line.range(of: "^>\\s+", options: .regularExpression) {
+            if let range = line.range(of: "^>\\s*", options: .regularExpression) {
                 flushParagraph(); flushUL(); flushOL()
                 let content = String(line[range.upperBound...]).trimmingCharacters(in: CharacterSet.whitespaces)
                 quoteBuffer.append(content)
-                idx += 1
                 continue
             }
 
@@ -255,7 +323,6 @@ struct MarkdownRendererView: View {
                 flushParagraph(); flushUL(); flushQuote()
                 let item = String(line[range.upperBound...]).trimmingCharacters(in: CharacterSet.whitespaces)
                 olBuffer.append(item)
-                idx += 1
                 continue
             }
 
@@ -263,16 +330,16 @@ struct MarkdownRendererView: View {
                 flushParagraph(); flushOL(); flushQuote()
                 let item = String(line[range.upperBound...]).trimmingCharacters(in: CharacterSet.whitespaces)
                 ulBuffer.append(item)
-                idx += 1
                 continue
             }
 
-            if !quoteBuffer.isEmpty { flushQuote() }
+            flushQuote()
+            flushUL()
+            flushOL()
             paragraphBuffer.append(line)
-            idx += 1
         }
 
-        flushParagraph(); flushUL(); flushOL(); flushQuote()
-        return items
+        flushAll()
+        return blocks
     }
 }
