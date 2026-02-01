@@ -3,6 +3,9 @@ import Foundation
 enum PreferenceKeys {
     static let appearancePreference = "appearance_preference"
     static let hapticsEnabled = "haptics_enabled"
+    static let voiceModeEnabled = "voice_mode_enabled"
+    static let elevenLabsVoiceId = "eleven_labs_voice_id"
+    static let elevenLabsVoiceName = "eleven_labs_voice_name"
     static let myAvatarURL = "my_avatar_url"
     static let partnerUserId = "partner_user_id"
     static let partnerName = "partner_name"

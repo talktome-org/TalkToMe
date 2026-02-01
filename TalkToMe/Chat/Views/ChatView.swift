@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ChatView: View {
 
-    @EnvironmentObject private var navigationViewModel: SidebarNavigationViewModel
     @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
 
@@ -14,37 +13,124 @@ struct ChatView: View {
     @State private var pendingPartnerDraftText: String? = nil
     @State private var isFriendPickerLoading: Bool = false
     @State private var friendPickerErrorMessage: String? = nil
+    @State private var showRenameChatPrompt: Bool = false
+    @State private var renameChatTitle: String = ""
+    @State private var showDeleteChatConfirm: Bool = false
+    @State private var showReportChatConfirm: Bool = false
+    @State private var showReportChatThanks: Bool = false
 
     init(sessionId: UUID? = nil) {
         _viewModel = StateObject(wrappedValue: ChatViewModel(sessionId: sessionId))
     }
 
+    private var hasSentPartnerMessageInThisChat: Bool {
+        viewModel.messages.contains(where: { msg in
+            msg.segments.contains(where: { seg in
+                if case .partnerMessage(_) = seg { return true }
+                return false
+            })
+        })
+    }
+
+    private var friendForProfilePictureDisplay: FriendSummary? {
+        guard hasSentPartnerMessageInThisChat else { return nil }
+        guard let friendId = viewModel.selectedFriendUserId else { return nil }
+        return friendsViewModel.friends.first(where: { $0.id == friendId })
+    }
+
+    private var activeSessionIdForActions: UUID? {
+        sessionsViewModel.activeSessionId ?? viewModel.sessionId
+    }
+
+    private var activeSessionTitleForActions: String {
+        guard let sid = activeSessionIdForActions else { return ChatSession.defaultTitle }
+        return sessionsViewModel.sessions.first(where: { $0.id == sid })?.title ?? ChatSession.defaultTitle
+    }
+
     @MainActor
     var body: some View {
-        NavigationStack {
-            ChatScreenView(
-                chatViewModel: viewModel,
-                onSend: { handleSendTapped() },
-                isInputFocused: $isInputFocused
-            )
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: {
-                        Haptics.impact(.medium)
-                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                        navigationViewModel.openSidebar()
-                    }) {
-                        ZStack(alignment: .topTrailing) {
-                            Image(systemName: "line.3.horizontal")
-                                .font(.system(size: 20, weight: .medium))
-                                .foregroundColor(Color(red: 0.4, green: 0.2, blue: 0.6))
-                                .frame(width: 44, height: 44)
-                        }
+        ChatScreenView(
+            chatViewModel: viewModel,
+            onSend: { handleSendTapped() },
+            isInputFocused: $isInputFocused
+        )
+        .task {
+            await viewModel.preconnectDictationSTTIfNeeded()
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button("New chat", systemImage: "square.and.pencil") {
+                    sessionsViewModel.startNewChat()
+                }
+
+                Menu {
+                    Button("Rename chat", systemImage: "pencil") {
+                        guard activeSessionIdForActions != nil else { return }
+                        renameChatTitle = activeSessionTitleForActions
+                        showRenameChatPrompt = true
                     }
+                    .disabled(activeSessionIdForActions == nil)
+
+                    Button("Report chat", systemImage: "exclamationmark.bubble") {
+                        showReportChatConfirm = true
+                    }
+                    .disabled(activeSessionIdForActions == nil)
+
+                    Button("Delete chat", systemImage: "trash", role: .destructive) {
+                        showDeleteChatConfirm = true
+                    }
+                    .disabled(activeSessionIdForActions == nil)
+                } label: {
+                    Label("More", systemImage: "ellipsis")
                 }
             }
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
+
+            if #available(iOS 26.0, *) {
+                ToolbarSpacer(.fixed, placement: .topBarTrailing)
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
+                if let friend = friendForProfilePictureDisplay {
+                    SidebarAvatarView(avatarURL: friend.avatarURL)
+                        .frame(width: 36, height: 36)
+                        .clipShape(Circle())
+                }
+            }
+        }
+        .alert("Rename chat", isPresented: $showRenameChatPrompt) {
+            TextField("Title", text: $renameChatTitle)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") {
+                let title = renameChatTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !title.isEmpty else { return }
+                // UI-only for now (no rename action wired).
+                Haptics.impact(.light)
+            }
+        } message: {
+            Text("Give this chat a new title.")
+        }
+        .confirmationDialog("Delete chat?", isPresented: $showDeleteChatConfirm, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                // UI-only for now (no delete action wired).
+                Haptics.impact(.light)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will delete the chat and its messages.")
+        }
+        .confirmationDialog("Report chat?", isPresented: $showReportChatConfirm, titleVisibility: .visible) {
+            Button("Report", role: .destructive) {
+                // TODO: Wire this to a backend/reporting endpoint.
+                showReportChatThanks = true
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will flag the conversation for review. (Not wired yet)")
+        }
+        .alert("Thanks", isPresented: $showReportChatThanks) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Report received. (Not wired yet)")
         }
         .sheet(isPresented: $showFriendPicker) {
             FriendPickerSheetView(
@@ -85,32 +171,6 @@ struct ChatView: View {
                 await refreshFriendsForPicker()
             }
         }
-        .onAppear {
-            sessionsViewModel.chatViewModel = viewModel
-
-            if navigationViewModel.isOpen {
-                isInputFocused = false
-            } else {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    if sessionsViewModel.activeSessionId == nil && !navigationViewModel.isOpen {
-                        isInputFocused = true
-                    }
-                }
-            }
-        }
-        .onChange(of: navigationViewModel.isOpen, initial: false) { _, newValue in
-            if newValue { isInputFocused = false }
-        }
-        .onChange(of: sessionsViewModel.chatViewKey, initial: false) { _, _ in
-            if sessionsViewModel.activeSessionId == nil {
-                viewModel.sessionId = nil
-                Task { await viewModel.loadHistory() }
-            } else {
-                if let sessionId = sessionsViewModel.activeSessionId {
-                    Task { await viewModel.presentSession(sessionId) }
-                }
-            }
-        }
         .animation(nil, value: viewModel.messages.isEmpty)
     }
 
@@ -119,7 +179,7 @@ struct ChatView: View {
             // IMPORTANT: The main chat send button always sends to the AI chat.
             // Friend selection is only required for "send to partner" actions (partner draft blocks),
             // which are handled by `.sendPartnerMessageFromBubble`.
-            viewModel.sendMessage()
+            viewModel.sendComposerMessage()
         }
     }
 
@@ -144,7 +204,6 @@ struct ChatView: View {
 #if DEBUG
 #Preview {
     ChatView()
-        .environmentObject(SidebarNavigationViewModel())
         .environmentObject(ChatSessionsViewModel())
         .environmentObject(FriendsViewModel(accessTokenProvider: { "" }))
 }
@@ -272,7 +331,5 @@ private struct FriendPickerSheetView: View {
     private func pendingDismiss() {
         isPresented = false
     }
-
-    // Intentionally no UUID display here — users should see names/providers.
 }
 

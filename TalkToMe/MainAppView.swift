@@ -9,38 +9,47 @@ import SwiftUI
 
 struct MainAppView: View {
     @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
-    @EnvironmentObject private var navigationViewModel: SidebarNavigationViewModel
+
+    private enum Route: Hashable {
+        case chat
+    }
+
+    @State private var path: [Route] = []
+
+    private func navigateToChat(sessionId: UUID?) {
+        var tx = Transaction(animation: nil)
+        tx.disablesAnimations = true
+        withTransaction(tx) {
+            if let sid = sessionId {
+                sessionsViewModel.openSession(sid)
+            } else {
+                sessionsViewModel.startNewChat()
+            }
+            path = [.chat]
+        }
+    }
 
     var body: some View {
-        // If we have any conversations but none is selected, don't show the chat screen at all.
-        // This makes "landing in main chat view" impossible on launch — the user starts in the sidebar list.
-        if sessionsViewModel.activeSessionId == nil,
-           !sessionsViewModel.sessions.isEmpty,
-           navigationViewModel.isOpen {
-            ZStack {
-                Color(.systemBackground).ignoresSafeArea()
-                VStack(spacing: 10) {
-                    Image(systemName: "bubble.left.and.bubble.right")
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Text("Select a conversation")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.secondary)
+        NavigationStack(path: $path) {
+            SidebarView(
+                onOpenChat: { sid in
+                    navigateToChat(sessionId: sid)
+                },
+                onStartNewChat: {
+                    navigateToChat(sessionId: nil)
                 }
-                .padding(.top, 40)
-            }
-            .onAppear {
-                withAnimation(nil) {
-                    navigationViewModel.isOpen = true
+            )
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case .chat:
+                    let viewId: String = {
+                        if let sid = sessionsViewModel.activeSessionId { return "session_\(sid.uuidString)" }
+                        return "new_\(sessionsViewModel.chatViewKey.uuidString)"
+                    }()
+                    ChatView(sessionId: sessionsViewModel.activeSessionId)
+                        .id(viewId)
                 }
             }
-        } else {
-            let viewId: String = {
-                if let sid = sessionsViewModel.activeSessionId { return "session_\(sid.uuidString)" }
-                return "new_\(sessionsViewModel.chatViewKey.uuidString)"
-            }()
-            ChatView(sessionId: sessionsViewModel.activeSessionId)
-                .id(viewId)
         }
     }
 }
@@ -49,4 +58,5 @@ struct MainAppView: View {
     MainAppView()
         .environmentObject(SidebarNavigationViewModel())
         .environmentObject(ChatSessionsViewModel())
+        .environmentObject(FriendsViewModel(accessTokenProvider: { "" }))
 }

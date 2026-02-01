@@ -33,10 +33,17 @@ class ChatViewModel: ObservableObject {
     @Published var inputText: String = ""
     @Published var focusSnippet: String? = nil
     @Published var pendingAttachments: [PendingAttachment] = []
+    /// Ephemeral signal used by the UI to animate the just-sent user bubble from the input bar into the chat.
+    @Published var pendingOutgoingUserMessageId: UUID? = nil
     @Published var focusTopMessageId: UUID? = nil
     @Published var assistantScrollTargetId: UUID? = nil
     @Published var streamingScrollToken: Int = 0
     @Published var selectedFriendUserId: UUID? = nil
+    @Published var isSpeakModeActive: Bool = false
+    // IMPORTANT: The UI must react instantly to mic start/stop.
+    // Do NOT read `dictationSTTService.isRecording` directly from SwiftUI (ChatViewModel doesn't
+    // automatically forward nested ObservableObject changes). We mirror it here as @Published.
+    @Published var isDictationRecording: Bool = false
     @Published var sessionId: UUID? {
         didSet {
 #if DEBUG
@@ -70,6 +77,9 @@ class ChatViewModel: ObservableObject {
     private let authService = AuthService.shared
     private let chatMessagesVM: ChatMessagesViewModel
     let partnerDrafts = PartnerDraftsViewModel()
+    let dictationSTTService = DeepgramStreamingSTTService()
+    let speakSTTService = DeepgramStreamingSTTService()
+    let elevenLabsStreamingTTS = ElevenLabsStreamingTTSService()
     private var currentStreamTask: Task<Void, Never>?
     private var currentStreamToken: UUID?
     private var typingDelayTask: Task<Void, Never>?
@@ -82,6 +92,10 @@ class ChatViewModel: ObservableObject {
     private var observers: [NSObjectProtocol] = []
     private var refreshTimer: Timer?
     private var cancellables: Set<AnyCancellable> = []
+
+    private var isVoiceModeCapturing: Bool = false
+    private var pendingSendAfterVoiceStop: Bool = false
+    private var sendAfterVoiceStopFallbackTask: Task<Void, Never>?
 
     /// True when this chat session is connected to a friend thread (sender picked a friend,
     /// or recipient has received partner messages in this session).
@@ -171,6 +185,80 @@ class ChatViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // Dictation mic: stream partial transcription into the composer live.
+        // Speak Mode uses its own overlay UI and auto-sends turns, so we keep the composer untouched there.
+        dictationSTTService.$userTranscript
+            .removeDuplicates()
+            // Throttle UI churn so taps (like "Stop") stay responsive even while interim
+            // transcripts stream in rapidly.
+            .throttle(for: .milliseconds(120), scheduler: DispatchQueue.main, latest: true)
+            .sink { [weak self] transcript in
+                guard let self else { return }
+                guard self.isSpeakModeActive == false else { return }
+                guard self.isVoiceModeCapturing else { return }
+                guard self.dictationSTTService.isRecording else { return }
+                self.inputText = transcript
+            }
+            .store(in: &cancellables)
+
+        // Dictation: if the user pressed send while recording, send when the mic stops.
+        dictationSTTService.$isRecording
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] recording in
+                guard let self else { return }
+                // Mirror state so the UI updates instantly on start/stop.
+                self.isDictationRecording = recording
+
+                // If we stop (tap stop, disconnect, error), stop accepting transcript writes.
+                if recording == false {
+                    self.isVoiceModeCapturing = false
+                }
+
+                guard recording == false else { return }
+                guard self.pendingSendAfterVoiceStop else { return }
+                self.pendingSendAfterVoiceStop = false
+                self.sendAfterVoiceStopFallbackTask?.cancel()
+                self.sendAfterVoiceStopFallbackTask = nil
+                self.sendMessage()
+            }
+            .store(in: &cancellables)
+
+        // Speak mode: when an utterance completes, barge-in and send it.
+        speakSTTService.$lastFinalUtterance
+            .compactMap { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] transcript in
+                guard let self else { return }
+                let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+                if self.isSpeakModeActive {
+                    // Barge-in: if a response is in progress or audio is playing, stop it.
+                    if self.isLoading || self.isStreaming || self.elevenLabsStreamingTTS.isSpeaking {
+                        self.stopGeneration()
+                        self.elevenLabsStreamingTTS.cancel()
+                    }
+                    self.inputText = trimmed
+                    self.sendMessage()
+                    return
+                }
+            }
+            .store(in: &cancellables)
+
+        // Speak mode: barge-in immediately when we detect user speech.
+        speakSTTService.$isUserSpeaking
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] speaking in
+                guard let self else { return }
+                guard self.isSpeakModeActive else { return }
+                guard speaking else { return }
+                if self.isLoading || self.isStreaming || self.elevenLabsStreamingTTS.isSpeaking {
+                    self.stopGeneration()
+                }
+            }
+            .store(in: &cancellables)
+
         // On init we want to jump to the latest message as soon as history loads (GRDB or network).
         pendingInitialJump = true
         Task { [weak self] in
@@ -201,6 +289,138 @@ class ChatViewModel: ObservableObject {
         observers.append(sessionRekeyed)
 
         // Partner-draft sending is handled by ChatView (it must show the friend picker if not connected).
+    }
+
+    // MARK: - Voice Mode (Dictation)
+
+    /// Best-effort: connect the dictation STT websocket ahead of time so the first mic tap can start instantly.
+    func preconnectDictationSTTIfNeeded() async {
+        guard NetworkMonitor.shared.isOnline else { return }
+        // Prewarm audio so the *actual mic capture* starts instantly on tap.
+        await MainActor.run {
+            self.dictationSTTService.prewarmAudioForInstantStart()
+        }
+        guard dictationSTTService.isConnected == false else { return }
+        // Don't surface auth errors unless the user actually tapped the mic.
+        guard await authService.getAccessToken() != nil else { return }
+        await dictationSTTService.connect()
+    }
+
+    func startVoiceModePushToTalk() {
+        // Ensure speak mode isn't holding the mic.
+        if isSpeakModeActive {
+            stopSpeakMode()
+        }
+
+        // React instantly: start mic capture immediately. STT connect/auth happens in the background.
+        isVoiceModeCapturing = true
+        dictationSTTService.startRecording()
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard NetworkMonitor.shared.isOnline else {
+                self.dictationSTTService.lastError = "Voice Mode requires internet."
+                self.dictationSTTService.stopRecording()
+                self.isVoiceModeCapturing = false
+                return
+            }
+
+            // Voice dictation shouldn't require creating an empty chat session; only auth is required.
+            guard await self.authService.getAccessToken() != nil else {
+                self.dictationSTTService.lastError = "Sign in to use the microphone."
+                self.dictationSTTService.stopRecording()
+                self.isVoiceModeCapturing = false
+                return
+            }
+            if let sid = self.sessionId, let friendId = self.selectedFriendUserId {
+                self.persistFriendUserId(friendId, for: sid)
+            }
+
+            if self.dictationSTTService.isConnected == false {
+                self.dictationSTTService.lastError = "Connecting…"
+                await self.dictationSTTService.connect()
+            }
+            if self.dictationSTTService.isConnected {
+                self.dictationSTTService.lastError = nil
+            }
+        }
+    }
+
+    func stopVoiceModePushToTalk() {
+        dictationSTTService.stopRecording()
+        isVoiceModeCapturing = false
+    }
+
+    // MARK: - Speak Mode
+
+    func startSpeakMode() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard NetworkMonitor.shared.isOnline else {
+                self.debugLog("[ChatVM] Speak Mode requires internet")
+                return
+            }
+
+            // Ensure dictation mode isn't holding the mic.
+            if self.dictationSTTService.isRecording || self.dictationSTTService.isConnected {
+                self.dictationSTTService.stopRecording()
+                self.dictationSTTService.disconnect()
+                self.isVoiceModeCapturing = false
+            }
+
+            let sid = await self.ensureSessionId()
+            guard let sid else { return }
+            if let friendId = self.selectedFriendUserId {
+                self.persistFriendUserId(friendId, for: sid)
+            }
+
+            // Speak Mode overlay: show only the current utterance transcript (cleared at `speech_final`).
+            self.speakSTTService.transcriptAggregation = .perUtterance
+            self.isSpeakModeActive = true
+            // React instantly: start mic capture now; connect in background.
+            self.speakSTTService.startRecording()
+
+            if self.speakSTTService.isConnected == false {
+                // Conversational: allow mid-thought pauses without fragmenting turns too aggressively.
+                await self.speakSTTService.connect(
+                    config: .init(language: "en-US", model: "nova-3", endpointingMs: 550, sampleRateHz: 24_000)
+                )
+            }
+        }
+    }
+
+    func stopSpeakMode() {
+        isSpeakModeActive = false
+        speakSTTService.stopRecording()
+        speakSTTService.disconnect()
+        elevenLabsStreamingTTS.cancel()
+        stopGeneration()
+    }
+
+    /// Send button handler for the main composer.
+    ///
+    /// If voice dictation is currently recording, we first stop/commit audio and then
+    /// send once the final transcript arrives (with a small fallback timeout).
+    func sendComposerMessage() {
+        if dictationSTTService.isRecording {
+            pendingSendAfterVoiceStop = true
+            sendAfterVoiceStopFallbackTask?.cancel()
+            sendAfterVoiceStopFallbackTask = nil
+
+            dictationSTTService.stopRecording()
+
+            // Fallback: if the final transcript event never arrives, still attempt to send
+            // whatever is currently in the composer after a short delay.
+            sendAfterVoiceStopFallbackTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard self.pendingSendAfterVoiceStop else { return }
+                self.pendingSendAfterVoiceStop = false
+                self.sendMessage()
+            }
+            return
+        }
+        sendMessage()
     }
 
     deinit {
@@ -432,6 +652,7 @@ class ChatViewModel: ObservableObject {
         // Render + persist immediately so the user's message survives failures (no credits, no internet, etc).
         let localMessage = ChatMessage(dto: dto, currentUserId: userId)
         self.messages.append(localMessage)
+        self.pendingOutgoingUserMessageId = clientMessageId
         self.updateCacheForCurrentSession()
         Task.detached {
             await ChatStore.shared.upsertMessages([dto])
@@ -938,6 +1159,13 @@ class ChatViewModel: ObservableObject {
                         }
                     case .error(let message):
                         self.debugLog("[ChatVM] stream error (manager): \(message)")
+                        // If OpenAI rejects `previous_response_id`, clear it so the next send doesn't keep failing.
+                        if message.contains("previous_response_not_found") || (message.contains("previous_response_id") && message.contains("not found")) {
+                            Task { @MainActor in
+                                let sid = streamSessionId ?? localSessionIdForSend
+                                self.responseIdBySession.removeValue(forKey: sid)
+                            }
+                        }
                         Task { @MainActor in
 
                             let targetSid = streamSessionId ?? self.sessionId

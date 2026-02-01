@@ -13,9 +13,6 @@ final class ChatSessionsViewModel: ObservableObject {
     @Published var lastSessionsSyncSucceeded: Bool? = nil
     @Published var lastSessionsSyncAt: Date? = nil
 
-    weak var chatViewModel: ChatViewModel?
-
-    private weak var navigationViewModel: SidebarNavigationViewModel?
     private var notificationTokens: [NSObjectProtocol] = []
     private var observedUserId: String? = nil
     private var generationToken: UUID = UUID()
@@ -58,10 +55,6 @@ final class ChatSessionsViewModel: ObservableObject {
         if url.hasPrefix("http://") || url.hasPrefix("https://") {
             UserDefaults.standard.set(url, forKey: PreferenceKeys.myAvatarURL)
         }
-    }
-
-    func setNavigationViewModel(_ navVM: SidebarNavigationViewModel) {
-        self.navigationViewModel = navVM
     }
 
     func startNewChat() {
@@ -119,7 +112,6 @@ final class ChatSessionsViewModel: ObservableObject {
         myAvatarURL = nil
         UserDefaults.standard.removeObject(forKey: PreferenceKeys.myAvatarURL)
         ChatMessagesViewModel.clearAllCachedMessages()
-        chatViewModel = nil
         observedUserId = nil
     }
 

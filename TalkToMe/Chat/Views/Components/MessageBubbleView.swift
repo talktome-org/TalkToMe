@@ -1,6 +1,160 @@
 import SwiftUI
 import UIKit
 
+struct UserMessageBubbleView: View {
+    let segments: [MessageSegment]
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let text = plainText(from: segments)
+        let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let attachmentSegments = segments.filter { isAttachmentSegment($0) }
+
+        VStack(alignment: .trailing, spacing: 8) {
+            if !attachmentSegments.isEmpty {
+                attachmentsView(segments: attachmentSegments, alignment: .trailing)
+            }
+            if hasText {
+                Text(text)
+                    .font(.system(size: 17, weight: .regular))
+                    .lineSpacing(2)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(userBubbleGradient)
+                    )
+                    .foregroundColor(.white)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: 320, alignment: .trailing)
+            }
+        }
+    }
+
+    private func plainText(from segments: [MessageSegment]) -> String {
+        return segments.compactMap { segment in
+            if case .text(let text) = segment { return text }
+            return nil
+        }.joined()
+    }
+
+    private func isAttachmentSegment(_ seg: MessageSegment) -> Bool {
+        switch seg {
+        case .imageData(_), .imageURL(_), .fileData(_, _), .fileURL(_, _):
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var userBubbleGradient: LinearGradient {
+        let colors: [Color] = {
+            // Neutral gray/black bubble, with a subtle lift in light mode.
+            if colorScheme == .dark {
+                return [Color(white: 0.22), Color(white: 0.12)]
+            } else {
+                return [Color(white: 0.25), Color(white: 0.15)]
+            }
+        }()
+        return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    @ViewBuilder
+    private func attachmentsView(segments: [MessageSegment], alignment: HorizontalAlignment) -> some View {
+        let isTrailing = (alignment == .trailing)
+
+        Group {
+            if segments.count == 1, let seg = segments.first {
+                // Special-case single attachment so it can be truly right/left aligned (ScrollView tends to "center-ish" single items).
+                attachmentView(seg)
+                    .frame(maxWidth: 320, alignment: isTrailing ? .trailing : .leading)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
+                            attachmentView(seg)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .frame(maxWidth: 320, alignment: isTrailing ? .trailing : .leading)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func attachmentView(_ seg: MessageSegment) -> some View {
+        switch seg {
+        case .imageData(let data):
+            if let uiImage = UIImage(data: data) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 220, height: 160)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+        case .imageURL(let urlString):
+            if let url = URL(string: urlString) {
+                if url.isFileURL, let uiImage = ChatImageCacheManager.shared.image(fileURL: url) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 220, height: 160)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                } else {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(.thinMaterial)
+                                .frame(width: 220, height: 160)
+                                .overlay(ProgressView().progressViewStyle(.circular))
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 220, height: 160)
+                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        case .failure:
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(.thinMaterial)
+                                .frame(width: 220, height: 160)
+                                .overlay(Image(systemName: "photo").foregroundColor(.secondary))
+                        @unknown default:
+                            EmptyView()
+                        }
+                    }
+                }
+            }
+        case .fileData(let name, _):
+            fileChip(title: name)
+        case .fileURL(let name, _):
+            fileChip(title: name)
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func fileChip(title: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "doc.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.secondary)
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.primary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(width: 220)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
 struct MessageBubbleView: View {
 
     @ObservedObject var chatViewModel: ChatViewModel
@@ -9,41 +163,20 @@ struct MessageBubbleView: View {
 
     var onSendToPartner: ((String) -> Void)? = nil
 
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.sendAnimationNamespace) private var sendAnimationNamespace
+    @Environment(\.outgoingAnimatingMessageId) private var outgoingAnimatingMessageId
+
     @MainActor
     var body: some View {
         VStack(alignment: message.isFromUser ? .trailing : .leading, spacing: 4) {
             if message.isFromUser {
-                let text = plainText(from: message.segments)
-                let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                let attachmentSegments = message.segments.filter { isAttachmentSegment($0) }
-
-                VStack(alignment: .trailing, spacing: 8) {
-                    if !attachmentSegments.isEmpty {
-                        attachmentsView(segments: attachmentSegments, alignment: .trailing)
-                    }
-                    if hasText {
-                        Text(text)
-                            .font(.system(size: 17, weight: .regular))
-                            .lineSpacing(2)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 14)
-                            .background(
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [
-                                                Color(red: 0.4, green: 0.2, blue: 0.6),
-                                                Color(red: 0.35, green: 0.15, blue: 0.55)
-                                            ],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    )
-                            )
-                            .foregroundColor(.white)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: 320, alignment: .trailing)
-                    }
+                let isSendAnimationTarget = message.id == outgoingAnimatingMessageId
+                if isSendAnimationTarget, let ns = sendAnimationNamespace {
+                    UserMessageBubbleView(segments: message.segments)
+                        .matchedGeometryEffect(id: message.id, in: ns, properties: .position, isSource: false)
+                } else {
+                    UserMessageBubbleView(segments: message.segments)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 8) {
@@ -124,6 +257,18 @@ struct MessageBubbleView: View {
         default:
             return false
         }
+    }
+
+    private var userBubbleGradient: LinearGradient {
+        let colors: [Color] = {
+            // Neutral gray/black bubble, with a subtle lift in light mode.
+            if colorScheme == .dark {
+                return [Color(white: 0.22), Color(white: 0.12)]
+            } else {
+                return [Color(white: 0.25), Color(white: 0.15)]
+            }
+        }()
+        return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
     @ViewBuilder

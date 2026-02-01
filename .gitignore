@@ -3,6 +3,26 @@ xcuserdata/
 *.xcuserstate
 Secrets.plist
 /build-ios18/
+.derivedData/
+
+# Xcode build + user state
+DerivedData/
+*.xcscmblueprint
+*.xccheckout
+*.xcresult
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM
+
+# SwiftPM / Xcode SPM integration
+.build/
+.swiftpm/
+Packages/
+SourcePackages/
+
+# Clang/Swift index & module caches (only if generated in-repo)
+ModuleCache.noindex/
 
 # Python venv
 venv/

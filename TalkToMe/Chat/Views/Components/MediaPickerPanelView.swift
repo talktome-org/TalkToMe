@@ -79,16 +79,18 @@ struct MediaPickerPanelView: View {
             // When selecting photos, give the recents strip a bit more breathing room (like ChatGPT),
             // and animate the controls down/up as selection changes.
             .padding(.top, attachments.isEmpty ? 12 : 16)
-            .padding(.bottom, 12)
+            .padding(.bottom, 6)
             .animation(.spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0), value: attachments.isEmpty)
+
+            Divider()
+                .padding(.horizontal, 16)
+                .opacity(0.25)
+
+            ElevenLabsVoiceSuggestionsView()
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
         }
-        .frame(height: height)
-        .frame(maxWidth: .infinity)
-        .background(panelBackground)
-        .clipShape(TopRoundedRectangle(radius: cornerRadius))
-        .overlay(panelOverlay)
-        .padding(.horizontal, horizontalPadding)
-        .padding(.bottom, 0)
+        .frame(maxWidth: .infinity, alignment: .top)
         .task {
             // Match ChatGPT-style behavior: show recents immediately by requesting access on open if needed.
             let _ = await recentPhotos.requestAccessIfNeeded()
@@ -111,7 +113,7 @@ struct MediaPickerPanelView: View {
         .onChange(of: photoPickerItems, initial: false) { _, newItems in
             Task { await loadPhotos(items: newItems) }
         }
-        .sheet(isPresented: $showCamera) {
+        .fullScreenCover(isPresented: $showCamera) {
             CameraPickerView(
                 onImage: { image in
                     addCameraImage(image)
@@ -123,7 +125,7 @@ struct MediaPickerPanelView: View {
             )
             .ignoresSafeArea()
         }
-        .sheet(isPresented: $showFiles) {
+        .fullScreenCover(isPresented: $showFiles) {
             DocumentPickerView(
                 allowedTypes: [UTType.data, UTType.image, UTType.pdf, UTType.plainText],
                 allowsMultipleSelection: true,
@@ -175,7 +177,7 @@ struct MediaPickerPanelView: View {
             Text(title)
                 .font(.system(size: 15, weight: .semibold))
         }
-        .foregroundColor(Color(red: 0.74, green: 0.34, blue: 0.92))
+        .foregroundColor(.primary)
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -238,11 +240,15 @@ struct MediaPickerPanelView: View {
     private func loadPhotos(items: [PhotosPickerItem]) async {
         for item in items {
             do {
-                if let data = try await item.loadTransferable(type: Data.self) {
-                    let ct = item.supportedContentTypes.first?.preferredMIMEType ?? "image/jpeg"
-                    // Many photos come back as HEIC; the backend upload will accept it, but we normalize the filename to jpg.
-                    let normalized = (ct == "image/heic" || ct == "image/heif") ? "image/jpeg" : ct
-                    let att = PendingAttachment(kind: .image(data: data, contentType: normalized))
+                if let rawData = try await item.loadTransferable(type: Data.self) {
+                    // IMPORTANT: PhotosPicker commonly returns HEIC/HEIF. We always normalize images to JPEG bytes,
+                    // since the upstream vision models / URL consumers may not support HEIC reliably.
+                    let jpegData: Data? = {
+                        guard let uiImage = UIImage(data: rawData) else { return nil }
+                        return uiImage.jpegData(compressionQuality: 0.92)
+                    }()
+                    guard let data = jpegData, !data.isEmpty else { continue }
+                    let att = PendingAttachment(kind: .image(data: data, contentType: "image/jpeg"))
                     await MainActor.run {
                         if attachments.count < 12 {
                             withAnimation(.spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0)) {
@@ -391,6 +397,7 @@ struct MediaPickerPanelView: View {
 
     private func addFiles(_ urls: [URL]) {
         for url in urls {
+            if attachments.count >= 12 { break }
             let needsAccess = url.startAccessingSecurityScopedResource()
             defer { if needsAccess { url.stopAccessingSecurityScopedResource() } }
 
@@ -398,15 +405,20 @@ struct MediaPickerPanelView: View {
             let filename = url.lastPathComponent
             let contentType = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
             if UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true {
+                // Normalize imported images to JPEG bytes for maximum downstream compatibility.
+                let jpegData: Data? = {
+                    guard let uiImage = UIImage(data: data) else { return nil }
+                    return uiImage.jpegData(compressionQuality: 0.92)
+                }()
+                guard let jpegData, !jpegData.isEmpty else { continue }
                 withAnimation(.spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0)) {
-                    attachments.append(PendingAttachment(kind: .image(data: data, contentType: contentType)))
+                    attachments.append(PendingAttachment(kind: .image(data: jpegData, contentType: "image/jpeg")))
                 }
             } else {
                 withAnimation(.spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0)) {
                     attachments.append(PendingAttachment(kind: .file(data: data, filename: filename, contentType: contentType)))
                 }
             }
-            if attachments.count >= 12 { break }
         }
     }
 }

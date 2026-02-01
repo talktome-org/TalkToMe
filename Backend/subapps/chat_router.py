@@ -426,10 +426,8 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                 # For high concurrency, frequent heartbeats add up quickly.
                 heartbeat_interval = 5.0
 
-                async with chat_service.stream_response(
-                    messages=input_messages,
-                    previous_response_id=chat_request.previous_response_id,
-                ) as stream:
+                async def _consume_stream(stream):
+                    nonlocal buffer, in_partner, current_text_segment
                     aiter = stream.__aiter__()
                     while True:
                         try:
@@ -536,6 +534,29 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                                 buffer = buffer[close_idx + len(end_marker) :]
                                 in_partner = False
                                 continue
+
+                try:
+                    async with chat_service.stream_response(
+                        messages=input_messages,
+                        previous_response_id=chat_request.previous_response_id,
+                    ) as stream:
+                        async for chunk in _consume_stream(stream):
+                            yield chunk
+                except Exception as e:
+                    # If OpenAI rejects `previous_response_id`, retry once without it.
+                    msg = str(e)
+                    if chat_request.previous_response_id and (
+                        "previous_response_not_found" in msg
+                        or ("previous response with id" in msg and "not found" in msg)
+                    ):
+                        buffer = ""
+                        in_partner = False
+                        current_text_segment = ""
+                        async with chat_service.stream_response(messages=input_messages, previous_response_id=None) as stream:
+                            async for chunk in _consume_stream(stream):
+                                yield chunk
+                    else:
+                        raise
 
                 if buffer:
                     full_text_parts.append(buffer)

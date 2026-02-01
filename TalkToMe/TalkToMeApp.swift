@@ -9,6 +9,25 @@ import SwiftUI
 import UIKit
 import Supabase
 import BackgroundTasks
+#if DEBUG
+import MachO
+#endif
+
+#if DEBUG
+private enum DyldDebug {
+    static func logTalkToMeImages() {
+        let count = _dyld_image_count()
+        for i in 0..<count {
+            guard let cName = _dyld_get_image_name(i) else { continue }
+            let path = String(cString: cName)
+            guard path.contains("TalkToMe") else { continue }
+            let slide = _dyld_get_image_vmaddr_slide(i)
+            let slideHex = String(format: "0x%llx", Int64(slide))
+            print("[DYLD] \(path) slide=\(slideHex)")
+        }
+    }
+}
+#endif
 
 @main
 struct TalkToMeApp: App {
@@ -30,6 +49,9 @@ struct TalkToMeApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+#if DEBUG
+        DyldDebug.logTalkToMeImages()
+#endif
         // Register BGTask handlers before app finishes launching
     }
 
@@ -65,24 +87,12 @@ struct TalkToMeApp: App {
                         if !isInitialCallback {
                             // User logged out - reset session view model for fresh login
                             sessionsViewModel.resetForLogout()
-
-                            // Always reopen the sidebar on logout to avoid flashing ChatView on next login.
-                            withAnimation(nil) {
-                                navigationViewModel.isOpen = true
-                                navigationViewModel.selectedTab = .chat
-                            }
                         }
                         return
                     }
 
-                    // On login, force the sidebar open immediately (same-runloop) so ChatView can't flash.
-                    withAnimation(nil) {
-                        navigationViewModel.isOpen = true
-                        navigationViewModel.selectedTab = .chat
-                    }
-
 #if DEBUG
-                    print("[Auth] isAuthenticated -> true; userId=\(auth.currentUserId ?? "nil") isOpen=\(navigationViewModel.isOpen) activeSessionId=\(sessionsViewModel.activeSessionId?.uuidString ?? "nil") sessions=\(sessionsViewModel.sessions.count)")
+                    print("[Auth] isAuthenticated -> true; userId=\(auth.currentUserId ?? "nil") activeSessionId=\(sessionsViewModel.activeSessionId?.uuidString ?? "nil") sessions=\(sessionsViewModel.sessions.count)")
 #endif
                     Task {
                         // Load all initial data in parallel
@@ -127,14 +137,10 @@ struct TalkToMeApp: App {
                     // If we're switching to a different user (or restoring cached auth), reset volatile UI state.
                     if let newKey, !newKey.isEmpty {
                         navigationViewModel.showSettingsSheet = false
-                        withAnimation(nil) {
-                            navigationViewModel.isOpen = true
-                            navigationViewModel.selectedTab = .chat
-                        }
                         sessionsViewModel.resetForAccountSwitch()
 
 #if DEBUG
-                        print("[Auth] currentUserId changed \(oldKey ?? "nil") -> \(newKey); forcing sidebar open; activeSessionId=\(sessionsViewModel.activeSessionId?.uuidString ?? "nil") sessions=\(sessionsViewModel.sessions.count)")
+                        print("[Auth] currentUserId changed \(oldKey ?? "nil") -> \(newKey); activeSessionId=\(sessionsViewModel.activeSessionId?.uuidString ?? "nil") sessions=\(sessionsViewModel.sessions.count)")
 #endif
                         Task {
                             // Re-bootstrap app data for the new user.

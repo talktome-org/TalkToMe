@@ -1,8 +1,25 @@
 import SwiftUI
 import UIKit
 
+struct ChatSendButtonFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
+struct ChatInputBarFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
 struct InputAreaView: View {
-    @StateObject private var voiceService = VoiceRecordingService()
+    let isVoiceRecording: Bool
+    let voiceModeEnabled: Bool
+    let isSpeakModeActive: Bool
+    let onSpeakToggle: () -> Void
 
     @Binding var inputText: String
     @Binding var isLoading: Bool
@@ -14,8 +31,10 @@ struct InputAreaView: View {
     let send: () -> Void
     let stop: () -> Void
     let onVoiceRecordingStart: () -> Void
+    let onVoiceModeStart: () -> Void
+    let onVoiceModeStop: () -> Void
 
-    private let sendSize: CGFloat = 34
+    private let sendSize: CGFloat = 40
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -25,7 +44,7 @@ struct InputAreaView: View {
     }
 
     private var canSend: Bool {
-        !(trimmedInput.isEmpty && pendingAttachments.isEmpty)
+        return !(trimmedInput.isEmpty && pendingAttachments.isEmpty)
     }
 
     var body: some View {
@@ -33,15 +52,22 @@ struct InputAreaView: View {
             focusSnippetView
             contentRow
         }
-        .padding(.leading, 16)
-        .padding(.trailing, 8)
-        .padding(.vertical, 5)
+        .padding(.leading, 18)
+        .padding(.trailing, 10)
+        .padding(.vertical, 10)
         .background(inputBarBackground)
         .clipShape(RoundedRectangle(cornerRadius: 25, style: .continuous))
         .overlay(inputBarOverlay)
         .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: 4)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: ChatInputBarFramePreferenceKey.self,
+                    value: proxy.frame(in: .named("ChatScreen"))
+                )
+            }
+        )
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
         .animation(.easeInOut(duration: 0.2), value: isInputFocused.wrappedValue)
     }
 
@@ -77,56 +103,88 @@ struct InputAreaView: View {
     }
 
     private var contentRow: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            inputStack
-            trailingControls
-        }
+        inputStack
     }
 
-    private var trailingControls: some View {
-        HStack(spacing: 10) {
-            plusButton
+    private var inputStack: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            attachmentsStrip
+            textFieldOrWaveform
+            bottomControlsRow
+        }
+        .frame(minHeight: 56)
+    }
+
+    private var bottomControlsRow: some View {
+        HStack(alignment: .center, spacing: 10) {
+            attachmentsButton
+            Spacer(minLength: 8)
+            if !canSend && !isVoiceRecording {
+                speakButton
+            }
             sendButton
         }
+        .padding(.top, 0)
     }
 
-    private var plusButton: some View {
+    private var speakButton: some View {
         Button(action: {
-            if isMediaPanelVisible {
-                // Switch back to keyboard
-                withAnimation(.easeInOut(duration: 0.22)) {
-                    isMediaPanelVisible = false
-                }
-                isInputFocused.wrappedValue = true
-            } else {
-                // Switch to media panel
-                withAnimation(.easeInOut(duration: 0.22)) {
-                    isMediaPanelVisible = true
-                }
-                isInputFocused.wrappedValue = false
-            }
+            Haptics.impact(.medium)
+            isInputFocused.wrappedValue = false
+            onSpeakToggle()
         }) {
-            ZStack {
-                Image(systemName: "plus")
-                    .opacity(isMediaPanelVisible ? 0 : 1)
-                Image(systemName: "keyboard")
-                    .opacity(isMediaPanelVisible ? 1 : 0)
+            HStack(spacing: 6) {
+                Image(systemName: isSpeakModeActive ? "speaker.wave.2.fill" : "speaker.wave.2")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("Speak")
+                    .font(.system(size: 14, weight: .semibold))
             }
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundColor(Color(red: 0.74, green: 0.34, blue: 0.92))
-            .frame(width: 32, height: 32)
-            .contentShape(Rectangle())
-            .animation(.easeInOut(duration: 0.18), value: isMediaPanelVisible)
+            .foregroundColor(.primary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background {
+                if isSpeakModeActive {
+                    Capsule().fill(Color.primary.opacity(0.12))
+                } else {
+                    Capsule().fill(.thinMaterial)
+                }
+            }
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        colorScheme == .dark ? Color.white.opacity(0.12) : Color.black.opacity(0.06),
+                        lineWidth: 1
+                    )
+            )
         }
         .buttonStyle(.plain)
     }
 
-    private var inputStack: some View {
-        VStack {
-            attachmentsStrip
-            textFieldOrWaveform
+    private var attachmentsButton: some View {
+        Button(action: {
+            Haptics.impact(.light)
+            isInputFocused.wrappedValue = false
+            withAnimation(.easeInOut(duration: 0.22)) {
+                isMediaPanelVisible = true
+            }
+        }) {
+            Image(systemName: "paperclip")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.primary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.thinMaterial, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .strokeBorder(
+                            colorScheme == .dark ? Color.white.opacity(0.12) : Color.black.opacity(0.06),
+                            lineWidth: 1
+                        )
+                )
         }
-        .frame(minHeight: 36)
+        .buttonStyle(.plain)
+        .disabled(isVoiceRecording)
+        .opacity(isVoiceRecording ? 0.5 : 1.0)
     }
 
     @ViewBuilder
@@ -184,82 +242,97 @@ struct InputAreaView: View {
 
     @ViewBuilder
     private var textFieldOrWaveform: some View {
-        if voiceService.isShowingRecordingPlaceholder {
-            WaveformPlaceholderView(
-                currentLevel: voiceService.spawnLevel,
-                barWidth: 3,
-                barSpacing: 2,
-                minHeight: 3,
-                maxHeight: 16,
-                color: Color(red: 0.54, green: 0.32, blue: 0.78)
-            )
+        TextField("Message TalkToMe", text: $inputText, axis: .vertical)
+            .lineLimit(1...5)
+            .lineSpacing(2)
+            .font(.system(size: 17, weight: .regular))
+            .foregroundColor(.primary)
+            .textFieldStyle(.plain)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 4)
-            .padding(.vertical, 10)
-        } else {
-            TextField("Share what's on your mind", text: $inputText, axis: .vertical)
-                .lineLimit(1...5)
-                .lineSpacing(2)
-                .font(.system(size: 17, weight: .regular))
-                .foregroundColor(.primary)
-                .textFieldStyle(.plain)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 6)
-                .focused(isInputFocused)
-        }
+            .padding(.vertical, 6)
+            .focused(isInputFocused)
+            // We still write into the field live while recording; disabling avoids the user
+            // fighting the transcriber for the cursor.
+            .disabled(isVoiceRecording)
     }
+
 
     private var sendButton: some View {
         Button(action: sendButtonTapped) {
+            let shadowOpacity: Double = colorScheme == .dark ? 0.55 : 0.25
+            let showCircularSend = canSend && !isVoiceRecording
             ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color(red: 0.5, green: 0.3, blue: 0.7), Color(red: 0.4, green: 0.2, blue: 0.6)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+                if showCircularSend {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color(white: 0.20), Color(white: 0.06)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
-                    )
-                    .frame(width: sendSize, height: sendSize)
-                    .shadow(color: Color(red: 0.4, green: 0.2, blue: 0.6).opacity(0.3), radius: 4, x: 0, y: 2)
+                        .frame(width: sendSize, height: sendSize)
+                        .shadow(color: Color.black.opacity(shadowOpacity), radius: 4, x: 0, y: 2)
 
-                ZStack {
-                    if !canSend {
-                        Image(systemName: voiceService.isRecording ? "stop.fill" : "mic.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.white)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .leading).combined(with: .opacity),
-                                removal: .move(edge: .leading).combined(with: .opacity)
-                            ))
-                    } else {
-                        Image(systemName: isLoading ? "stop.fill" : "arrow.up")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.white)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .trailing).combined(with: .opacity),
-                                removal: .move(edge: .trailing).combined(with: .opacity)
-                            ))
+                    Image(systemName: isLoading ? "stop.fill" : "arrow.up")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .trailing).combined(with: .opacity),
+                            removal: .move(edge: .trailing).combined(with: .opacity)
+                        ))
+                } else {
+                    // Voice icon with no circular background (match Grok-style minimal mic).
+                    Group {
+                        if isVoiceRecording {
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(.primary)
+                        } else {
+                            Text("🎙️")
+                                .font(.system(size: 18, weight: .semibold))
+                        }
                     }
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .leading).combined(with: .opacity),
+                        removal: .move(edge: .leading).combined(with: .opacity)
+                    ))
                 }
             }
+            .frame(width: 44, height: 44)
         }
-        .scaleEffect(voiceService.isRecording && !canSend ? 1.1 : 1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: voiceService.isRecording)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: ChatSendButtonFramePreferenceKey.self,
+                    value: proxy.frame(in: .named("ChatScreen"))
+                )
+            }
+        )
+        .scaleEffect(isVoiceRecording ? 1.1 : 1.0)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isVoiceRecording)
         .animation(.spring(response: 0.35, dampingFraction: 0.85, blendDuration: 0.2), value: inputText)
+        .buttonStyle(.plain)
     }
 
     private func sendButtonTapped() {
+        // While dictating, keep this as a "quit" button (stop only; do not send).
+        if isVoiceRecording {
+            Haptics.impact(.medium)
+            onVoiceModeStop()
+            return
+        }
+
         if !canSend {
-            if voiceService.isRecording {
+            if isSpeakModeActive {
                 Haptics.impact(.medium)
-                voiceService.stopRecording()
-                inputText = voiceService.transcribedText
-            } else {
-                Haptics.impact(.medium)
-                onVoiceRecordingStart()
-                Task { await voiceService.startRecording() }
+                onSpeakToggle()
+                return
             }
+            Haptics.impact(.medium)
+            onVoiceRecordingStart()
+            onVoiceModeStart()
             return
         }
 
@@ -267,10 +340,11 @@ struct InputAreaView: View {
         if isLoading {
             stop()
         } else {
-            isInputFocused.wrappedValue = false
             withAnimation(.easeInOut(duration: 0.22)) {
                 isMediaPanelVisible = false
             }
+            // Keep the keyboard stable on send (helps the "fly-in" animation and feels snappier).
+            isInputFocused.wrappedValue = true
             send()
         }
     }
@@ -303,6 +377,10 @@ struct InputAreaView: View {
 #Preview {
     @FocusState var isFocused: Bool
     InputAreaView(
+        isVoiceRecording: false,
+        voiceModeEnabled: false,
+        isSpeakModeActive: false,
+        onSpeakToggle: {},
         inputText: .constant(""),
         isLoading: .constant(false),
         focusSnippet: .constant(nil),
@@ -311,7 +389,9 @@ struct InputAreaView: View {
         isInputFocused: $isFocused,
         send: {},
         stop: {},
-        onVoiceRecordingStart: {}
+        onVoiceRecordingStart: {},
+        onVoiceModeStart: {},
+        onVoiceModeStop: {}
     )
 }
 

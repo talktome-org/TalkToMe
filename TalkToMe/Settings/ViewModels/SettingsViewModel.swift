@@ -36,6 +36,22 @@ class SettingsViewModel: ObservableObject {
             UserDefaults.standard.set(true, forKey: PreferenceKeys.hapticsEnabled)
         }
 
+        if UserDefaults.standard.object(forKey: PreferenceKeys.voiceModeEnabled) != nil {
+            settingsData.voiceModeEnabled = UserDefaults.standard.bool(forKey: PreferenceKeys.voiceModeEnabled)
+        } else {
+            settingsData.voiceModeEnabled = false
+            UserDefaults.standard.set(false, forKey: PreferenceKeys.voiceModeEnabled)
+        }
+
+        if let vid = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId),
+           !vid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            settingsData.elevenLabsVoiceId = vid
+        }
+        if let vname = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName),
+           !vname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            settingsData.elevenLabsVoiceName = vname
+        }
+
         if let storedVoice = UserDefaults.standard.string(forKey: PreferenceKeys.ttsVoiceIdentifier) {
             settingsData.ttsVoiceIdentifier = storedVoice
         }
@@ -51,6 +67,7 @@ class SettingsViewModel: ObservableObject {
                 settings: [
                     SettingItem(title: "Appearance", subtitle: nil, type: .picker(["Light", "Dark", "System"]), icon: "circle.lefthalf.filled"),
                     SettingItem(title: "Notifications", subtitle: nil, type: .toggle(APNSService.shared.isPushEnabled), icon: "bell"),
+                    SettingItem(title: "Voice Mode", subtitle: "Talk instead of type", type: .toggle(settingsData.voiceModeEnabled), icon: "waveform"),
                     SettingItem(title: "Haptics", subtitle: nil, type: .toggle(settingsData.hapticFeedbackEnabled), icon: "iphone.radiowaves.left.and.right")
                 ]
             ),
@@ -81,6 +98,9 @@ class SettingsViewModel: ObservableObject {
         let setting = section.settings[settingIndex]
 
         switch (section.title, setting.title) {
+        case ("App Settings", "Voice Mode"):
+            settingsData.voiceModeEnabled.toggle()
+            UserDefaults.standard.set(settingsData.voiceModeEnabled, forKey: PreferenceKeys.voiceModeEnabled)
         case ("App Settings", "Haptic Feedback"), ("App Settings", "Haptics"):
             settingsData.hapticFeedbackEnabled.toggle()
             UserDefaults.standard.set(settingsData.hapticFeedbackEnabled, forKey: PreferenceKeys.hapticsEnabled)

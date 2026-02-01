@@ -9,6 +9,9 @@ struct SettingsData: Codable {
     var saveChatsEnabled: Bool = true
     var crashReportingEnabled: Bool = true
     var ttsVoiceIdentifier: String? = nil
+    var voiceModeEnabled: Bool = false
+    var elevenLabsVoiceId: String? = nil
+    var elevenLabsVoiceName: String? = nil
 
     init() {
     }

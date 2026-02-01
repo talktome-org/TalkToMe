@@ -15,7 +15,7 @@ struct PrivacyPolicyView: View {
     - Partner Linking: If you link with a partner, we store relationship mappings and, when you send partner drafts/requests, their content and status (pending/delivered/accepted) to deliver messages and maintain history for both sides.
     - Notifications: If you enable push notifications, we store your device push token, platform (iOS), and app bundle identifier to send notifications (e.g., partner messages/requests). You can disable push at any time in Settings.
     - Diagnostics and App Events: We may log limited technical information (e.g., request status codes, streaming state, minimal debug logs) to operate the service and troubleshoot issues. These logs are not used for advertising.
-    - Voice and Speech: If you use voice features, microphone and speech recognition permissions are requested. Audio is recorded locally to enable live transcription; we do not upload audio for transcription. Transcribed text only becomes part of your chat if you send it.
+    - Voice: If you use voice features, microphone permission is requested. Your audio may be sent to our backend for transcription using third-party AI services (e.g., OpenAI). If you enable voice playback, assistant text may be sent to a text-to-speech provider (e.g., ElevenLabs) to generate audio. Transcribed text and generated audio are used only to provide the voice features.
 
     2) How We Use Information
     - To provide and improve core features (chat, session history, partner linking, notifications, profile/avatars).

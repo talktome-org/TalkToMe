@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 struct SidebarView: View {
 
@@ -7,11 +6,8 @@ struct SidebarView: View {
     @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
 
-    @ObservedObject private var authService = AuthService.shared
-    @ObservedObject private var networkMonitor = NetworkMonitor.shared
-
-    @Binding var isOpen: Bool
-    let profileNamespace: Namespace.ID
+    let onOpenChat: (UUID) -> Void
+    let onStartNewChat: () -> Void
 
     @FocusState private var isSearchFieldFocused: Bool
 
@@ -42,8 +38,7 @@ struct SidebarView: View {
 
     @MainActor
     var body: some View {
-        NavigationStack {
-            GeometryReader { geometry in
+        GeometryReader { geometry in
                 let pinnedHeaderBar = HStack {
                     HStack {
                         Button(action: {
@@ -103,16 +98,8 @@ struct SidebarView: View {
                             ForEach(filteredSessions, id: \.id) { session in
                                 Button(action: {
                                     Haptics.impact(.light)
-                                    // Switch the active chat immediately (no animation) to avoid briefly showing
-                                    // the previous chat while the sidebar is sliding away.
-                                    withAnimation(nil) {
-                                        sessionsViewModel.openSession(session.id)
-                                        navigationViewModel.selectedTab = .chat
-                                    }
-                                    // Only animate the sidebar closing.
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8, blendDuration: 0)) {
-                                        isOpen = false
-                                    }
+                                    isSearchFieldFocused = false
+                                    onOpenChat(session.id)
                                 }) {
                                     let title = session.title
                                     let dateText = sessionsViewModel.formatLastUsed(session.lastUsedISO8601)
@@ -171,14 +158,6 @@ struct SidebarView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(.systemBackground))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden, for: .navigationBar)
-            .onChange(of: isOpen) { _, open in
-                if !open {
-                    searchText = ""
-                    isSearchFieldFocused = false
-                }
-            }
             .onAppear {
                 Task {
                     await sessionsViewModel.ensureProfilePictureCached()
@@ -232,7 +211,6 @@ struct SidebarView: View {
                         .presentationDragIndicator(.visible)
                 }
             }
-        }
     }
 
     @MainActor
@@ -322,24 +300,17 @@ struct SidebarView: View {
                 if #available(iOS 26.0, *) {
                     Button(action: {
                         Haptics.impact(.light)
-                        // Always start a fresh chat when closing via the chevron (never "return" to a previous session).
-                        // We intentionally do this without animation to avoid briefly showing the old chat while the sidebar slides away.
-                        withAnimation(nil) {
-                            sessionsViewModel.startNewChat()
-                            navigationViewModel.selectedTab = .chat
-                        }
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0)) {
-                            isOpen = false
-                        }
+                        isSearchFieldFocused = false
+                        onStartNewChat()
                     }) {
-                        Image(systemName: "chevron.right.2")
+                        Image(systemName: "square.and.pencil")
                             .font(.system(size: 20, weight: .semibold))
                             .foregroundStyle(.primary)
                             .offset(y: -1)
                     }
                     .frame(width: 50, height: 50)
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Close sidebar")
+                    .accessibilityLabel("New chat")
                     .glassEffect(.regular.interactive(), in: Circle())
                 }
             }
@@ -842,9 +813,7 @@ private struct ConnectionStatusPillView: View {
 
 #if DEBUG
 #Preview("SidebarView") {
-    @Previewable @State var isOpen: Bool = true
-    @Previewable @Namespace var ns
-    SidebarView(isOpen: $isOpen, profileNamespace: ns)
+    SidebarView(onOpenChat: { _ in }, onStartNewChat: { })
         .environmentObject(SidebarNavigationViewModel())
         .environmentObject(ChatSessionsViewModel())
         .environmentObject(FriendsViewModel(accessTokenProvider: { "" }))

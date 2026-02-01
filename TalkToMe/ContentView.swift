@@ -17,79 +17,45 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        ZStack {
-            Group {
-                if authService.isCheckingAuth {
-                    // Telegram-like: show cached UI immediately; otherwise a minimal spinner.
-                    // Only show cached UI if we have an effective user id (avoids flashing stale state across account switches).
-                    if authService.currentUserId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
-                       !sessionsViewModel.sessions.isEmpty {
-                        sidebarContainer(content: MainAppView())
-                            .transition(.opacity)
-                    } else {
-                        // No spinner before cached UI: just show the app background.
-                        Color(.systemBackground)
-                            .ignoresSafeArea()
-                        .transition(.opacity)
-                    }
-                } else if authService.isAuthenticated {
-                    sidebarContainer(content: MainAppView())
+        Group {
+            if authService.isCheckingAuth {
+                // Telegram-like: show cached UI immediately; otherwise a minimal spinner.
+                // Only show cached UI if we have an effective user id (avoids flashing stale state across account switches).
+                if authService.currentUserId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+                   !sessionsViewModel.sessions.isEmpty {
+                    MainAppView()
                         .transition(.opacity)
                 } else {
-                    AuthView()
-                        .transition(.opacity)
-                }
-            }
-        }
-        .animation(.easeInOut(duration: 0.3), value: authService.isAuthenticated)
-        .animation(.easeInOut(duration: 0.3), value: authService.isCheckingAuth)
-    }
-
-    @ViewBuilder
-    private func sidebarContainer<Content: View>(content: Content) -> some View {
-        GeometryReader { proxy in
-            // If the sidebar is open and nothing is selected, never show ChatView "behind" it.
-            // This prevents the brief ChatView flash during login / account switches while sessions are still loading.
-            let showSidebarOnly: Bool = navigationViewModel.isOpen
-                && sessionsViewModel.activeSessionId == nil
-
-            ZStack(alignment: .leading) {
-                if showSidebarOnly {
+                    // No spinner before cached UI: just show the app background.
                     Color(.systemBackground)
                         .ignoresSafeArea()
-                } else {
-                    content
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .zIndex(0)
+                        .transition(.opacity)
                 }
-
-                SidebarView(
-                    isOpen: $navigationViewModel.isOpen,
-                    profileNamespace: profileNamespace
-                )
-                .frame(width: proxy.size.width)
-                .offset(x: navigationViewModel.isOpen ? 0 : -proxy.size.width)
-                .zIndex(2)
-            }
-            .sheet(isPresented: $navigationViewModel.showSettingsSheet) {
-                SettingsView(
-                    profileNamespace: profileNamespace,
-                    isPresented: $navigationViewModel.showSettingsSheet
-                )
-                .environmentObject(sessionsViewModel)
-                .environmentObject(friendsVM)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+            } else if authService.isAuthenticated {
+                MainAppView()
+                    .transition(.opacity)
+            } else {
+                AuthView()
+                    .transition(.opacity)
             }
         }
-        .onAppear {
-            sessionsViewModel.setNavigationViewModel(navigationViewModel)
+        .sheet(isPresented: $navigationViewModel.showSettingsSheet) {
+            SettingsView(
+                profileNamespace: profileNamespace,
+                isPresented: $navigationViewModel.showSettingsSheet
+            )
+            .environmentObject(sessionsViewModel)
+            .environmentObject(friendsVM)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .onChange(of: scenePhase, initial: false) { _, newPhase in
             if newPhase == .active {
                 Task { await sessionsViewModel.refreshSessions() }
             }
         }
+        .animation(.easeInOut(duration: 0.3), value: authService.isAuthenticated)
+        .animation(.easeInOut(duration: 0.3), value: authService.isCheckingAuth)
     }
 }
 
