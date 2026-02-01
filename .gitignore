@@ -15,6 +15,14 @@ DerivedData/
 *.ipa
 *.dSYM
 
+# If Xcode build location is set within the repo
+Build/
+build/
+**/Build/Intermediates.noindex/
+**/Build/Products/
+**/Build/Logs/
+**/Build/SourcePackages/
+
 # SwiftPM / Xcode SPM integration
 .build/
 .swiftpm/
