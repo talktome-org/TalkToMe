@@ -10,8 +10,16 @@ class EmbeddingService:
     Default: text-embedding-3-small (1536 dims). Switch model if needed.
     """
 
-    def __init__(self, model: str = "text-embedding-3-small"):
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    def __init__(self, model: str = "text-embedding-3-small", *, timeout_seconds: float = 60.0, max_retries: int = 2):
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is not set (check Backend/.env or environment variables).")
+
+        # Be defensive about SDK versions: some versions may not accept these kwargs.
+        try:
+            self.client = OpenAI(api_key=api_key, timeout=timeout_seconds, max_retries=max_retries)
+        except TypeError:
+            self.client = OpenAI(api_key=api_key)
         self.model = model
         self.dimension_map = {
             "text-embedding-3-small": 1536,
