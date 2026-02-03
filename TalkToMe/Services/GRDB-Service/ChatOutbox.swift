@@ -161,7 +161,6 @@ final class ChatOutboxProcessor {
             chatHistory: nil,
             attachments: uploaded.isEmpty ? nil : uploaded,
             accessToken: accessToken,
-            focusSnippet: nil,
             previousResponseId: nil,
             friendUserId: friendUserId,
             messageId: messageId

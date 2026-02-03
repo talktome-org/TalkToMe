@@ -1,9 +1,9 @@
 import Foundation
 
 @MainActor
-final class PartnerDraftsViewModel: ObservableObject {
+final class PartnerDraftsViewModel {
 
-    @Published private(set) var sentPartnerDrafts: Set<String> = []
+    private var sentPartnerDrafts: Set<String> = []
 
     private static let globalSentDraftsKey = "globalSentPartnerDrafts"
 
@@ -51,7 +51,6 @@ final class PartnerDraftsViewModel: ObservableObject {
     }
 
     private func makeKey(sessionId: UUID, messageContent: String) -> String {
-        // Normalize so minor whitespace differences don't flip "sent" state across reloads.
         let normalized = messageContent.trimmingCharacters(in: .whitespacesAndNewlines)
         let contentKey = String(normalized.prefix(100))
         return "\(sessionId.uuidString)_\(contentKey)"

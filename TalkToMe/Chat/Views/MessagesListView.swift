@@ -1,6 +1,26 @@
 import SwiftUI
 import UIKit
 
+struct SendAnimationNamespaceKey: EnvironmentKey {
+    static let defaultValue: Namespace.ID? = nil
+}
+
+struct OutgoingAnimatingMessageIdKey: EnvironmentKey {
+    static let defaultValue: UUID? = nil
+}
+
+extension EnvironmentValues {
+    var sendAnimationNamespace: Namespace.ID? {
+        get { self[SendAnimationNamespaceKey.self] }
+        set { self[SendAnimationNamespaceKey.self] = newValue }
+    }
+
+    var outgoingAnimatingMessageId: UUID? {
+        get { self[OutgoingAnimatingMessageIdKey.self] }
+        set { self[OutgoingAnimatingMessageIdKey.self] = newValue }
+    }
+}
+
 struct MessagesListView: View {
 
     @ObservedObject var chatViewModel: ChatViewModel

@@ -4,6 +4,8 @@ xcuserdata/
 Secrets.plist
 /build-ios18/
 .derivedData/
+/.derivedData-sim*/
+/.derivedData-sim*/
 
 # Xcode build + user state
 DerivedData/

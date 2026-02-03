@@ -7,7 +7,6 @@ struct PartnerDraftBlockView: View {
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
 
     @State private var text: String
-    @State private var measuredTextHeight: CGFloat = 0
     @State private var isConfirmingNormalSend: Bool = false
     @State private var showSentLocally: Bool = false
 
@@ -50,24 +49,21 @@ struct PartnerDraftBlockView: View {
                 .padding(.horizontal, -12)
                 .offset(y: -4)
 
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $text)
-                    .background(Color.clear)
-                    .scrollContentBackground(.hidden)
-                    .font(.callout)
-                    .foregroundColor(.primary)
-                    .disabled(true)
-                    .frame(height: max(40, measuredTextHeight))
-
-                Text(text.isEmpty ? " " : text)
-                    .font(.callout)
-                    .foregroundColor(.clear)
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(HeightReader(height: $measuredTextHeight))
-                    .allowsHitTesting(false)
-            }
+            // NOTE:
+            // We used to measure the content height via GeometryReader + PreferenceKey and then
+            // drive a TextEditor frame from that measurement. That pattern can create SwiftUI
+            // AttributeGraph cycles (layout -> preference -> state write -> layout ...).
+            //
+            // This is a read-only block, so a plain Text view (with selection enabled) is simpler,
+            // faster, and avoids any layout feedback loops.
+            Text(text.isEmpty ? " " : text)
+                .font(.callout)
+                .foregroundColor(.primary)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 4)
 
             HStack {
                 if isConfirmingNormalSend {
@@ -173,29 +169,6 @@ struct PartnerDraftBlockView: View {
         .onChange(of: isSent) { _, _ in
             isConfirmingNormalSend = false
             if isSent { showSentLocally = false }
-        }
-    }
-}
-
-private struct ViewHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
-private struct HeightReader: View {
-    @Binding var height: CGFloat
-
-    var body: some View {
-        GeometryReader { proxy in
-            Color.clear
-                .preference(key: ViewHeightKey.self, value: proxy.size.height)
-        }
-        .onPreferenceChange(ViewHeightKey.self) { newValue in
-            if abs(newValue - height) > 0.5 {
-                height = newValue
-            }
         }
     }
 }

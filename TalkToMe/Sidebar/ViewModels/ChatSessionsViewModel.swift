@@ -3,6 +3,7 @@ import SwiftUI
 
 @MainActor
 final class ChatSessionsViewModel: ObservableObject {
+
     @Published var sessions: [ChatSession] = []
     @Published var isLoadingSessions: Bool = false
     @Published var sessionsLoadError: String? = nil
@@ -18,65 +19,18 @@ final class ChatSessionsViewModel: ObservableObject {
     private var generationToken: UUID = UUID()
     private var bootstrapTask: Task<Void, Never>? = nil
 
-    private func debugLog(_ message: @autoclosure () -> String) {
-#if DEBUG
-        print(message())
-#endif
-    }
-
-    private func effectiveUserIdKey() -> String? {
-        let raw: String? =
-            AuthService.shared.currentUser?.id.uuidString
-            ?? UserDefaults.standard.string(forKey: PreferenceKeys.currentUserId)
-        let trimmed = raw?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
-    private static func extractAvatarURLFromAuth() -> String? {
-        guard let user = AuthService.shared.currentUser else { return nil }
-
-        // Supabase OAuth providers commonly populate one of these keys.
-        let candidateKeys = ["avatar_url", "picture", "photo_url", "profile_image_url"]
-        for key in candidateKeys {
-            if let v = user.userMetadata[key]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !v.isEmpty {
-                return v
-            }
-        }
-        return nil
-    }
-
-    private func hydrateMyAvatarURLFromAuthIfPossible() {
-        guard (myAvatarURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) else { return }
-        guard let url = Self.extractAvatarURLFromAuth(),
-              !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-
-        myAvatarURL = url
-        if url.hasPrefix("http://") || url.hasPrefix("https://") {
-            UserDefaults.standard.set(url, forKey: PreferenceKeys.myAvatarURL)
-        }
-    }
 
     func startNewChat() {
-#if DEBUG
-        debugLog("[ChatSessionsVM] startNewChat() activeSessionId \(activeSessionId?.uuidString ?? "nil") -> nil")
-        let stack = Thread.callStackSymbols.prefix(10).joined(separator: "\n")
-        debugLog("[ChatSessionsVM] startNewChat call stack:\n\(stack)")
-#endif
         activeSessionId = nil
         chatViewKey = UUID()
     }
 
     func openSession(_ id: UUID) {
-#if DEBUG
-        debugLog("[ChatSessionsVM] openSession(\(id.uuidString)) activeSessionId=\(activeSessionId?.uuidString ?? "nil")")
-#endif
         activeSessionId = id
         chatViewKey = UUID()
     }
 
     func resetForLogout() {
-        // Cancel any in-flight work so it can't repopulate state after logout.
         bootstrapTask?.cancel()
         bootstrapTask = nil
         generationToken = UUID()
@@ -89,7 +43,7 @@ final class ChatSessionsViewModel: ObservableObject {
         isLoadingSessions = false
         myAvatarURL = nil
         UserDefaults.standard.removeObject(forKey: PreferenceKeys.myAvatarURL)
-        ChatMessagesViewModel.clearAllCachedMessages()
+        ChatMessagesViewModel.sharedMessagesCache.removeAll()
         observedUserId = nil
     }
 
@@ -111,7 +65,7 @@ final class ChatSessionsViewModel: ObservableObject {
         lastSessionsSyncAt = nil
         myAvatarURL = nil
         UserDefaults.standard.removeObject(forKey: PreferenceKeys.myAvatarURL)
-        ChatMessagesViewModel.clearAllCachedMessages()
+        ChatMessagesViewModel.sharedMessagesCache.removeAll()
         observedUserId = nil
     }
 
@@ -147,11 +101,9 @@ final class ChatSessionsViewModel: ObservableObject {
 
         if observedUserId != nil, observedUserId != currentKey {
             resetForAccountSwitch()
-            // After reset, we should proceed to re-register observers for the new account.
         }
         observedUserId = currentKey
 
-        // Best case: OAuth provider already gave us a picture URL; set it immediately.
         hydrateMyAvatarURLFromAuthIfPossible()
 
         // Warm from local cache immediately so the sidebar avatar can show on first paint.
@@ -206,7 +158,6 @@ final class ChatSessionsViewModel: ObservableObject {
                 }
             }
             if Task.isCancelled { return }
-            // Only end bootstrapping if we're still on the same account/generation.
             let stillSame =
                 (tokenAtStart == self.generationToken) &&
                 (userAtStart == self.observedUserId) &&
@@ -218,13 +169,11 @@ final class ChatSessionsViewModel: ObservableObject {
     }
 
     func refreshSessions() async {
-        // Avoid overlapping refreshes which often results in cancellation noise.
         if isLoadingSessions { return }
         await loadSessions()
     }
 
     func refreshMyAvatarURL() async {
-        // Keep provider URL if that's what we have; backend may still replace it with a durable URL later.
         hydrateMyAvatarURLFromAuthIfPossible()
 
         guard let accessToken = await AuthService.shared.getAccessToken() else { return }
@@ -234,19 +183,14 @@ final class ChatSessionsViewModel: ObservableObject {
             let raw = res.me.url?.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let url = raw, !url.isEmpty else { return }
 
-            // Only persist "real" URLs (avoid persisting temp/emoji schemes used for instant previews).
             if url.hasPrefix("http://") || url.hasPrefix("https://") {
                 UserDefaults.standard.set(url, forKey: PreferenceKeys.myAvatarURL)
             }
             myAvatarURL = url
-            // Avoid nuking caches if the URL didn't actually change (this runs on app boot).
             if oldURL != url {
                 NotificationCenter.default.post(name: .avatarChanged, object: nil)
             }
-        } catch {
-            // Keep cached avatar if backend fetch fails.
-            // (Avoid spamming logs here; AvatarCacheManager prints failures when loading images.)
-        }
+        } catch { }
     }
 
     func loadSessions() async {
@@ -279,7 +223,6 @@ final class ChatSessionsViewModel: ObservableObject {
                     lastMessageContent: dto.last_message_content
                 )
             }
-            // Discard results if account switched mid-flight.
             if tokenAtStart != generationToken { return }
             if userAtStart != observedUserId { return }
             if userAtStart != effectiveUserIdKey() { return }
@@ -287,18 +230,10 @@ final class ChatSessionsViewModel: ObservableObject {
             sessions = mapped
             isLoadingSessions = false
             lastSessionsSyncSucceeded = true
-            // Keep the local cache in sync with the server and prune orphaned local sessions
-            // (e.g. leftover "New Chat" stubs from interrupted local→server rekeys).
-#if DEBUG
-            let newChatCount = mapped.filter { $0.title == ChatSession.defaultTitle }.count
-            debugLog("[ChatSessionsVM] loadSessions OK serverCount=\(mapped.count) newChatTitleCount=\(newChatCount)")
-#endif
             await ChatStore.shared.reconcileSessionsWithServer(mapped)
         } catch is CancellationError {
-            // Pull-to-refresh cancels in-flight work frequently; don't treat as a failure.
             isLoadingSessions = false
         } catch {
-            // Treat URLSession cancellation as non-failure as well.
             let ns = error as NSError
             if ns.domain == NSURLErrorDomain, ns.code == NSURLErrorCancelled {
                 isLoadingSessions = false
@@ -332,14 +267,12 @@ final class ChatSessionsViewModel: ObservableObject {
     }
 
     func ensureProfilePictureCached() async {
-        // Ensure we have a URL immediately (provider or local cache) so UI doesn't appear "empty".
         hydrateMyAvatarURLFromAuthIfPossible()
         if let cached = UserDefaults.standard.string(forKey: PreferenceKeys.myAvatarURL),
            (myAvatarURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) {
             myAvatarURL = cached
         }
 
-        // Warm the image into cache so Settings opens already-rendered.
         if let url = myAvatarURL?.trimmingCharacters(in: .whitespacesAndNewlines),
            !url.isEmpty,
            (url.hasPrefix("http://") || url.hasPrefix("https://")) {
@@ -364,18 +297,45 @@ final class ChatSessionsViewModel: ObservableObject {
         return out.string(from: date)
     }
 
+    private func effectiveUserIdKey() -> String? {
+        let raw: String? =
+            AuthService.shared.currentUser?.id.uuidString
+            ?? UserDefaults.standard.string(forKey: PreferenceKeys.currentUserId)
+        let trimmed = raw?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func extractAvatarURLFromAuth() -> String? {
+        guard let user = AuthService.shared.currentUser else { return nil }
+
+        let candidateKeys = ["avatar_url", "picture", "photo_url", "profile_image_url"]
+        for key in candidateKeys {
+            if let v = user.userMetadata[key]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !v.isEmpty {
+                return v
+            }
+        }
+        return nil
+    }
+
+    private func hydrateMyAvatarURLFromAuthIfPossible() {
+        guard (myAvatarURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) else { return }
+        guard let url = Self.extractAvatarURLFromAuth(),
+              !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        myAvatarURL = url
+        if url.hasPrefix("http://") || url.hasPrefix("https://") {
+            UserDefaults.standard.set(url, forKey: PreferenceKeys.myAvatarURL)
+        }
+    }
+
     private func handleChatSessionCreated(_ note: Notification) {
         if let sid = note.userInfo?["sessionId"] as? UUID {
-#if DEBUG
-            let title = (note.userInfo?["title"] as? String) ?? "nil"
-            debugLog("[ChatSessionsVM] chatSessionCreated sid=\(sid.uuidString) title=\(title)")
-#endif
             if !self.sessions.contains(where: { $0.id == sid }) {
                 let rawTitle = (note.userInfo?["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                let title = rawTitle
                 let session = ChatSession(
                     id: sid,
-                    title: title,
+                    title: rawTitle,
                     lastUsedISO8601: note.userInfo?["lastUsedISO8601"] as? String,
                     lastMessageContent: note.userInfo?["lastMessageContent"] as? String
                 )
@@ -390,21 +350,15 @@ final class ChatSessionsViewModel: ObservableObject {
             let newId = note.userInfo?["newSessionId"] as? UUID
         else { return }
 
-#if DEBUG
-        debugLog("[ChatSessionsVM] chatSessionRekeyed old=\(oldId.uuidString) new=\(newId.uuidString) active=\(activeSessionId?.uuidString ?? "nil")")
-#endif
         let oldSession = self.sessions.first(where: { $0.id == oldId })
         let serverSession = self.sessions.first(where: { $0.id == newId })
 
-        // Remove any existing server row first, then update/insert deterministically.
-        // (Avoid index-shift bugs when newIdx < oldIdx.)
         self.sessions.removeAll(where: { $0.id == newId })
 
         if let idx = self.sessions.firstIndex(where: { $0.id == oldId }) {
             let base = oldSession ?? self.sessions[idx]
 
             let mergedTitle: String = {
-                // Prefer a non-default server title if we have it.
                 if let serverSession, serverSession.title != ChatSession.defaultTitle {
                     return serverSession.title
                 }
@@ -421,7 +375,6 @@ final class ChatSessionsViewModel: ObservableObject {
                 lastMessageContent: mergedLastMessage
             )
         } else if let serverSession {
-            // If the old session isn't present (e.g. server refresh replaced list), ensure the new one exists.
             if !self.sessions.contains(where: { $0.id == newId }) {
                 self.sessions.insert(serverSession, at: 0)
             }
@@ -443,4 +396,3 @@ final class ChatSessionsViewModel: ObservableObject {
         }
     }
 }
-

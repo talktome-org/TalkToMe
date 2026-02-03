@@ -23,7 +23,7 @@ struct ContentView: View {
                 // Only show cached UI if we have an effective user id (avoids flashing stale state across account switches).
                 if authService.currentUserId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
                    !sessionsViewModel.sessions.isEmpty {
-                    MainAppView()
+                    MainTabView()
                         .transition(.opacity)
                 } else {
                     // No spinner before cached UI: just show the app background.
@@ -32,7 +32,7 @@ struct ContentView: View {
                         .transition(.opacity)
                 }
             } else if authService.isAuthenticated {
-                MainAppView()
+                MainTabView()
                     .transition(.opacity)
             } else {
                 AuthView()

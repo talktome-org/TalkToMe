@@ -7,8 +7,6 @@ struct ChatView: View {
 
     @StateObject private var viewModel: ChatViewModel
 
-    @FocusState private var isInputFocused: Bool
-
     @State private var showFriendPicker: Bool = false
     @State private var pendingPartnerDraftText: String? = nil
     @State private var isFriendPickerLoading: Bool = false
@@ -19,8 +17,13 @@ struct ChatView: View {
     @State private var showReportChatConfirm: Bool = false
     @State private var showReportChatThanks: Bool = false
 
-    init(sessionId: UUID? = nil) {
+    @FocusState private var isInputFocused: Bool
+
+    let onBack: (() -> Void)?
+
+    init(sessionId: UUID? = nil, onBack: (() -> Void)? = nil) {
         _viewModel = StateObject(wrappedValue: ChatViewModel(sessionId: sessionId))
+        self.onBack = onBack
     }
 
     private var hasSentPartnerMessageInThisChat: Bool {
@@ -49,51 +52,68 @@ struct ChatView: View {
 
     @MainActor
     var body: some View {
-        ChatScreenView(
-            chatViewModel: viewModel,
-            onSend: { handleSendTapped() },
-            isInputFocused: $isInputFocused
-        )
-        .task {
-            await viewModel.preconnectDictationSTTIfNeeded()
-        }
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button("New chat", systemImage: "square.and.pencil") {
-                    sessionsViewModel.startNewChat()
+        NavigationStack {
+            ChatScreenView(
+                chatViewModel: viewModel,
+                onSend: { handleSendTapped() },
+                isInputFocused: $isInputFocused
+            )
+            .task {
+                await viewModel.voiceController.preconnectDictationSTTIfNeeded()
+            }
+            .toolbar {
+                if let onBack {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            Haptics.impact(.light)
+                            onBack()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 17, weight: .semibold))
+                                Text("Back")
+                            }
+                        }
+                    }
                 }
 
-                Menu {
-                    Button("Rename chat", systemImage: "pencil") {
-                        guard activeSessionIdForActions != nil else { return }
-                        renameChatTitle = activeSessionTitleForActions
-                        showRenameChatPrompt = true
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button("New chat", systemImage: "square.and.pencil") {
+                        sessionsViewModel.startNewChat()
                     }
-                    .disabled(activeSessionIdForActions == nil)
 
-                    Button("Report chat", systemImage: "exclamationmark.bubble") {
-                        showReportChatConfirm = true
-                    }
-                    .disabled(activeSessionIdForActions == nil)
+                    Menu {
+                        Button("Rename chat", systemImage: "pencil") {
+                            guard activeSessionIdForActions != nil else { return }
+                            renameChatTitle = activeSessionTitleForActions
+                            showRenameChatPrompt = true
+                        }
+                        .disabled(activeSessionIdForActions == nil)
 
-                    Button("Delete chat", systemImage: "trash", role: .destructive) {
-                        showDeleteChatConfirm = true
+                        Button("Report chat", systemImage: "exclamationmark.bubble") {
+                            showReportChatConfirm = true
+                        }
+                        .disabled(activeSessionIdForActions == nil)
+
+                        Button("Delete chat", systemImage: "trash", role: .destructive) {
+                            showDeleteChatConfirm = true
+                        }
+                        .disabled(activeSessionIdForActions == nil)
+                    } label: {
+                        Label("More", systemImage: "ellipsis")
                     }
-                    .disabled(activeSessionIdForActions == nil)
-                } label: {
-                    Label("More", systemImage: "ellipsis")
                 }
-            }
 
-            if #available(iOS 26.0, *) {
-                ToolbarSpacer(.fixed, placement: .topBarTrailing)
-            }
+                if #available(iOS 26.0, *) {
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                }
 
-            ToolbarItem(placement: .topBarTrailing) {
-                if let friend = friendForProfilePictureDisplay {
-                    SidebarAvatarView(avatarURL: friend.avatarURL)
-                        .frame(width: 36, height: 36)
-                        .clipShape(Circle())
+                ToolbarItem(placement: .topBarTrailing) {
+                    if let friend = friendForProfilePictureDisplay {
+                        SidebarAvatarView(avatarURL: friend.avatarURL)
+                            .frame(width: 36, height: 36)
+                            .clipShape(Circle())
+                    }
                 }
             }
         }
@@ -102,25 +122,35 @@ struct ChatView: View {
             Button("Cancel", role: .cancel) {}
             Button("Save") {
                 let title = renameChatTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !title.isEmpty else { return }
-                // UI-only for now (no rename action wired).
+                guard !title.isEmpty, let sessionId = activeSessionIdForActions else { return }
                 Haptics.impact(.light)
+                Task { @MainActor in
+                    await sessionsViewModel.renameSession(sessionId, to: title)
+                }
             }
         } message: {
             Text("Give this chat a new title.")
         }
         .confirmationDialog("Delete chat?", isPresented: $showDeleteChatConfirm, titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
-                // UI-only for now (no delete action wired).
+                guard let sessionId = activeSessionIdForActions else { return }
                 Haptics.impact(.light)
+                Task { @MainActor in
+                    await sessionsViewModel.deleteSession(sessionId)
+                    // Navigate away after deletion
+                    if let onBack {
+                        onBack()
+                    } else {
+                        sessionsViewModel.startNewChat()
+                    }
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will delete the chat and its messages.")
+            Text("This will delete the chat and all its messages. If this chat is linked, it will be deleted on their end too.")
         }
         .confirmationDialog("Report chat?", isPresented: $showReportChatConfirm, titleVisibility: .visible) {
             Button("Report", role: .destructive) {
-                // TODO: Wire this to a backend/reporting endpoint.
                 showReportChatThanks = true
             }
             Button("Cancel", role: .cancel) {}
@@ -176,10 +206,7 @@ struct ChatView: View {
 
     private func handleSendTapped() {
         Task { @MainActor in
-            // IMPORTANT: The main chat send button always sends to the AI chat.
-            // Friend selection is only required for "send to partner" actions (partner draft blocks),
-            // which are handled by `.sendPartnerMessageFromBubble`.
-            viewModel.sendComposerMessage()
+            viewModel.voiceController.sendComposerMessage()
         }
     }
 
@@ -208,128 +235,3 @@ struct ChatView: View {
         .environmentObject(FriendsViewModel(accessTokenProvider: { "" }))
 }
 #endif
-
-private struct FriendPickerSheetView: View {
-    @Binding var isPresented: Bool
-    let friends: [FriendSummary]
-    let isLoading: Bool
-    let errorMessage: String?
-    let onRetry: () -> Void
-    let onPick: (UUID) -> Void
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 12) {
-                Text("Pick a friend")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 6)
-
-                if friends.isEmpty {
-                    if let errorMessage, !errorMessage.isEmpty {
-                        VStack(spacing: 10) {
-                            Text(errorMessage)
-                                .font(.system(size: 14))
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-
-                            Button("Retry") {
-                                Haptics.impact(.light)
-                                onRetry()
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                        .padding(.top, 6)
-                    } else if isLoading {
-                        VStack(spacing: 10) {
-                            ProgressView()
-                            Text("Loading friends…")
-                                .font(.system(size: 14))
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.top, 6)
-                    } else {
-                        Text("No friends yet. Add one with a 4-digit code first.")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.top, 6)
-                    }
-                } else {
-                    // If we already have cached friends, show the list immediately.
-                    // We can still refresh in the background without blocking selection.
-                    if isLoading {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("Refreshing…")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                        }
-                        .padding(.top, 2)
-                    } else if let errorMessage, !errorMessage.isEmpty {
-                        HStack(spacing: 10) {
-                            Text(errorMessage)
-                                .font(.system(size: 13))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                            Spacer()
-                            Button("Retry") {
-                                Haptics.impact(.light)
-                                onRetry()
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                        }
-                        .padding(.top, 2)
-                    }
-
-                    List {
-                        ForEach(friends) { friend in
-                            Button {
-                                Haptics.impact(.light)
-                                onPick(friend.id)
-                            } label: {
-                                HStack {
-                                    SidebarAvatarView(avatarURL: friend.avatarURL)
-                                        .frame(width: 34, height: 34)
-                                        .clipShape(Circle())
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(friend.fullName.isEmpty ? "Friend" : friend.fullName)
-                                            .font(.system(size: 16, weight: .semibold))
-                                            .foregroundStyle(.primary)
-                                    }
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.vertical, 6)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .listStyle(.plain)
-                }
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-            .navigationTitle("Send to…")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
-                        pendingDismiss()
-                    }
-                }
-            }
-        }
-    }
-
-    private func pendingDismiss() {
-        isPresented = false
-    }
-}
-

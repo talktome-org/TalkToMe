@@ -32,7 +32,6 @@ extension BackendService {
         chatHistory: [ChatHistoryMessage]?,
         attachments: [ChatAttachment]? = nil,
         accessToken: String,
-        focusSnippet: String? = nil,
         previousResponseId: String? = nil,
         friendUserId: UUID? = nil,
         messageId: UUID? = nil
