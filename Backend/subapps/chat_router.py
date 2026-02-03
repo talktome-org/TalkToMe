@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import json
 import asyncio
+import os
 import time
 import traceback
 import uuid
@@ -34,7 +37,9 @@ from Backend.crud.client_uploads.uploads_crud import create_upload
 from Backend.database import SessionLocal
 from Backend.models.client_uploads.upload_model import Upload
 from Backend.services.chat_service import ChatService, ChatTitleService
+from Backend.services.embedding_service import EmbeddingService
 from Backend.services.file_signing_service import sign_upload_id
+from Backend.crud.books.rag_crud import search_similar_chunks
 from Backend.crud.friends.friends_crud import get_friendship_id_for_pair, list_friends_for_user
 from Backend.models.profile.profile_model import Profile
 from Backend.models.friends.friendship_model import Friendship
@@ -44,6 +49,37 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 chat_service = ChatService()
 chat_title_service = ChatTitleService()
+embedding_service = EmbeddingService()
+
+RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5") or "5")
+RAG_MAX_CHARS_PER_CHUNK = int(os.getenv("RAG_MAX_CHARS_PER_CHUNK", "1200") or "1200")
+
+
+def _format_rag_context(rows: list[dict]) -> Optional[str]:
+    """
+    Convert retrieved DB chunks to a compact, citation-friendly context block.
+    """
+    if not rows:
+        return None
+
+    parts: list[str] = []
+    for i, r in enumerate(rows, 1):
+        source = (r.get("source") or "unknown").strip()
+        chunk_index = r.get("chunk_index")
+        chunk_text = (r.get("chunk_text") or "").strip()
+        if not chunk_text:
+            continue
+        if len(chunk_text) > RAG_MAX_CHARS_PER_CHUNK:
+            chunk_text = chunk_text[:RAG_MAX_CHARS_PER_CHUNK].rstrip() + "…"
+        parts.append(f"[{i}] source={source} chunk_index={chunk_index}\n{chunk_text}")
+
+    if not parts:
+        return None
+
+    return (
+        "Retrieved context (use only if relevant; do not invent facts):\n"
+        + "\n\n".join(parts)
+    )
 
 
 async def _resolve_friend_display_name(*, user_id: uuid.UUID) -> Optional[str]:
@@ -404,10 +440,32 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                         except Exception:
                             continue
 
+                # RAG: retrieve relevant book chunks from Supabase.
+                rag_context_text: Optional[str] = None
+                try:
+                    q_text = (chat_request.message or "").strip()
+                    if q_text and RAG_TOP_K > 0:
+                        # Embeddings call is synchronous; run it off the event loop.
+                        q_embed = await run_in_threadpool(embedding_service.get_embedding, q_text)
+                        rows = await search_similar_chunks(query_embedding=q_embed, limit=RAG_TOP_K)
+                        rag_context_text = _format_rag_context(rows)
+                except Exception as e:
+                    # Never fail chat if RAG fails.
+                    print(f"[RAG] retrieval failed: {e}")
+                    rag_context_text = None
+
+                merged_partner_context = partner_ab_context_text
+                if rag_context_text:
+                    # Append so partner context remains small and first.
+                    merged_partner_context = (partner_ab_context_text or "").rstrip()
+                    if merged_partner_context:
+                        merged_partner_context += "\n\n"
+                    merged_partner_context += rag_context_text
+
                 input_messages = chat_service.build_messages(
                     session_partner_letter=partner_letter,
                     last_user_message=chat_request.message,
-                    partner_ab_context_text=partner_ab_context_text,
+                    partner_ab_context_text=merged_partner_context,
                     image_urls=image_urls or None,
                     file_urls=file_urls or None,
                 )
