@@ -10,18 +10,12 @@ from starlette.concurrency import run_in_threadpool
 from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert
 
-# Support execution both as package and as script runner
-try:
-    from ..database import SessionLocal  # type: ignore
-    from ..models.books.document_model import Document  # type: ignore
-    from ..models.books.book_chunks_model import BookChunks  # type: ignore
-except ImportError:
-    # Fallback when relative import fails (script execution)
-    ROOT = Path(__file__).resolve().parents[1]
-    sys.path.insert(0, str(ROOT))
-    from database import SessionLocal  # type: ignore
-    from models.books.document_model import Document  # type: ignore
-    from models.books.book_chunks_model import BookChunks  # type: ignore
+# Use absolute imports so this module works when invoked from:
+# - FastAPI app (as a package)
+# - background scripts that add repo root to sys.path (see background_tasks/ingest_books.py)
+from Backend.database import SessionLocal, engine
+from Backend.models.books.document_model import Document
+from Backend.models.books.book_chunks_model import BookChunks
 
 CHUNKS_TABLE = "book_chunks"
 DOCUMENTS_TABLE = "documents"
@@ -33,34 +27,41 @@ async def upsert_document(
     meta = metadata or {}
 
     def _upsert():
-        db = SessionLocal()
-        try:
-            existing = (
-                db.execute(
-                    select(Document.id).where(
-                        Document.source_type == source_type,
-                        Document.source == source,
-                    )
-                )
-                .scalars()
-                .first()
-            )
+        # Use an Engine connection instead of ORM Session for maximum compatibility
+        # across SQLAlchemy versions/drivers in "executemany" paths.
+        with engine.begin() as conn:
+            existing = conn.execute(
+                text(
+                    f"""
+                    select id
+                    from {DOCUMENTS_TABLE}
+                    where source_type = :source_type and source = :source
+                    limit 1
+                    """
+                ),
+                {"source_type": source_type, "source": source},
+            ).scalar_one_or_none()
             created = existing is None
 
-            stmt = (
-                insert(Document)
-                .values(source_type=source_type, source=source, title=title, metadata=meta)
-                .on_conflict_do_update(
-                    index_elements=[Document.source_type, Document.source],
-                    set_={"title": title, "metadata": meta},
-                )
-                .returning(Document.id)
+            stmt = text(
+                f"""
+                insert into {DOCUMENTS_TABLE} (source_type, source, title, metadata)
+                values (:source_type, :source, :title, (:metadata)::jsonb)
+                on conflict (source_type, source)
+                do update set title = excluded.title, metadata = excluded.metadata
+                returning id
+                """
             )
-            doc_id = db.execute(stmt).scalar_one()
-            db.commit()
+            doc_id = conn.execute(
+                stmt,
+                {
+                    "source_type": source_type,
+                    "source": source,
+                    "title": title,
+                    "metadata": json.dumps(meta or {}),
+                },
+            ).scalar_one()
             return uuid.UUID(str(doc_id)), created
-        finally:
-            db.close()
 
     return await run_in_threadpool(_upsert)
 
@@ -106,56 +107,72 @@ async def insert_chunks_batch(
         )
 
     def _insert():
-        db = SessionLocal()
-        try:
-            # Use explicit cast to vector so we don't need a pgvector Python adapter.
-            stmt = text(
-                f"""
-                insert into {CHUNKS_TABLE}
-                (id, document_id, chunk_text, embedding, source, source_type, chunk_index, metadata, content_hash, token_count, embedding_model, created_at)
-                values
-                (:id, :document_id, :chunk_text, (:embedding)::vector, :source, :source_type, :chunk_index, (:metadata)::jsonb, :content_hash, :token_count, :embedding_model, :created_at)
-                """
+        # Use explicit cast to vector so we don't need a pgvector Python adapter.
+        stmt = text(
+            f"""
+            insert into {CHUNKS_TABLE}
+            (id, document_id, chunk_text, embedding, source, source_type, chunk_index, metadata, content_hash, token_count, embedding_model, created_at)
+            values
+            (:id, :document_id, :chunk_text, (:embedding)::vector, :source, :source_type, :chunk_index, (:metadata)::jsonb, :content_hash, :token_count, :embedding_model, :created_at)
+            """
+        )
+
+        exec_payloads = []
+        for p in payloads:
+            exec_payloads.append(
+                {
+                    "id": p["id"],
+                    "document_id": p["document_id"],
+                    "chunk_text": p["chunk_text"],
+                    "embedding": _vector_literal(p["embedding"]),
+                    "source": p["source"],
+                    "source_type": p["source_type"],
+                    "chunk_index": p["chunk_index"],
+                    "metadata": json.dumps(p["metadata"] or {}),
+                    "content_hash": p["content_hash"],
+                    "token_count": p.get("token_count"),
+                    "embedding_model": p.get("embedding_model"),
+                    "created_at": p["created_at"],
+                }
             )
 
-            exec_payloads = []
-            for p in payloads:
-                exec_payloads.append(
-                    {
-                        "id": p["id"],
-                        "document_id": p["document_id"],
-                        "chunk_text": p["chunk_text"],
-                        "embedding": _vector_literal(p["embedding"]),
-                        "source": p["source"],
-                        "source_type": p["source_type"],
-                        "chunk_index": p["chunk_index"],
-                        "metadata": json.dumps(p["metadata"] or {}),
-                        "content_hash": p["content_hash"],
-                        "token_count": p.get("token_count"),
-                        "embedding_model": p.get("embedding_model"),
-                        "created_at": p["created_at"],
-                    }
-                )
-
-            db.execute(stmt, exec_payloads)
-            db.commit()
+        # Prefer a single executemany for speed.
+        try:
+            with engine.begin() as conn:
+                conn.execute(stmt, exec_payloads)
             return len(exec_payloads)
-        finally:
-            db.close()
+        except Exception as bulk_exc:
+            # IMPORTANT: once a statement fails, the transaction is aborted and cannot be reused.
+            # So we restart in a new transaction and try row-by-row.
+            inserted = 0
+            first_row_exc: Exception | None = None
+            with engine.begin() as conn:
+                for row in exec_payloads:
+                    try:
+                        conn.execute(stmt, row)
+                        inserted += 1
+                    except Exception as row_exc:
+                        if first_row_exc is None:
+                            first_row_exc = row_exc
+                        # Skip bad rows; keep inserting the rest.
+                        continue
+            if inserted == 0 and first_row_exc is not None:
+                # If nothing inserted, surface the most helpful error.
+                raise first_row_exc from bulk_exc
+            return inserted
 
     return await run_in_threadpool(_insert)
 
 
 async def delete_chunks_by_source(*, source: str) -> int:
     def _delete():
-        db = SessionLocal()
-        try:
-            count = db.execute(select(BookChunks.id).where(BookChunks.source == source)).all()
-            db.execute(delete(BookChunks).where(BookChunks.source == source))
-            db.commit()
-            return len(count or [])
-        finally:
-            db.close()
+        with engine.begin() as conn:
+            count = conn.execute(
+                text(f"select count(1) from {CHUNKS_TABLE} where source = :source"),
+                {"source": source},
+            ).scalar_one()
+            conn.execute(text(f"delete from {CHUNKS_TABLE} where source = :source"), {"source": source})
+            return int(count or 0)
 
     return await run_in_threadpool(_delete)
 
