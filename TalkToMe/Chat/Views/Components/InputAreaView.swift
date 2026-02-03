@@ -15,6 +15,20 @@ struct ChatInputBarFramePreferenceKey: PreferenceKey {
     }
 }
 
+private struct InputAreaGlassModifier: ViewModifier {
+    let shape: RoundedRectangle
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular.interactive(), in: shape)
+        } else {
+            content
+                .background(.thinMaterial, in: shape)
+                .overlay(shape.strokeBorder(Color.primary.opacity(0.10), lineWidth: 1))
+        }
+    }
+}
+
 struct InputAreaView: View {
     let isVoiceRecording: Bool
     let voiceModeEnabled: Bool
@@ -35,6 +49,8 @@ struct InputAreaView: View {
     let onVoiceModeStop: () -> Void
 
     private let sendSize: CGFloat = 40
+    private let composerMinHeight: CGFloat = 22
+    private let composerMaxHeight: CGFloat = 120
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -47,6 +63,8 @@ struct InputAreaView: View {
         return !(trimmedInput.isEmpty && pendingAttachments.isEmpty)
     }
 
+    private static let inputBarShape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             focusSnippetView
@@ -55,10 +73,6 @@ struct InputAreaView: View {
         .padding(.leading, 18)
         .padding(.trailing, 10)
         .padding(.vertical, 10)
-        .background(inputBarBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 25, style: .continuous))
-        .overlay(inputBarOverlay)
-        .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: 4)
         .background(
             GeometryReader { proxy in
                 Color.clear.preference(
@@ -67,6 +81,8 @@ struct InputAreaView: View {
                 )
             }
         )
+        .clipShape(Self.inputBarShape)
+        .modifier(InputAreaGlassModifier(shape: Self.inputBarShape))
         .padding(.horizontal, 16)
         .animation(.easeInOut(duration: 0.2), value: isInputFocused.wrappedValue)
     }
@@ -109,22 +125,24 @@ struct InputAreaView: View {
     private var inputStack: some View {
         VStack(alignment: .leading, spacing: 6) {
             attachmentsStrip
-            textFieldOrWaveform
-            bottomControlsRow
+            composerRow
         }
         .frame(minHeight: 56)
     }
 
-    private var bottomControlsRow: some View {
-        HStack(alignment: .center, spacing: 10) {
+    private var composerRow: some View {
+        HStack(alignment: .bottom, spacing: 10) {
             attachmentsButton
-            Spacer(minLength: 8)
+                .padding(.bottom, 2)
+
+            textFieldOrWaveform
+                .frame(maxWidth: .infinity, alignment: .bottom)
+
             if !canSend && !isVoiceRecording {
                 speakButton
             }
             sendButton
         }
-        .padding(.top, 0)
     }
 
     private var speakButton: some View {
@@ -242,19 +260,36 @@ struct InputAreaView: View {
 
     @ViewBuilder
     private var textFieldOrWaveform: some View {
-        TextField("Message TalkToMe", text: $inputText, axis: .vertical)
-            .lineLimit(1...5)
-            .lineSpacing(2)
-            .font(.system(size: 17, weight: .regular))
-            .foregroundColor(.primary)
-            .textFieldStyle(.plain)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 6)
-            .focused(isInputFocused)
-            // We still write into the field live while recording; disabling avoids the user
-            // fighting the transcriber for the cursor.
-            .disabled(isVoiceRecording)
+        let focusBinding = Binding(
+            get: { isInputFocused.wrappedValue },
+            set: { isInputFocused.wrappedValue = $0 }
+        )
+
+        ZStack(alignment: .topLeading) {
+            GrowingTextView(
+                text: $inputText,
+                isFocused: focusBinding,
+                minHeight: composerMinHeight,
+                maxHeight: composerMaxHeight,
+                font: .systemFont(ofSize: 17, weight: .regular),
+                textColor: .label,
+                // We still write into the field live while recording; disabling avoids the user
+                // fighting the transcriber for the cursor.
+                isEditable: !isVoiceRecording
+            )
+            .frame(minHeight: composerMinHeight, maxHeight: composerMaxHeight, alignment: .bottom)
+
+            if inputText.isEmpty {
+                Text("Message TalkToMe")
+                    .font(.system(size: 17, weight: .regular))
+                    .foregroundColor(.secondary)
+                    .padding(.top, 1)
+                    .allowsHitTesting(false)
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
     }
 
 
@@ -349,29 +384,6 @@ struct InputAreaView: View {
         }
     }
 
-    @ViewBuilder
-    private var inputBarBackground: some View {
-        if #available(iOS 26.0, *) {
-            Color.clear
-                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 25, style: .continuous))
-        } else {
-            RoundedRectangle(cornerRadius: 25, style: .continuous)
-                .fill(.ultraThinMaterial)
-        }
-    }
-
-    @ViewBuilder
-    private var inputBarOverlay: some View {
-        if #available(iOS 26.0, *) {
-            EmptyView()
-        } else {
-            RoundedRectangle(cornerRadius: 25, style: .continuous)
-                .strokeBorder(
-                    colorScheme == .dark ? Color.white.opacity(0.15) : Color.black.opacity(0.08),
-                    lineWidth: 1
-                )
-        }
-    }
 }
 
 #Preview {
