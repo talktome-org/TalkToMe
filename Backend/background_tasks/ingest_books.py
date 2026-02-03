@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import sys
 import json
@@ -6,7 +8,10 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 PARENT = ROOT.parent
-load_dotenv(dotenv_path=ROOT / ".env")
+# Load env for local runs.
+# Prefer Backend/.env, but also support repo-root .env (common when running from project root).
+load_dotenv(dotenv_path=ROOT / ".env", override=False)
+load_dotenv(dotenv_path=PARENT / ".env", override=False)
 
 # Add repo root so "Backend" package imports work
 if str(PARENT) not in sys.path:
@@ -83,7 +88,9 @@ async def ingest_books(
     split_lines: int | None = None,
 ):
     if books_dir is None:
-        books_dir = Path(__file__).resolve().parent.parent / "books"
+        # Prefer the repo-shipped library of TXT files.
+        default_data_dir = Path(__file__).resolve().parent.parent / "resources" / "data"
+        books_dir = default_data_dir if default_data_dir.exists() else (Path(__file__).resolve().parent.parent / "books")
     books_dir.mkdir(exist_ok=True)
 
     processor = DocumentProcessor(
@@ -91,6 +98,7 @@ async def ingest_books(
         chunk_overlap=chunk_overlap,
         max_pages=max_pages,
         max_chars=max_chars,
+        chunker=chunker,
         use_tokenizer=(chunker == "tokens"),
     )
     embedder = EmbeddingService(model=embedding_model)
@@ -120,20 +128,25 @@ async def ingest_books(
             global_chunk_index = 0
 
             for part_path in part_files:
-                if part_path.suffix.lower() == ".pdf":
-                    chunks = processor.process_pdf(part_path)
-                else:
-                    chunks = processor.process_txt(part_path)
-
-                if not chunks:
-                    print(f"No chunks created for {part_path.name}; skipping.")
-                    continue
-
-                if max_chunks is not None and len(chunks) > max_chunks:
-                    chunks = chunks[:max_chunks]
-
                 # Stage 1: Chunk -> JSONL
-                if stage in ("chunk", "all", "embed", "insert"):
+                #
+                # IMPORTANT: For stage=embed/insert we should NOT re-chunk.
+                # Those stages rely on the existing *.chunks.jsonl / *.embeddings.jsonl outputs.
+                if stage in ("chunk", "all"):
+                    if part_path.suffix.lower() == ".pdf":
+                        chunks = processor.process_pdf(part_path)
+                    else:
+                        chunks = processor.process_txt(part_path)
+
+                    if not chunks:
+                        print(f"No chunks created for {part_path.name}; skipping.")
+                        continue
+
+                    print(f"Created {len(chunks)} chunks for {part_path.name}")
+
+                    if max_chunks is not None and len(chunks) > max_chunks:
+                        chunks = chunks[:max_chunks]
+
                     chunk_rows = []
                     for chunk in chunks:
                         meta = chunk.get("metadata", {}) or {}
@@ -153,7 +166,7 @@ async def ingest_books(
                     print(f"Wrote chunks to {chunks_path}")
 
                 # Stage 2: Embed -> JSONL
-                if stage in ("embed", "all", "insert"):
+                if stage in ("embed", "all"):
                     chunks_path = tmp_dir / f"{file_path.stem}.chunks.jsonl"
                     if not chunks_path.exists():
                         print(f"Missing chunks file: {chunks_path}. Run with --stage chunk first.")
@@ -163,6 +176,8 @@ async def ingest_books(
                     with open(embedded_path, "w", encoding="utf-8") as out_f:
                         batch_rows = []
                         batch_texts = []
+                        embedded_total = 0
+                        batch_idx = 0
                         for row in _iter_jsonl(chunks_path):
                             text = row.get("text") or ""
                             if not text.strip():
@@ -170,14 +185,22 @@ async def ingest_books(
                             batch_rows.append(row)
                             batch_texts.append(text)
                             if len(batch_rows) >= batch_size:
+                                batch_idx += 1
+                                print(f"Embedding batch {batch_idx} ({len(batch_texts)} chunks)...")
                                 embeddings = embedder.get_embeddings_batch(batch_texts, batch_size=batch_size)
                                 for r, e in zip(batch_rows, embeddings):
                                     out_f.write(json.dumps({**r, "embedding": e, "embedding_model": embedding_model}, ensure_ascii=False) + "\n")
+                                embedded_total += len(batch_rows)
+                                print(f"Embedded {embedded_total} chunks so far.")
                                 batch_rows, batch_texts = [], []
                         if batch_rows:
+                            batch_idx += 1
+                            print(f"Embedding final batch {batch_idx} ({len(batch_texts)} chunks)...")
                             embeddings = embedder.get_embeddings_batch(batch_texts, batch_size=batch_size)
                             for r, e in zip(batch_rows, embeddings):
                                 out_f.write(json.dumps({**r, "embedding": e, "embedding_model": embedding_model}, ensure_ascii=False) + "\n")
+                            embedded_total += len(batch_rows)
+                            print(f"Embedded {embedded_total} chunks total for {file_path.name}.")
                     print(f"Wrote embeddings to {embedded_path}")
 
                 # Stage 3: Insert into Supabase
@@ -247,7 +270,13 @@ if __name__ == "__main__":
     parser.add_argument("--max-chunks", type=int, default=None, help="Max chunks per file (truncate)")
     parser.add_argument("--stage", type=str, default="all", choices=["chunk", "embed", "insert", "all"], help="Pipeline stage to run")
     parser.add_argument("--tmp-dir", type=str, default=None, help="Directory for intermediate chunk/embed files")
-    parser.add_argument("--chunker", type=str, default="tokens", choices=["tokens", "chars"], help="Chunk by tokens or characters")
+    parser.add_argument(
+        "--chunker",
+        type=str,
+        default="tokens",
+        choices=["tokens", "chars", "recursive"],
+        help="Chunk by tokens, characters, or recursive (langchain)",
+    )
     parser.add_argument("--split-lines", type=int, default=None, help="Split TXT files into parts by line count")
     args = parser.parse_args()
 
