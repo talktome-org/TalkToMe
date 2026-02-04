@@ -1,85 +1,35 @@
 import SwiftUI
 import UIKit
 
-struct SendAnimationNamespaceKey: EnvironmentKey {
-    static let defaultValue: Namespace.ID? = nil
-}
-
-struct OutgoingAnimatingMessageIdKey: EnvironmentKey {
-    static let defaultValue: UUID? = nil
-}
-
-extension EnvironmentValues {
-    var sendAnimationNamespace: Namespace.ID? {
-        get { self[SendAnimationNamespaceKey.self] }
-        set { self[SendAnimationNamespaceKey.self] = newValue }
-    }
-
-    var outgoingAnimatingMessageId: UUID? {
-        get { self[OutgoingAnimatingMessageIdKey.self] }
-        set { self[OutgoingAnimatingMessageIdKey.self] = newValue }
-    }
-}
-
 struct MessagesListView: View {
-
     @ObservedObject var chatViewModel: ChatViewModel
 
-    @Binding var isNearBottom: Bool
-    @Binding var followBottom: Bool
+    let isInputFocused: Bool
+    let inputAreaHeight: CGFloat
+
+    var sendAnimationNamespace: Namespace.ID? = nil
+    var outgoingAnimatingMessageId: UUID? = nil
+    var outgoingSourceMessageId: UUID? = nil
+
+    @State private var isNearBottom: Bool = true
+    @State private var followBottom: Bool = false
+    @State private var scrollToBottomToken: Int = 0
     @State private var underlyingScrollView: UIScrollView? = nil
     @State private var scrollAnimator: UIViewPropertyAnimator? = nil
 
-    let sendAnimationNamespace: Namespace.ID?
-    let outgoingAnimatingMessageId: UUID?
-    let outgoingSourceMessageId: UUID?
-    let bottomReservedSpace: CGFloat
+    private var messages: [ChatMessage] { chatViewModel.messages }
+    private var isAssistantTyping: Bool { chatViewModel.isAssistantTyping }
+    private var initialJumpToken: Int { chatViewModel.initialJumpToken }
 
-    let messages: [ChatMessage]
-    let isInputFocused: Bool
-    let isAssistantTyping: Bool
-    let initialJumpToken: Int
-    let scrollToBottomToken: Int
-
-    init(
-        chatViewModel: ChatViewModel,
-        isNearBottom: Binding<Bool>,
-        followBottom: Binding<Bool>,
-        messages: [ChatMessage],
-        isInputFocused: Bool,
-        isAssistantTyping: Bool,
-        initialJumpToken: Int,
-        scrollToBottomToken: Int,
-        sendAnimationNamespace: Namespace.ID? = nil,
-        outgoingAnimatingMessageId: UUID? = nil,
-        outgoingSourceMessageId: UUID? = nil,
-        bottomReservedSpace: CGFloat = 0
-    ) {
-        self._chatViewModel = ObservedObject(wrappedValue: chatViewModel)
-        self._isNearBottom = isNearBottom
-        self._followBottom = followBottom
-        self.messages = messages
-        self.isInputFocused = isInputFocused
-        self.isAssistantTyping = isAssistantTyping
-        self.initialJumpToken = initialJumpToken
-        self.scrollToBottomToken = scrollToBottomToken
-
-        self.sendAnimationNamespace = sendAnimationNamespace
-        self.outgoingAnimatingMessageId = outgoingAnimatingMessageId
-        self.outgoingSourceMessageId = outgoingSourceMessageId
-        self.bottomReservedSpace = bottomReservedSpace
-    }
-
-    // Keep this small: only auto-scroll on focus when the user is basically at the bottom.
     private let nearBottomThreshold: CGFloat = 20
+    private let scrollButtonSize: CGFloat = 42
+    private let scrollButtonIconSize: CGFloat = 16
 
     private func scrollToBottomUIKit(_ scrollView: UIScrollView, animated: Bool) {
         let minOffsetY = -scrollView.adjustedContentInset.top
         let maxOffsetY = max(minOffsetY, scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom)
         let target = CGPoint(x: 0, y: maxOffsetY)
 
-        // Default UIScrollView animation can feel "snappy" / uneven when content size is changing.
-        // Use an explicit animator for a smoother ease-in-out and to cancel in-flight animations.
         if animated {
             scrollAnimator?.stopAnimation(true)
             let animator = UIViewPropertyAnimator(duration: 0.38, curve: .easeInOut) {
@@ -94,6 +44,10 @@ struct MessagesListView: View {
         }
     }
 
+    private var shouldShowScrollButton: Bool {
+        !messages.isEmpty && !isNearBottom
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
@@ -103,7 +57,9 @@ struct MessagesListView: View {
                         message: message,
                         onSendToPartner: { text in
                             NotificationCenter.default.post(name: .sendPartnerMessageFromBubble, object: nil, userInfo: ["content": text])
-                        }
+                        },
+                        sendAnimationNamespace: sendAnimationNamespace,
+                        outgoingAnimatingMessageId: outgoingAnimatingMessageId
                     )
                     .opacity(message.id == outgoingSourceMessageId ? 0 : 1)
                     .animation(nil, value: outgoingSourceMessageId)
@@ -119,10 +75,9 @@ struct MessagesListView: View {
             }
             .padding(.top, 24)
             .padding(.horizontal)
-            .padding(.bottom, bottomReservedSpace)
-            // Observe the underlying UIScrollView so "near bottom" updates reliably while the user scrolls.
+            .padding(.bottom, 14) // breathing room above input
             .background(
-                ScrollViewBottomProximityObserver(bottomScrollIndicatorInset: bottomReservedSpace, onChange: { scrollView in
+                ScrollViewBottomProximityObserver(onChange: { scrollView in
                     let visibleBottomY = scrollView.contentOffset.y
                         + scrollView.bounds.height
                         - scrollView.adjustedContentInset.bottom
@@ -132,23 +87,23 @@ struct MessagesListView: View {
 
                     let isUserDragging = scrollView.isDragging || scrollView.isTracking
                     if isUserDragging && distanceFromBottom > nearBottomThreshold {
-                        // User scrolled away; stop following.
                         if followBottom { followBottom = false }
                     }
 
-                    // If user tapped the button to follow, keep pinned while assistant streams.
                     if followBottom && !isUserDragging && distanceFromBottom > 1 {
                         scrollToBottomUIKit(scrollView, animated: false)
                     }
                 }, onAttach: { scrollView in
                     underlyingScrollView = scrollView
+                    scrollView.clipsToBounds = true
                 })
             )
         }
         .scrollBounceBehavior(.always)
         .scrollIndicators(.visible)
-        .environment(\.sendAnimationNamespace, sendAnimationNamespace)
-        .environment(\.outgoingAnimatingMessageId, outgoingAnimatingMessageId)
+        .overlay(alignment: .bottomTrailing) {
+            scrollToBottomButton
+        }
         .onChange(of: scrollToBottomToken, initial: false) { _, _ in
             guard let sv = underlyingScrollView else { return }
             sv.layoutIfNeeded()
@@ -161,7 +116,6 @@ struct MessagesListView: View {
             scrollToBottomUIKit(sv, animated: false)
         }
         .onChange(of: isInputFocused, initial: false) { _, focused in
-            // Keyboard focus should NOT yank you to the bottom unless you're already near the end.
             guard focused, isNearBottom else { return }
             guard let sv = underlyingScrollView else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
@@ -170,10 +124,67 @@ struct MessagesListView: View {
             }
         }
     }
+
+    @ViewBuilder
+    private var scrollToBottomButton: some View {
+        let bottomPadding: CGFloat = 16
+
+        ZStack(alignment: .bottomTrailing) {
+            if shouldShowScrollButton {
+                Group {
+                    if #available(iOS 26.0, *) {
+                        Button(action: scrollToBottom) {
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: scrollButtonIconSize, weight: .semibold))
+                                .foregroundColor(.primary)
+                                .frame(width: scrollButtonSize, height: scrollButtonSize)
+                        }
+                        .buttonStyle(ScrollButtonStyle())
+                        .glassEffect(.regular.interactive(), in: Circle())
+                        .contentShape(Rectangle())
+                    } else {
+                        Button(action: scrollToBottom) {
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: scrollButtonIconSize, weight: .semibold))
+                                .foregroundColor(.primary)
+                                .frame(width: scrollButtonSize, height: scrollButtonSize)
+                        }
+                        .buttonStyle(ScrollButtonStyle())
+                        .background(.thinMaterial, in: Circle())
+                        .overlay(Circle().strokeBorder(Color.primary.opacity(0.10), lineWidth: 1))
+                        .contentShape(Rectangle())
+                    }
+                }
+                .transition(
+                    .scale(scale: 0.86, anchor: .bottom)
+                    .combined(with: .opacity)
+                )
+            }
+        }
+        .frame(width: scrollButtonSize, height: scrollButtonSize)
+        .padding(.bottom, bottomPadding)
+        .padding(.trailing, 16)
+        .allowsHitTesting(shouldShowScrollButton)
+        .animation(.spring(response: 0.30, dampingFraction: 0.86), value: shouldShowScrollButton)
+    }
+
+    private func scrollToBottom() {
+        followBottom = true
+        scrollToBottomToken &+= 1
+    }
+}
+
+
+private struct ScrollButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.92 : 1.0)
+            .opacity(configuration.isPressed ? 0.92 : 1.0)
+            .animation(.spring(response: 0.22, dampingFraction: 0.88, blendDuration: 0.02), value: configuration.isPressed)
+    }
 }
 
 private struct ScrollViewBottomProximityObserver: UIViewRepresentable {
-    let bottomScrollIndicatorInset: CGFloat
     let onChange: (UIScrollView) -> Void
     let onAttach: (UIScrollView) -> Void
 
@@ -185,13 +196,10 @@ private struct ScrollViewBottomProximityObserver: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
-        // This representable is embedded in the ScrollView *content*, so its superview chain will include
-        // the underlying UIScrollView.
         DispatchQueue.main.async {
             guard let scrollView = findScrollView(from: uiView) else { return }
             context.coordinator.attach(
                 to: scrollView,
-                bottomScrollIndicatorInset: bottomScrollIndicatorInset,
                 onChange: onChange,
                 onAttach: onAttach
             )
@@ -211,13 +219,9 @@ private struct ScrollViewBottomProximityObserver: UIViewRepresentable {
 
         func attach(
             to scrollView: UIScrollView,
-            bottomScrollIndicatorInset: CGFloat,
             onChange: @escaping (UIScrollView) -> Void,
             onAttach: @escaping (UIScrollView) -> Void
         ) {
-            // NOTE: We no longer override scroll-indicator insets here.
-            // The chat now uses a bottom `safeAreaInset` for the composer, and letting UIKit manage
-            // `verticalScrollIndicatorInsets` ensures the scroll indicator stays above the input bar.
             if self.scrollView === scrollView { return }
 
             self.scrollView = scrollView

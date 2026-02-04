@@ -9,13 +9,16 @@ struct InputAreaView: View {
     @Binding var inputText: String
     @Binding var isLoading: Bool
     @Binding var pendingAttachments: [PendingAttachment]
-    @Binding var isMediaPanelVisible: Bool
 
     let isInputFocused: FocusState<Bool>.Binding
     let send: () -> Void
     let stop: () -> Void
     let onVoiceModeStart: () -> Void
     let onVoiceModeStop: () -> Void
+
+    @State private var isMediaPanelVisible: Bool = false
+    @State private var pendingPhotoSelections: [String: PendingAttachment] = [:]
+    @State private var attachmentIdToAssetId: [UUID: String] = [:]
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -28,59 +31,72 @@ struct InputAreaView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !pendingAttachments.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(pendingAttachments) { att in
-                            ZStack(alignment: .topTrailing) {
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(.thinMaterial)
-                                    .frame(width: 54, height: 54)
-                                    .overlay {
-                                        if case .image(let data, _) = att.kind, let uiImage = UIImage(data: data) {
-                                            Image(uiImage: uiImage)
-                                                .resizable()
-                                                .scaledToFill()
-                                                .frame(width: 54, height: 54)
-                                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                        } else {
-                                            Image(systemName: "doc")
-                                                .font(.system(size: 16, weight: .semibold))
-                                                .foregroundColor(.secondary)
+        if #available(iOS 26.0, *) {
+            VStack(alignment: .leading, spacing: 8) {
+                if !pendingAttachments.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(pendingAttachments) { att in
+                                ZStack(alignment: .topTrailing) {
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(.thinMaterial)
+                                        .frame(width: 54, height: 54)
+                                        .overlay {
+                                            if case .image(let data, _) = att.kind, let uiImage = UIImage(data: data) {
+                                                Image(uiImage: uiImage)
+                                                    .resizable()
+                                                    .scaledToFill()
+                                                    .frame(width: 54, height: 54)
+                                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                            } else {
+                                                Image(systemName: "doc")
+                                                    .font(.system(size: 16, weight: .semibold))
+                                                    .foregroundColor(.secondary)
+                                            }
                                         }
-                                    }
 
-                                Button(action: {
-                                    Haptics.impact(.light)
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
-                                        pendingAttachments.removeAll { $0.id == att.id }
+                                    Button(action: {
+                                        Haptics.impact(.light)
+                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                                            // Clear from pending selections if this was from recent photos
+                                            if let assetId = attachmentIdToAssetId[att.id] {
+                                                pendingPhotoSelections.removeValue(forKey: assetId)
+                                                attachmentIdToAssetId.removeValue(forKey: att.id)
+                                            }
+                                            pendingAttachments.removeAll { $0.id == att.id }
+                                        }
+                                    }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundColor(.secondary)
+                                            .background(Color.clear)
                                     }
-                                }) {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundColor(.secondary)
-                                        .background(Color.clear)
+                                    .buttonStyle(.plain)
+                                    .padding(4)
                                 }
-                                .buttonStyle(.plain)
-                                .padding(4)
+                                .transition(.scale.combined(with: .opacity))
                             }
                         }
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
                     }
-                    .padding(.horizontal, 4)
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.8).combined(with: .opacity),
+                        removal: .scale(scale: 0.8).combined(with: .opacity)
+                    ))
                 }
-            }
 
-            TextField("Message TalkToMe", text: $inputText, axis: .vertical)
-                .font(.system(size: 17, weight: .regular))
-                .textFieldStyle(.plain)
-                .focused(isInputFocused)
-                .disabled(isVoiceRecording)
-                .lineLimit(1...5)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 4)
+                TextField("Message TalkToMe", text: $inputText, axis: .vertical)
+                    .font(.system(size: 17, weight: .regular))
+                    .textFieldStyle(.plain)
+                    .focused(isInputFocused)
+                    .disabled(isVoiceRecording)
+                    .lineLimit(1...5)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 4)
+                    .padding(.top, !pendingAttachments.isEmpty ? 2 : 0)
+                    .padding(.bottom, 2)
 
-            HStack {
-                if #available(iOS 26.0, *) {
+                HStack(spacing: 8) {
                     Button(action: {
                         isInputFocused.wrappedValue = false
                         isMediaPanelVisible = true
@@ -92,13 +108,10 @@ struct InputAreaView: View {
                             .padding(.vertical, 8)
                     }
                     .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: Circle())
                     .disabled(isVoiceRecording)
-                }
 
-                Spacer()
+                    Spacer(minLength: 0)
 
-                if #available(iOS 26.0, *) {
                     Button(action: {
                         Haptics.impact(.medium)
                         isInputFocused.wrappedValue = false
@@ -111,70 +124,81 @@ struct InputAreaView: View {
                             .padding(.vertical, 8)
                     }
                     .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: Capsule())
                     .disabled(isVoiceRecording)
-                }
 
-                Button(action: {
-                    if isVoiceRecording {
-                        Haptics.impact(.medium)
-                        onVoiceModeStop()
-                        return
-                    }
-
-                    if !canSend {
-                        if isSpeakModeActive {
+                    Button(action: {
+                        if isVoiceRecording {
                             Haptics.impact(.medium)
-                            onSpeakToggle()
+                            onVoiceModeStop()
                             return
                         }
-                        Haptics.impact(.medium)
-                        onVoiceModeStart()
-                        return
-                    }
 
-                    Haptics.impact(.light)
-                    if isLoading {
-                        stop()
-                    } else {
-                        withAnimation(.easeInOut(duration: 0.22)) {
-                            isMediaPanelVisible = false
+                        if !canSend {
+                            if isSpeakModeActive {
+                                Haptics.impact(.medium)
+                                onSpeakToggle()
+                                return
+                            }
+                            Haptics.impact(.medium)
+                            onVoiceModeStart()
+                            return
                         }
-                        isInputFocused.wrappedValue = true
-                        send()
-                    }
-                }) {
-                    let showSend = canSend && !isVoiceRecording
-                    let showMicEmoji = !showSend && !isVoiceRecording
-                    let iconName: String = {
-                        if isVoiceRecording { return "stop.fill" }
-                        return isLoading ? "stop.fill" : "arrow.up"
-                    }()
 
-                    ZStack {
-                        if showMicEmoji {
-                            Text("🎙️")
-                                .font(.system(size: 18, weight: .semibold))
+                        Haptics.impact(.light)
+                        if isLoading {
+                            stop()
                         } else {
-                            Image(systemName: iconName)
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.white)
+                            withAnimation(.easeInOut(duration: 0.22)) {
+                                isMediaPanelVisible = false
+                            }
+                            isInputFocused.wrappedValue = true
+                            send()
                         }
+                    }) {
+                        let showSend = canSend && !isVoiceRecording
+                        let showMicEmoji = !showSend && !isVoiceRecording
+                        let iconName: String = {
+                            if isVoiceRecording { return "stop.fill" }
+                            return isLoading ? "stop.fill" : "arrow.up"
+                        }()
+
+                        ZStack {
+                            if showMicEmoji {
+                                Text("🎙️")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .padding(.horizontal, 3)
+                            } else {
+                                Image(systemName: iconName)
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        .frame(width: 44, height: 44)
                     }
-                    .frame(width: 44, height: 44)
+                    .scaleEffect(isVoiceRecording ? 1.1 : 1.0)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isVoiceRecording)
+                    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: canSend)
+                    .buttonStyle(.plain)
                 }
-                .scaleEffect(isVoiceRecording ? 1.1 : 1.0)
-                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isVoiceRecording)
-                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: canSend)
-                .buttonStyle(.plain)
+                .padding(.top, 2)
+            }
+            .frame(minHeight: 88, alignment: .bottomLeading)
+            .padding(.leading, 14)
+            .padding(.trailing, 8)
+            .padding(.vertical, 10)
+            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: pendingAttachments.count)
+            .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .padding(.horizontal)
+            .sheet(isPresented: $isMediaPanelVisible) {
+                MediaPickerPanelView(
+                    attachments: $pendingAttachments,
+                    pendingPhotoSelections: $pendingPhotoSelections,
+                    attachmentIdToAssetId: $attachmentIdToAssetId
+                )
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
             }
         }
-        .frame(minHeight: 88, alignment: .bottomLeading)
-        .padding(.leading, 14)
-        .padding(.trailing, 8)
-        .padding(.vertical, 8)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .padding(.horizontal, 28)
     }
 }
 
@@ -188,7 +212,6 @@ struct InputAreaView: View {
         inputText: .constant(""),
         isLoading: .constant(false),
         pendingAttachments: .constant([]),
-        isMediaPanelVisible: .constant(false),
         isInputFocused: $isFocused,
         send: {},
         stop: {},

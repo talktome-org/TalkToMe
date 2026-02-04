@@ -11,56 +11,67 @@ struct ElevenLabsVoiceSuggestionsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Text("Suggested voices")
-                    .font(.system(size: 14, weight: .semibold))
-
-                Spacer(minLength: 0)
-
-                if !selectedVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(selectedVoiceName)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
+            Text("Voice")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.secondary)
 
             if isLoading && suggestedVoices.isEmpty {
-                voiceSkeletonRow
+                voiceSkeletonGrid
             } else if let msg = errorMessage, !msg.isEmpty {
                 Text(msg)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
-                voiceRow(suggestedVoices)
+                voiceGrid(Array(suggestedVoices.prefix(4)))
             }
         }
         .task { await loadVoices() }
     }
 
     @ViewBuilder
-    private var voiceSkeletonRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(0..<5, id: \.self) { _ in
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+    private var voiceSkeletonGrid: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                ForEach(0..<2, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(Color.secondary.opacity(0.12))
-                        .frame(width: 220, height: 78)
+                        .frame(height: 80)
                 }
             }
-            .padding(.horizontal, 2)
+            HStack(spacing: 10) {
+                ForEach(0..<2, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.secondary.opacity(0.12))
+                        .frame(height: 80)
+                }
+            }
         }
     }
 
     @ViewBuilder
-    private func voiceRow(_ voices: [BackendService.ElevenVoiceDTO]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(voices) { v in
+    private func voiceGrid(_ voices: [BackendService.ElevenVoiceDTO]) -> some View {
+        let topRow = Array(voices.prefix(2))
+        let bottomRow = Array(voices.dropFirst(2).prefix(2))
+        
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                ForEach(topRow) { v in
                     voiceCard(v)
                 }
+                if topRow.count == 1 {
+                    Spacer().frame(maxWidth: .infinity)
+                }
             }
-            .padding(.horizontal, 2)
+            if !bottomRow.isEmpty {
+                HStack(spacing: 10) {
+                    ForEach(bottomRow) { v in
+                        voiceCard(v)
+                    }
+                    if bottomRow.count == 1 {
+                        Spacer().frame(maxWidth: .infinity)
+                    }
+                }
+            }
         }
     }
 
@@ -71,34 +82,35 @@ struct ElevenLabsVoiceSuggestionsView: View {
             selectedVoiceId = voice.voice_id
             selectedVoiceName = voice.name
         }) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
                     Text(voice.name)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
+                    
                     Spacer(minLength: 0)
+                    
                     if isSelected {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.green)
+                            .font(.system(size: 18))
+                            .foregroundStyle(.white, .blue)
                     }
                 }
-
+                
                 Text(description(for: voice))
-                    .font(.footnote)
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 11)
-            .frame(width: 220, height: 78, alignment: .topLeading)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(
-                        isSelected ? Color.green.opacity(0.55) : Color.primary.opacity(0.08),
+                        isSelected ? Color.blue.opacity(0.5) : Color.primary.opacity(0.06),
                         lineWidth: isSelected ? 1.5 : 1
                     )
             )
@@ -133,7 +145,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
     }
 
     private func pickSuggestedVoices(from voices: [BackendService.ElevenVoiceDTO]) -> [BackendService.ElevenVoiceDTO] {
-        let preferredNames: [String] = ["Rachel", "Adam", "Antoni", "Bella", "Josh"]
+        let preferredNames: [String] = ["Rachel", "Adam", "Bella", "Josh"]
 
         var out: [BackendService.ElevenVoiceDTO] = []
         var used: Set<String> = []
@@ -144,10 +156,10 @@ struct ElevenLabsVoiceSuggestionsView: View {
                     out.append(v)
                 }
             }
-            if out.count >= 5 { break }
+            if out.count >= 4 { break }
         }
 
-        if out.count < 5 {
+        if out.count < 4 {
             let remainder = voices
                 .filter { used.contains($0.voice_id) == false }
                 .sorted {
@@ -160,11 +172,11 @@ struct ElevenLabsVoiceSuggestionsView: View {
                 if used.insert(v.voice_id).inserted {
                     out.append(v)
                 }
-                if out.count >= 5 { break }
+                if out.count >= 4 { break }
             }
         }
 
-        return Array(out.prefix(5))
+        return Array(out.prefix(4))
     }
 
     private func voiceScore(_ voice: BackendService.ElevenVoiceDTO) -> Int {

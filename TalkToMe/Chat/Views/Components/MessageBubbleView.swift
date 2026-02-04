@@ -163,9 +163,10 @@ struct MessageBubbleView: View {
 
     var onSendToPartner: ((String) -> Void)? = nil
 
+    var sendAnimationNamespace: Namespace.ID? = nil
+    var outgoingAnimatingMessageId: UUID? = nil
+
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.sendAnimationNamespace) private var sendAnimationNamespace
-    @Environment(\.outgoingAnimatingMessageId) private var outgoingAnimatingMessageId
 
     @MainActor
     var body: some View {

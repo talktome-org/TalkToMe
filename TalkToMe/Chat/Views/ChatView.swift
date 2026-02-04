@@ -6,16 +6,12 @@ struct ChatView: View {
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
 
     @StateObject private var viewModel: ChatViewModel
+    @StateObject private var sessionActions = ChatSessionActionsCoordinator()
 
     @State private var showFriendPicker: Bool = false
     @State private var pendingPartnerDraftText: String? = nil
     @State private var isFriendPickerLoading: Bool = false
     @State private var friendPickerErrorMessage: String? = nil
-    @State private var showRenameChatPrompt: Bool = false
-    @State private var renameChatTitle: String = ""
-    @State private var showDeleteChatConfirm: Bool = false
-    @State private var showReportChatConfirm: Bool = false
-    @State private var showReportChatThanks: Bool = false
 
     @FocusState private var isInputFocused: Bool
 
@@ -82,26 +78,13 @@ struct ChatView: View {
                         sessionsViewModel.startNewChat()
                     }
 
-                    Menu {
-                        Button("Rename chat", systemImage: "pencil") {
-                            guard activeSessionIdForActions != nil else { return }
-                            renameChatTitle = activeSessionTitleForActions
-                            showRenameChatPrompt = true
-                        }
-                        .disabled(activeSessionIdForActions == nil)
-
-                        Button("Report chat", systemImage: "exclamationmark.bubble") {
-                            showReportChatConfirm = true
-                        }
-                        .disabled(activeSessionIdForActions == nil)
-
-                        Button("Delete chat", systemImage: "trash", role: .destructive) {
-                            showDeleteChatConfirm = true
-                        }
-                        .disabled(activeSessionIdForActions == nil)
-                    } label: {
-                        Label("More", systemImage: "ellipsis")
-                    }
+                    ChatSessionActionsMenu(
+                        sessionId: activeSessionIdForActions,
+                        currentTitle: activeSessionTitleForActions,
+                        onRenameRequest: { sessionActions.requestRename(currentTitle: activeSessionTitleForActions) },
+                        onDeleteRequest: { sessionActions.requestDelete() },
+                        onReportRequest: { sessionActions.requestReport() }
+                    )
                 }
 
                 if #available(iOS 26.0, *) {
@@ -117,51 +100,23 @@ struct ChatView: View {
                 }
             }
         }
-        .alert("Rename chat", isPresented: $showRenameChatPrompt) {
-            TextField("Title", text: $renameChatTitle)
-            Button("Cancel", role: .cancel) {}
-            Button("Save") {
-                let title = renameChatTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !title.isEmpty, let sessionId = activeSessionIdForActions else { return }
-                Haptics.impact(.light)
-                Task { @MainActor in
-                    await sessionsViewModel.renameSession(sessionId, to: title)
+        .chatSessionActions(
+            coordinator: sessionActions,
+            sessionId: activeSessionIdForActions,
+            onRename: { sessionId, title in
+                await sessionsViewModel.renameSession(sessionId, to: title)
+            },
+            onDelete: { sessionId in
+                await sessionsViewModel.deleteSession(sessionId)
+            },
+            onDeleteNavigateAway: {
+                if let onBack {
+                    onBack()
+                } else {
+                    sessionsViewModel.startNewChat()
                 }
             }
-        } message: {
-            Text("Give this chat a new title.")
-        }
-        .confirmationDialog("Delete chat?", isPresented: $showDeleteChatConfirm, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) {
-                guard let sessionId = activeSessionIdForActions else { return }
-                Haptics.impact(.light)
-                Task { @MainActor in
-                    await sessionsViewModel.deleteSession(sessionId)
-                    // Navigate away after deletion
-                    if let onBack {
-                        onBack()
-                    } else {
-                        sessionsViewModel.startNewChat()
-                    }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will delete the chat and all its messages. If this chat is linked, it will be deleted on their end too.")
-        }
-        .confirmationDialog("Report chat?", isPresented: $showReportChatConfirm, titleVisibility: .visible) {
-            Button("Report", role: .destructive) {
-                showReportChatThanks = true
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will flag the conversation for review. (Not wired yet)")
-        }
-        .alert("Thanks", isPresented: $showReportChatThanks) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Report received. (Not wired yet)")
-        }
+        )
         .sheet(isPresented: $showFriendPicker) {
             FriendPickerSheetView(
                 isPresented: $showFriendPicker,
@@ -195,7 +150,6 @@ struct ChatView: View {
                     await viewModel.sendPartnerDraftViaSession(content)
                     return
                 }
-                // If not connected, we must prompt the user to pick a friend (or show the empty-state).
                 pendingPartnerDraftText = content
                 showFriendPicker = true
                 await refreshFriendsForPicker()
@@ -212,14 +166,12 @@ struct ChatView: View {
 
     @MainActor
     private func refreshFriendsForPicker() async {
-        // Only block the UI with a loader if we truly have nothing to show yet.
         let hasCachedFriends = !friendsViewModel.friends.isEmpty
         isFriendPickerLoading = !hasCachedFriends
         friendPickerErrorMessage = nil
         do {
             try await friendsViewModel.loadFriends()
         } catch {
-            // If we already have friends to show, keep the sheet usable and don't block it with an error state.
             if !hasCachedFriends {
                 friendPickerErrorMessage = error.localizedDescription
             }
@@ -227,6 +179,7 @@ struct ChatView: View {
         isFriendPickerLoading = false
     }
 }
+
 
 #if DEBUG
 #Preview {

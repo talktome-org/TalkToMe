@@ -1,123 +1,105 @@
 import Photos
 import PhotosUI
 import SwiftUI
-import UniformTypeIdentifiers
 import UIKit
+import UniformTypeIdentifiers
 
 struct MediaPickerPanelView: View {
     @Binding var attachments: [PendingAttachment]
-    let height: CGFloat
-    let horizontalPadding: CGFloat
-    let cornerRadius: CGFloat
-    @Environment(\.colorScheme) private var colorScheme
+    @Binding var pendingPhotoSelections: [String: PendingAttachment]
+    @Binding var attachmentIdToAssetId: [UUID: String]
+    @Environment(\.dismiss) private var dismiss
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var showCamera: Bool = false
-    @State private var showFiles: Bool = false
     @State private var showCameraUnavailableAlert: Bool = false
     @StateObject private var recentPhotos = RecentPhotosViewModel()
-    @State private var selectedRecentAttachmentIdByAssetId: [String: UUID] = [:]
-    @State private var selectedRecentAssetIdsInOrder: [String] = []
-    private let recentThumbSize: CGFloat = 156
-
-    init(
-        attachments: Binding<[PendingAttachment]>,
-        height: CGFloat = 290,
-        horizontalPadding: CGFloat = 16,
-        cornerRadius: CGFloat = 26
-    ) {
-        self._attachments = attachments
-        self.height = height
-        self.horizontalPadding = horizontalPadding
-        self.cornerRadius = cornerRadius
-    }
+    private let recentThumbSize: CGFloat = 100
 
     var body: some View {
-        VStack(spacing: 10) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    if recentPhotos.canShowRecents, !recentPhotos.recentAssets.isEmpty {
-                        ForEach(recentPhotos.recentAssets, id: \.localIdentifier) { asset in
-                            recentThumb(asset)
-                        }
-                    } else {
-                        // No "Add a photo" placeholder — show lightweight placeholders while we load/ask permission.
-                        ForEach(0..<6, id: \.self) { _ in
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(Color.secondary.opacity(0.12))
+        VStack(spacing: 0) {
+            // Photos section
+            VStack(alignment: .leading, spacing: 24) {
+                // See all button
+                HStack {
+                    Spacer()
+
+                    PhotosPicker(selection: $photoPickerItems, maxSelectionCount: 12, matching: .images) {
+                        Text("See all")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(.primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 36)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        // Camera button as first item
+                        Button(action: {
+                            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                                showCamera = true
+                            } else {
+                                showCameraUnavailableAlert = true
+                            }
+                        }) {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.secondary.opacity(0.15))
                                 .frame(width: recentThumbSize, height: recentThumbSize)
+                                .overlay {
+                                    Image(systemName: "camera.fill")
+                                        .font(.system(size: 28, weight: .medium))
+                                        .foregroundStyle(.primary.opacity(0.6))
+                                }
+                        }
+                        .buttonStyle(.plain)
+
+                        if recentPhotos.canShowRecents, !recentPhotos.recentAssets.isEmpty {
+                            ForEach(recentPhotos.recentAssets, id: \.localIdentifier) { asset in
+                                recentThumb(asset)
+                            }
+                        } else {
+                            ForEach(0..<5, id: \.self) { _ in
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.secondary.opacity(0.12))
+                                    .frame(width: recentThumbSize, height: recentThumbSize)
+                            }
                         }
                     }
+                    .padding(.horizontal, 16)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 6)
             }
-
-            HStack(spacing: 22) {
-                PhotosPicker(selection: $photoPickerItems, maxSelectionCount: 12, matching: .images) {
-                    actionButtonLabel(title: "Library", systemImage: "photo.on.rectangle")
-                }
-                .buttonStyle(.plain)
-
-                Button(action: {
-                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                        showCamera = true
-                    } else {
-                        showCameraUnavailableAlert = true
-                    }
-                }) {
-                    actionButtonLabel(title: "Camera", systemImage: "camera")
-                }
-                .buttonStyle(.plain)
-
-                Button(action: {
-                    showFiles = true
-                }) {
-                    actionButtonLabel(title: "Files", systemImage: "folder")
-                }
-                .buttonStyle(.plain)
-            }
-            // When selecting photos, give the recents strip a bit more breathing room (like ChatGPT),
-            // and animate the controls down/up as selection changes.
-            .padding(.top, attachments.isEmpty ? 12 : 16)
-            .padding(.bottom, 6)
-            .animation(.spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0), value: attachments.isEmpty)
+            .padding(.top, 24)
+            .padding(.bottom, 16)
 
             Divider()
                 .padding(.horizontal, 16)
-                .opacity(0.25)
+                .opacity(0.3)
 
+            // Voice suggestions (2x2 grid)
             ElevenLabsVoiceSuggestionsView()
                 .padding(.horizontal, 16)
-                .padding(.bottom, 6)
+                .padding(.top, 16)
+                .padding(.bottom, 16)
+
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task {
-            // Match ChatGPT-style behavior: show recents immediately by requesting access on open if needed.
             let _ = await recentPhotos.requestAccessIfNeeded()
             await recentPhotos.bootstrap(limit: 20)
         }
-        .onChange(of: attachments) { _, newAttachments in
-            // Keep selection overlays in sync even if attachments are removed elsewhere (e.g. from the input bar).
-            let ids = Set(newAttachments.map { $0.id })
-            var newMap: [String: UUID] = [:]
-            var newOrder: [String] = []
-            for assetId in selectedRecentAssetIdsInOrder {
-                if let attId = selectedRecentAttachmentIdByAssetId[assetId], ids.contains(attId) {
-                    newMap[assetId] = attId
-                    newOrder.append(assetId)
-                }
-            }
-            selectedRecentAttachmentIdByAssetId = newMap
-            selectedRecentAssetIdsInOrder = newOrder
-        }
         .onChange(of: photoPickerItems, initial: false) { _, newItems in
-            Task { await loadPhotos(items: newItems) }
+            Task {
+                await loadPhotos(items: newItems)
+                dismiss()
+            }
         }
         .fullScreenCover(isPresented: $showCamera) {
             CameraPickerView(
                 onImage: { image in
                     addCameraImage(image)
                     showCamera = false
+                    dismiss()
                 },
                 onCancel: {
                     showCamera = false
@@ -125,18 +107,16 @@ struct MediaPickerPanelView: View {
             )
             .ignoresSafeArea()
         }
-        .fullScreenCover(isPresented: $showFiles) {
-            DocumentPickerView(
-                allowedTypes: [UTType.data, UTType.image, UTType.pdf, UTType.plainText],
-                allowsMultipleSelection: true,
-                onPick: { urls in
-                    addFiles(urls)
-                    showFiles = false
-                },
-                onCancel: {
-                    showFiles = false
+        .onDisappear {
+            // Add pending selections to attachments when sheet is dismissed
+            for (assetId, attachment) in pendingPhotoSelections {
+                if attachments.count < 12 {
+                    attachments.append(attachment)
+                    attachmentIdToAssetId[attachment.id] = assetId
                 }
-            )
+            }
+            // Clear pending selections after adding
+            pendingPhotoSelections.removeAll()
         }
         .alert("Camera not available", isPresented: $showCameraUnavailableAlert) {
             Button("OK", role: .cancel) {}
@@ -145,104 +125,10 @@ struct MediaPickerPanelView: View {
         }
     }
 
-    @ViewBuilder
-    private var panelBackground: some View {
-        if #available(iOS 26.0, *) {
-            Color.clear
-                .glassEffect(.regular, in: Rectangle())
-        } else {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-        }
-    }
-
-    @ViewBuilder
-    private var panelOverlay: some View {
-        if #available(iOS 26.0, *) {
-            EmptyView()
-        } else {
-            TopRoundedRectangle(radius: cornerRadius)
-                .stroke(
-                    colorScheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.08),
-                    lineWidth: 1
-                )
-        }
-    }
-
-    @ViewBuilder
-    private func actionButtonLabel(title: String, systemImage: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold))
-            Text(title)
-                .font(.system(size: 15, weight: .semibold))
-        }
-        .foregroundColor(.primary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-
-    @ViewBuilder
-    private func previewCard(_ att: PendingAttachment) -> some View {
-        ZStack(alignment: .topTrailing) {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.thinMaterial)
-                .frame(width: 220, height: 160)
-                .overlay(
-                    Group {
-                        switch att.kind {
-                        case .image(let data, _):
-                            if let uiImage = UIImage(data: data) {
-                                Image(uiImage: uiImage)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 220, height: 160)
-                                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                            } else {
-                                placeholderCardLabel(systemImage: "photo", title: "Image")
-                            }
-                        case .file(_, let filename, _):
-                            placeholderCardLabel(systemImage: "doc", title: filename)
-                        }
-                    }
-                )
-
-            Button(action: {
-                Haptics.impact(.light)
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
-                    attachments.removeAll { $0.id == att.id }
-                }
-            }) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .padding(10)
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    @ViewBuilder
-    private func placeholderCardLabel(systemImage: String, title: String) -> some View {
-        VStack(spacing: 6) {
-            Image(systemName: systemImage)
-                .font(.system(size: 22, weight: .semibold))
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.secondary)
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 12)
-        }
-    }
-
     private func loadPhotos(items: [PhotosPickerItem]) async {
         for item in items {
             do {
                 if let rawData = try await item.loadTransferable(type: Data.self) {
-                    // IMPORTANT: PhotosPicker commonly returns HEIC/HEIF. We always normalize images to JPEG bytes,
-                    // since the upstream vision models / URL consumers may not support HEIC reliably.
                     let jpegData: Data? = {
                         guard let uiImage = UIImage(data: rawData) else { return nil }
                         return uiImage.jpegData(compressionQuality: 0.92)
@@ -251,9 +137,7 @@ struct MediaPickerPanelView: View {
                     let att = PendingAttachment(kind: .image(data: data, contentType: "image/jpeg"))
                     await MainActor.run {
                         if attachments.count < 12 {
-                            withAnimation(.spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0)) {
-                                attachments.append(att)
-                            }
+                            attachments.append(att)
                         }
                     }
                 }
@@ -266,27 +150,34 @@ struct MediaPickerPanelView: View {
 
     private func toggleRecentAssetSelection(_ asset: PHAsset) async {
         let assetId = asset.localIdentifier
-        if let attId = selectedRecentAttachmentIdByAssetId[assetId] {
+
+        // If in pending selections, deselect from pending
+        if pendingPhotoSelections[assetId] != nil {
             await MainActor.run {
                 Haptics.impact(.light)
-                withAnimation(.spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0)) {
-                    attachments.removeAll { $0.id == attId }
-                    selectedRecentAttachmentIdByAssetId.removeValue(forKey: assetId)
-                    selectedRecentAssetIdsInOrder.removeAll { $0 == assetId }
-                }
+                pendingPhotoSelections.removeValue(forKey: assetId)
             }
             return
         }
 
-        if attachments.count >= 12 { return }
+        // If already in attachments (was added previously), remove from attachments
+        if let attachmentId = attachmentIdToAssetId.first(where: { $0.value == assetId })?.key {
+            await MainActor.run {
+                Haptics.impact(.light)
+                attachments.removeAll { $0.id == attachmentId }
+                attachmentIdToAssetId.removeValue(forKey: attachmentId)
+            }
+            return
+        }
+
+        // Check limit (existing attachments + pending selections)
+        if attachments.count + pendingPhotoSelections.count >= 12 { return }
         if !recentPhotos.canShowRecents {
             let granted = await recentPhotos.requestAccessIfNeeded()
             guard granted else { return }
         }
 
-        // 1) Add an immediate preview attachment (so InputAreaView shows it instantly),
-        // 2) then replace with full-quality data once loaded.
-        let placeholderId = UUID()
+        // Load the image data
         let previewData: Data?
         if let img = recentPhotos.thumbnail(for: asset),
            let data = img.jpegData(compressionQuality: 0.92) {
@@ -299,87 +190,62 @@ struct MediaPickerPanelView: View {
         }
         guard let previewData, !previewData.isEmpty else { return }
 
-        let previewAttachment = PendingAttachment(
-            id: placeholderId,
-            kind: .image(data: previewData, contentType: "image/jpeg")
-        )
-        await MainActor.run {
-            if attachments.count < 12 {
-                Haptics.impact(.light)
-                withAnimation(.spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0)) {
-                    attachments.append(previewAttachment)
-                    selectedRecentAttachmentIdByAssetId[assetId] = placeholderId
-                    selectedRecentAssetIdsInOrder.append(assetId)
-                }
-            }
-        }
+        // Load full quality in background
+        let fullData = await recentPhotos.loadFullJPEGData(asset: asset, maxPixelSize: 3200)
+        let finalData = fullData ?? previewData
 
-        // Full-quality replacement (keeps the same attachment id so the UI doesn't jump).
-        guard let fullData = await recentPhotos.loadFullJPEGData(asset: asset, maxPixelSize: 3200) else { return }
+        let attachment = PendingAttachment(
+            kind: .image(data: finalData, contentType: "image/jpeg")
+        )
+
         await MainActor.run {
-            guard selectedRecentAttachmentIdByAssetId[assetId] == placeholderId else { return }
-            guard let idx = attachments.firstIndex(where: { $0.id == placeholderId }) else { return }
-            attachments[idx] = PendingAttachment(
-                id: placeholderId,
-                kind: .image(data: fullData, contentType: "image/jpeg")
-            )
+            if attachments.count + pendingPhotoSelections.count < 12 {
+                Haptics.impact(.light)
+                pendingPhotoSelections[assetId] = attachment
+            }
         }
     }
 
     @ViewBuilder
     private func recentThumb(_ asset: PHAsset) -> some View {
+        let assetId = asset.localIdentifier
+        // Check if selected in pending OR already added to attachments
+        let isSelected = pendingPhotoSelections[assetId] != nil ||
+                         attachmentIdToAssetId.values.contains(assetId)
+
         Button(action: {
             Task { await toggleRecentAssetSelection(asset) }
         }) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(.thinMaterial)
-                    .frame(width: recentThumbSize, height: recentThumbSize)
-
+            ZStack(alignment: .topTrailing) {
                 if let uiImage = recentPhotos.thumbnail(for: asset) {
                     Image(uiImage: uiImage)
                         .resizable()
                         .scaledToFill()
                         .frame(width: recentThumbSize, height: recentThumbSize)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 } else {
-                    // Lightweight skeleton while thumbnails load.
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color.secondary.opacity(0.12))
                         .frame(width: recentThumbSize, height: recentThumbSize)
-                        .overlay(
-                            Image(systemName: "photo")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundColor(.secondary)
-                        )
                 }
 
-                if let idx = selectedRecentAssetIdsInOrder.firstIndex(of: asset.localIdentifier) {
-                    VStack {
-                        HStack {
-                            Spacer()
-                            ZStack {
-                                Circle()
-                                    .fill(Color.black.opacity(0.55))
-                                Text("\(idx + 1)")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundColor(.white)
-                            }
-                            .frame(width: 22, height: 22)
-                        }
-                        Spacer()
-                    }
-                    .padding(8)
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.black.opacity(0.25))
+                        .frame(width: recentThumbSize, height: recentThumbSize)
+
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(.white, .blue)
+                        .padding(6)
                 }
             }
         }
         .buttonStyle(.plain)
         .onAppear {
-            // Request a high-res square thumbnail so the preview doesn't look like ~480px upscaled.
-            // (PHImageManager targetSize is in pixels.)
             recentPhotos.prefetchThumbnail(
                 asset: asset,
-                targetSize: CGSize(width: 1200, height: 1200)
+                targetSize: CGSize(width: 600, height: 600)
             )
         }
     }
@@ -389,36 +255,7 @@ struct MediaPickerPanelView: View {
         guard !data.isEmpty else { return }
         let att = PendingAttachment(kind: .image(data: data, contentType: "image/jpeg"))
         if attachments.count < 12 {
-            withAnimation(.spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0)) {
-                attachments.append(att)
-            }
-        }
-    }
-
-    private func addFiles(_ urls: [URL]) {
-        for url in urls {
-            if attachments.count >= 12 { break }
-            let needsAccess = url.startAccessingSecurityScopedResource()
-            defer { if needsAccess { url.stopAccessingSecurityScopedResource() } }
-
-            guard let data = try? Data(contentsOf: url) else { continue }
-            let filename = url.lastPathComponent
-            let contentType = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
-            if UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true {
-                // Normalize imported images to JPEG bytes for maximum downstream compatibility.
-                let jpegData: Data? = {
-                    guard let uiImage = UIImage(data: data) else { return nil }
-                    return uiImage.jpegData(compressionQuality: 0.92)
-                }()
-                guard let jpegData, !jpegData.isEmpty else { continue }
-                withAnimation(.spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0)) {
-                    attachments.append(PendingAttachment(kind: .image(data: jpegData, contentType: "image/jpeg")))
-                }
-            } else {
-                withAnimation(.spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0)) {
-                    attachments.append(PendingAttachment(kind: .file(data: data, filename: filename, contentType: contentType)))
-                }
-            }
+            attachments.append(att)
         }
     }
 }
@@ -580,21 +417,12 @@ private final class RecentPhotosViewModel: ObservableObject {
     }
 }
 
-private struct TopRoundedRectangle: Shape {
-    let radius: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        let bezier = UIBezierPath(
-            roundedRect: rect,
-            byRoundingCorners: [.topLeft, .topRight],
-            cornerRadii: CGSize(width: radius, height: radius)
-        )
-        return Path(bezier.cgPath)
-    }
-}
-
 #Preview {
-    MediaPickerPanelView(attachments: .constant([]))
+    MediaPickerPanelView(
+        attachments: .constant([]),
+        pendingPhotoSelections: .constant([:]),
+        attachmentIdToAssetId: .constant([:])
+    )
         .background(Color.black)
 }
 
