@@ -12,6 +12,9 @@ struct MainTabView: View {
 
     @State private var selectedTab: Int = 2
     @State private var showChat: Bool = false
+    @State private var chatDragOffset: CGFloat = 0
+
+    private let dismissThreshold: CGFloat = 100
 
     private func openChat(sessionId: UUID?) {
         if let sid = sessionId {
@@ -21,6 +24,16 @@ struct MainTabView: View {
         }
         withAnimation(.easeInOut(duration: 0.3)) {
             showChat = true
+        }
+    }
+
+    private func dismissChat() {
+        withAnimation(.easeOut(duration: 0.25)) {
+            showChat = false
+        }
+        // Reset offset after animation completes
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            chatDragOffset = 0
         }
     }
 
@@ -55,12 +68,45 @@ struct MainTabView: View {
                     return "new_\(sessionsViewModel.chatViewKey.uuidString)"
                 }()
                 ChatView(sessionId: sessionsViewModel.activeSessionId, onBack: {
-                    showChat = false
+                    dismissChat()
                 })
                 .id(viewId)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(.systemBackground))
                 .ignoresSafeArea()
+                .offset(x: chatDragOffset)
+                .overlay(alignment: .leading) {
+                    // Edge-swipe to dismiss so inner horizontal drags remain usable.
+                    Color.clear
+                        .frame(width: 24)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture()
+                                .onChanged { value in
+                                    // Only allow dragging to the right (positive x translation)
+                                    if value.translation.width > 0 {
+                                        chatDragOffset = value.translation.width
+                                    }
+                                }
+                                .onEnded { value in
+                                    if value.translation.width > dismissThreshold || value.predictedEndTranslation.width > dismissThreshold * 2 {
+                                        // Dismiss with a slide-out animation
+                                        withAnimation(.easeOut(duration: 0.2)) {
+                                            chatDragOffset = UIScreen.main.bounds.width
+                                        }
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                            showChat = false
+                                            chatDragOffset = 0
+                                        }
+                                    } else {
+                                        // Snap back
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                            chatDragOffset = 0
+                                        }
+                                    }
+                                }
+                        )
+                }
                 .zIndex(1)
             }
         }

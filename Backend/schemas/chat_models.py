@@ -12,7 +12,7 @@ class ChatHistoryMessage(BaseModel):
 
 
 class ChatAttachment(BaseModel):
-    type: str  # "image" | "file"
+    type: str
     path: str
     filename: Optional[str] = None
     content_type: Optional[str] = None
@@ -26,6 +26,8 @@ class ChatRequest(BaseModel):
     previous_response_id: Optional[str] = None
     attachments: Optional[list[ChatAttachment]] = None
     friend_user_id: Optional[UUID] = None
+    ephemeral: bool = False
+    voice_agent: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

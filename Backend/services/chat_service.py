@@ -1,8 +1,12 @@
 import json
 import os
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import AsyncIterator, List, Optional
 
+from google import genai
+from google.genai import types as genai_types
 from openai import AsyncOpenAI
 
 
@@ -17,18 +21,18 @@ class ChatService:
         self.model = "gpt-5.2"
         self.vision_model = "gpt-5.2"
 
-        prompt_path = _backend_root() / "resources" / "chat_prompt.txt"
+        prompt_path = _backend_root() / "resources" / "general_prompts" / "chat_prompt.txt"
         with open(prompt_path, "r", encoding="utf-8") as f:
             self.system_prompt = f.read().strip()
 
     def build_messages(
         self,
         *,
-        session_partner_letter: str,
         last_user_message: str,
-        partner_ab_context_text: Optional[str] = None,
+        context_text: Optional[str] = None,
         image_urls: Optional[List[str]] = None,
         file_urls: Optional[List[str]] = None,
+        system_prompt_override: Optional[str] = None,
     ) -> List[dict]:
         input_text = f"last user message: {last_user_message}"
         if file_urls:
@@ -41,14 +45,16 @@ class ChatService:
             if url:
                 user_content.append({"type": "input_image", "image_url": url})
 
-        input_messages: List[dict] = [
-            {"role": "system", "content": f"I'm Partner {session_partner_letter}"},
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": user_content},
-        ]
+        input_messages: List[dict] = []
 
-        if partner_ab_context_text:
-            input_messages.append({"role": "system", "content": partner_ab_context_text})
+        system_prompt = system_prompt_override if system_prompt_override is not None else self.system_prompt
+        if system_prompt:
+            input_messages.append({"role": "system", "content": system_prompt})
+
+        input_messages.append({"role": "user", "content": user_content})
+
+        if context_text:
+            input_messages.append({"role": "system", "content": context_text})
 
         return input_messages
 
@@ -80,7 +86,7 @@ class ChatTitleService:
         self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.model = "gpt-5.2"
 
-        prompt_path = _backend_root() / "resources" / "chat_title_generation_prompt.txt"
+        prompt_path = _backend_root() / "resources" / "general_prompts" / "chat_title_generation_prompt.txt"
         with open(prompt_path, "r", encoding="utf-8") as f:
             self.title_generation_prompt = f.read().strip()
 
@@ -135,4 +141,100 @@ class ChatTitleService:
         except Exception as e:
             print(f"OpenAI API error in chat title generation: {e}")
             return "New chat"
+
+
+@dataclass
+class GeminiStreamEvent:
+    """Event object mimicking OpenAI streaming events for compatibility."""
+    type: str
+    delta: str = ""
+    response: Optional[object] = None
+    error: Optional[str] = None
+
+
+class VoiceChatService:
+    """
+    Gemini-based chat service for voice-first (ephemeral) mode.
+    Uses gemini-2.5-flash for fast, low-latency responses.
+    """
+
+    def __init__(self):
+        api_key = os.getenv("GEMINI_API_KEY")
+        self.client = genai.Client(api_key=api_key) if api_key else None
+        self.model_name = "gemini-2.5-flash"
+
+    def build_messages(
+        self,
+        *,
+        last_user_message: str,
+        context_text: Optional[str] = None,
+        image_urls: Optional[List[str]] = None,
+        file_urls: Optional[List[str]] = None,
+        system_prompt_override: Optional[str] = None,
+    ) -> tuple[Optional[str], str]:
+        """
+        Build messages for Gemini. Returns (system_instruction, contents).
+        Gemini uses a different format: system_instruction is separate from contents.
+        """
+        input_text = last_user_message
+        if file_urls:
+            joined = "\n".join([u for u in file_urls if u])
+            if joined:
+                input_text += f"\n\nUser attached file(s):\n{joined}"
+
+        if context_text:
+            input_text = f"Context:\n{context_text}\n\nUser message: {input_text}"
+
+        system_instruction = system_prompt_override if system_prompt_override is not None else None
+
+        return system_instruction, input_text
+
+    @asynccontextmanager
+    async def stream_response(
+        self,
+        *,
+        messages: tuple[Optional[str], str],
+        previous_response_id: Optional[str] = None,
+    ) -> AsyncIterator[AsyncIterator[GeminiStreamEvent]]:
+        """
+        Stream response from Gemini, yielding events compatible with the existing consumer.
+        Uses the new google-genai SDK with native async support.
+        """
+        system_instruction, contents = messages
+
+        async def event_generator() -> AsyncIterator[GeminiStreamEvent]:
+            if not self.client:
+                yield GeminiStreamEvent(type="response.error", error="GEMINI_API_KEY not configured")
+                return
+
+            try:
+                # Emit response.created event
+                yield GeminiStreamEvent(type="response.created")
+
+                # Build config with system instruction
+                config = genai_types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.7,
+                    max_output_tokens=2048,
+                )
+
+                # Use async streaming
+                async for chunk in await self.client.aio.models.generate_content_stream(
+                    model=self.model_name,
+                    contents=contents,
+                    config=config,
+                ):
+                    if chunk.text:
+                        yield GeminiStreamEvent(
+                            type="response.output_text.delta",
+                            delta=chunk.text,
+                        )
+
+                # Emit response.completed event
+                yield GeminiStreamEvent(type="response.completed")
+
+            except Exception as e:
+                yield GeminiStreamEvent(type="response.error", error=str(e))
+
+        yield event_generator()
 

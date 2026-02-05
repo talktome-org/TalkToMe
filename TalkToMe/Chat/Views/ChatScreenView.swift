@@ -28,6 +28,9 @@ struct ChatScreenView: View {
                 isVoiceRecording: chatViewModel.dictationSTTService.isRecording,
                 voiceModeEnabled: voiceModeEnabled,
                 isSpeakModeActive: chatViewModel.isSpeakModeActive,
+                speakModePhase: chatViewModel.voiceController.speakModePhase,
+                speakerLevel: chatViewModel.voiceController.speakerLevel,
+                micLevel: chatViewModel.voiceController.micLevel,
                 onSpeakToggle: {
                     if chatViewModel.isSpeakModeActive {
                         chatViewModel.voiceController.stopSpeakMode()
@@ -43,7 +46,14 @@ struct ChatScreenView: View {
                 ),
                 isInputFocused: isInputFocused,
                 send: { onSend() },
-                stop: { chatViewModel.streamingController.stopGeneration() },
+                stop: {
+                    chatViewModel.streamingController.stopGeneration()
+                    if chatViewModel.isSpeakModeActive {
+                        Task { @MainActor in
+                            chatViewModel.elevenLabsStreamingTTS.cancel()
+                        }
+                    }
+                },
                 onVoiceModeStart: { chatViewModel.voiceController.startVoiceModePushToTalk() },
                 onVoiceModeStop: { chatViewModel.voiceController.stopVoiceModePushToTalk() }
             )
@@ -56,7 +66,6 @@ struct ChatScreenView: View {
                 chatViewModel.pendingOutgoingUserMessageId = nil
             }
         }
-        .coordinateSpace(name: "ChatScreen")
     }
 }
 

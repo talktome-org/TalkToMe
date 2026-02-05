@@ -19,6 +19,9 @@ protocol ChatStreamingDelegate: AnyObject {
     func getCachedMessages(for sessionId: UUID) -> [ChatMessage]?
     func setCachedMessages(_ messages: [ChatMessage], for sessionId: UUID)
     func setChatMessagesVMSessionId(_ id: UUID)
+    func streamingWillStart()
+    func streamingDidReceiveToken(_ token: String)
+    func streamingDidFinish()
 }
 
 @MainActor
@@ -286,7 +289,10 @@ final class ChatStreamingController {
             let createdLocalSessionIdForSend = createdLocalSessionId
             let requestSessionIdForStream: UUID? = (createdLocalSessionIdForSend != nil) ? nil : localSessionIdForSend
 
-            await MainActor.run { self.isStreaming = true }
+            await MainActor.run {
+                self.isStreaming = true
+                delegate.streamingWillStart()
+            }
             await MainActor.run { self.currentStreamingSessionId = localSessionIdForSend }
             let bgName = "chat_stream_" + localSessionIdForSend.uuidString
             let bgTask: UIBackgroundTaskIdentifier? = Self.beginBackgroundTask(name: bgName) { [weak self, weak delegate] in
@@ -517,6 +523,7 @@ final class ChatStreamingController {
                             self.typingDelayTask?.cancel()
                             delegate.isAssistantTyping = false
                         }
+                        delegate.streamingDidReceiveToken(token)
 
                         accumulated += token
                         if !currentSegments.isEmpty, case .text(let existingText) = currentSegments[currentSegments.count - 1] {
@@ -639,7 +646,12 @@ final class ChatStreamingController {
                             if self.currentStreamingSessionId == sid { self.currentStreamingSessionId = nil }
                         }
                     } else {
-                        Task { @MainActor in delegate.isLoading = false; delegate.isAssistantTyping = false; self.isStreaming = false }
+                        Task { @MainActor in
+                            delegate.isLoading = false
+                            delegate.isAssistantTyping = false
+                            self.isStreaming = false
+                            delegate.streamingDidFinish()
+                        }
                         Task { @MainActor in self.currentAssistantMessageId = nil }
                         Task { @MainActor in self.currentStreamingSessionId = nil }
                         if let sid = delegate.sessionId {
@@ -691,6 +703,7 @@ final class ChatStreamingController {
                             delegate.isAssistantTyping = false
                             self.isStreaming = false
                             self.currentStreamingSessionId = nil
+                            delegate.streamingDidFinish()
                             self.onCacheUpdate?()
                         }
                         Self.endBackgroundTask(bgTask)

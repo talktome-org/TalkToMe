@@ -100,6 +100,72 @@ class ListVoicesResponse(BaseModel):
     voices: list[ElevenVoice]
 
 
+# TalkToMe app-specific voices
+class AppVoice(BaseModel):
+    voice_id: str
+    name: str
+    description: str
+
+
+class AppVoicesResponse(BaseModel):
+    voices: list[AppVoice]
+    default_voice_id: str
+
+
+# Voice metadata (descriptions are not sensitive, keep in code)
+_VOICE_METADATA: dict[str, dict[str, str]] = {
+    "Luma": {"description": "Warm, compassionate. Soft, airy timbre with gentle breathiness and a reassuring smile."},
+    "Volt": {"description": "Confident heroic tone, friendly and encouraging. Upbeat cadence, clear articulation."},
+    "Hexley": {"description": "Bright, playful, magical energy with a light airy tone. Expressive inflection."},
+    "Mira": {"description": "Cheerful, affectionate with light, bubbly warmth. Soft breathiness, smiling delivery."},
+    "Pax": {"description": "Clear, articulate warmth with a patient teacher vibe. Steady cadence, gentle humor."},
+}
+
+
+def _load_app_voices() -> tuple[list[AppVoice], str]:
+    """Load voice IDs from environment variables."""
+    voices: list[AppVoice] = []
+
+    # Expected env vars: VOICE_ID_LUMA, VOICE_ID_VOLT, etc.
+    voice_names = ["Luma", "Volt", "Hexley", "Mira", "Pax"]
+    for name in voice_names:
+        env_key = f"VOICE_ID_{name.upper()}"
+        voice_id = os.getenv(env_key, "").strip()
+        if voice_id:
+            meta = _VOICE_METADATA.get(name, {})
+            voices.append(AppVoice(
+                voice_id=voice_id,
+                name=name,
+                description=meta.get("description", ""),
+            ))
+
+    default_voice_id = os.getenv("VOICE_ID_DEFAULT", "").strip()
+    if not default_voice_id and voices:
+        default_voice_id = voices[0].voice_id
+
+    return voices, default_voice_id
+
+
+@router.get("/app-voices", response_model=AppVoicesResponse)
+async def get_app_voices(current_user: dict = Depends(get_current_user)):
+    """
+    Returns the curated list of TalkToMe app voices.
+    Voice IDs are loaded from environment variables:
+    - VOICE_ID_LUMA, VOICE_ID_VOLT, VOICE_ID_HEXLEY, VOICE_ID_MIRA, VOICE_ID_PAX
+    - VOICE_ID_DEFAULT (optional, defaults to first voice)
+    """
+    _ = current_user  # auth validated
+    voices, default_voice_id = _load_app_voices()
+
+    if not voices:
+        raise HTTPException(status_code=500, detail="No voices configured")
+
+    return AppVoicesResponse(
+        voices=voices,
+        default_voice_id=default_voice_id,
+    )
+
+
 @router.get("/voices", response_model=ListVoicesResponse)
 async def list_elevenlabs_voices(current_user: dict = Depends(get_current_user)):
     """

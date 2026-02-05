@@ -1,6 +1,43 @@
 import Foundation
 
 extension BackendService {
+    // MARK: - App Voices (curated TalkToMe voices)
+
+    struct AppVoiceDTO: Codable, Equatable, Identifiable {
+        var id: String { voice_id }
+        let voice_id: String
+        let name: String
+        let description: String
+    }
+
+    struct AppVoicesResponseBody: Codable {
+        let voices: [AppVoiceDTO]
+        let default_voice_id: String
+    }
+
+    func fetchAppVoices(accessToken: String) async throws -> AppVoicesResponseBody {
+        let url = baseURL
+            .appendingPathComponent("speech")
+            .appendingPathComponent("app-voices")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = BackendService.coreRequestTimeoutSeconds
+
+        let (data, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw NSError(domain: "Backend", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response from server"])
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let serverMessage = decodeSimpleDetail(from: data) ?? String(data: data, encoding: .utf8) ?? "Unknown server error"
+            throw NSError(domain: "Backend", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: serverMessage])
+        }
+
+        return try jsonDecoder.decode(AppVoicesResponseBody.self, from: data)
+    }
+
+    // MARK: - ElevenLabs Full Voice List (legacy)
+
     struct ElevenVoiceDTO: Codable, Equatable, Identifiable {
         var id: String { voice_id }
         let voice_id: String

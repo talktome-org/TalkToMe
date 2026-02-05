@@ -1,8 +1,111 @@
+import CryptoKit
 import Photos
 import PhotosUI
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+
+// MARK: - Shared Thumbnail Cache
+
+/// Singleton cache for photo library thumbnails that persists across view presentations and app launches.
+final class PhotoThumbnailCache {
+    static let shared = PhotoThumbnailCache()
+
+    private let memoryCache = NSCache<NSString, UIImage>()
+    private let lock = NSLock()
+    private var inflightRequests: Set<String> = []
+    private let diskQueue = DispatchQueue(label: "com.talktome.PhotoThumbnailCache.disk", qos: .utility)
+
+    private init() {
+        memoryCache.countLimit = 100
+        memoryCache.totalCostLimit = 50 * 1024 * 1024 // 50MB memory
+    }
+
+    func thumbnail(for assetId: String) -> UIImage? {
+        // Check memory cache first
+        if let image = memoryCache.object(forKey: assetId as NSString) {
+            return image
+        }
+        // Check disk cache
+        if let diskImage = loadFromDisk(assetId: assetId) {
+            // Promote to memory cache
+            let cost = Int(diskImage.size.width * diskImage.size.height * 4)
+            memoryCache.setObject(diskImage, forKey: assetId as NSString, cost: cost)
+            return diskImage
+        }
+        return nil
+    }
+
+    func setThumbnail(_ image: UIImage, for assetId: String) {
+        let cost = Int(image.size.width * image.size.height * 4)
+        memoryCache.setObject(image, forKey: assetId as NSString, cost: cost)
+        // Save to disk asynchronously
+        saveToDisk(image: image, assetId: assetId)
+    }
+
+    func isInflight(_ assetId: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return inflightRequests.contains(assetId)
+    }
+
+    func markInflight(_ assetId: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        inflightRequests.insert(assetId)
+    }
+
+    func clearInflight(_ assetId: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        inflightRequests.remove(assetId)
+    }
+
+    // MARK: - Disk Cache
+
+    private func diskCacheDirectory() -> URL {
+        let fm = FileManager.default
+        let base = (try? fm.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
+            ?? fm.temporaryDirectory
+        let dir = base.appendingPathComponent("TalkToMe/PhotoThumbnailCache", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func diskURL(for assetId: String) -> URL {
+        // Hash the asset ID to create a safe filename
+        let digest = SHA256.hash(data: Data(assetId.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return diskCacheDirectory().appendingPathComponent(hex).appendingPathExtension("jpg")
+    }
+
+    private func loadFromDisk(assetId: String) -> UIImage? {
+        let fileURL = diskURL(for: assetId)
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        return UIImage(data: data)
+    }
+
+    private func saveToDisk(image: UIImage, assetId: String) {
+        diskQueue.async { [weak self] in
+            guard let self else { return }
+            let fileURL = self.diskURL(for: assetId)
+            // Use JPEG for smaller file size
+            guard let data = image.jpegData(compressionQuality: 0.8) else { return }
+            try? data.write(to: fileURL, options: [.atomic])
+        }
+    }
+
+    func clearDiskCache() {
+        diskQueue.async { [weak self] in
+            guard let self else { return }
+            let fm = FileManager.default
+            let dir = self.diskCacheDirectory()
+            try? fm.removeItem(at: dir)
+        }
+    }
+}
+
+// MARK: - MediaPickerPanelView
 
 struct MediaPickerPanelView: View {
     @Binding var attachments: [PendingAttachment]
@@ -73,12 +176,11 @@ struct MediaPickerPanelView: View {
 
             Divider()
                 .padding(.horizontal, 16)
-                .opacity(0.3)
 
-            // Voice suggestions (2x2 grid)
+            // Buddies (voice selection grid)
             ElevenLabsVoiceSuggestionsView()
                 .padding(.horizontal, 16)
-                .padding(.top, 16)
+                .padding(.top, 14)
                 .padding(.bottom, 16)
 
             Spacer(minLength: 0)
@@ -264,10 +366,11 @@ struct MediaPickerPanelView: View {
 private final class RecentPhotosViewModel: ObservableObject {
     @Published private(set) var authStatus: PHAuthorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
     @Published private(set) var recentAssets: [PHAsset] = []
-    @Published private var thumbnailsById: [String: UIImage] = [:]
+    /// Local trigger to force view updates when thumbnails load from shared cache.
+    @Published private var thumbnailUpdateTrigger: Int = 0
 
     private let imageManager = PHCachingImageManager()
-    private var inflightThumbs: Set<String> = []
+    private let thumbnailCache = PhotoThumbnailCache.shared
 
     var canShowRecents: Bool {
         authStatus == .authorized || authStatus == .limited
@@ -315,14 +418,16 @@ private final class RecentPhotosViewModel: ObservableObject {
     }
 
     func thumbnail(for asset: PHAsset) -> UIImage? {
-        thumbnailsById[asset.localIdentifier]
+        thumbnailCache.thumbnail(for: asset.localIdentifier)
     }
 
     func prefetchThumbnail(asset: PHAsset, targetSize: CGSize) {
         let id = asset.localIdentifier
-        if thumbnailsById[id] != nil { return }
-        if inflightThumbs.contains(id) { return }
-        inflightThumbs.insert(id)
+        // Already cached - no work needed
+        if thumbnailCache.thumbnail(for: id) != nil { return }
+        // Already being fetched
+        if thumbnailCache.isInflight(id) { return }
+        thumbnailCache.markInflight(id)
 
         let options = PHImageRequestOptions()
         options.isNetworkAccessAllowed = true
@@ -337,9 +442,11 @@ private final class RecentPhotosViewModel: ObservableObject {
         ) { [weak self] image, _ in
             guard let self else { return }
             Task { @MainActor in
-                self.inflightThumbs.remove(id)
+                self.thumbnailCache.clearInflight(id)
                 if let image {
-                    self.thumbnailsById[id] = image
+                    self.thumbnailCache.setThumbnail(image, for: id)
+                    // Trigger view update
+                    self.thumbnailUpdateTrigger += 1
                 }
             }
         }

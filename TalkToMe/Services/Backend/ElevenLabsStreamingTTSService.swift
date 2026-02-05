@@ -1,10 +1,6 @@
 import AVFoundation
 import Foundation
 
-/// Streams ElevenLabs TTS audio (PCM) via the backend WebSocket `/speech/tts/stream`.
-///
-/// This is designed for Siri-like behavior: feed text deltas as they stream, and play audio
-/// chunks immediately as they arrive.
 final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable {
     struct Config: Equatable {
         var modelId: String = "eleven_multilingual_v2"
@@ -20,9 +16,6 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
     private var wsTask: URLSessionWebSocketTask?
     private var config: Config = .init()
     private var voiceId: String?
-
-    // Playback (PCM16 @ 24kHz mono)
-    // Lazily created to avoid touching CoreAudio too early during app launch.
     private var audioEngine: AVAudioEngine?
     private let playerNode = AVAudioPlayerNode()
     private let audioQueue = DispatchQueue(label: "talktome.elevenlabs.tts.audio")
@@ -32,8 +25,6 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
     private var startedPlayback: Bool = false
     private var endRequested: Bool = false
     private var playerGraphConfigured: Bool = false
-
-    // Text buffering
     private var pendingText: String = ""
     private var flushWorkItem: DispatchWorkItem?
 
@@ -43,12 +34,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
 
     init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
-        // IMPORTANT: Do not touch AVAudioEngine I/O nodes during init.
-        // On some devices/OS states, accessing `mainMixerNode`/I/O nodes early can throw an Obj-C
-        // exception and crash the app. We build the playback graph lazily when we actually need to play.
     }
-
-    // MARK: - Public API
 
     @MainActor
     func start(voiceId: String, config: Config = .init()) async {
@@ -83,10 +69,6 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         guard !endRequested else { return }
 
         pendingText += delta
-
-        // Flush heuristics:
-        // - flush on whitespace or sentence punctuation
-        // - flush if buffer gets large
         let shouldFlush: Bool = {
             if pendingText.count >= 48 { return true }
             if delta.contains(where: { $0 == " " || $0 == "\n" }) { return true }
@@ -101,7 +83,9 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
 
     @MainActor
     func finish() {
-        guard isConnected else { return }
+        guard isConnected else {
+            return
+        }
         endRequested = true
         flushPendingTextImmediately()
         sendEvent(["type": "end"])
@@ -119,8 +103,6 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         isConnected = false
         stopPlayback()
     }
-
-    // MARK: - WebSocket
 
     private func openWebSocket(token: String) async throws {
         guard let voiceId else {
@@ -161,7 +143,6 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
                 switch result {
                 case .failure(let err):
                     if self.endRequested {
-                        // Normal closure (finish/cancel).
                         self.isConnected = false
                         self.wsTask = nil
                         return
@@ -197,14 +178,11 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
               let obj = try? JSONSerialization.jsonObject(with: data),
               let dict = obj as? [String: Any]
         else { return }
-
-        // ElevenLabs server message (proxied): { "audio": "<base64>", "isFinal": false, ... }
         if let audioB64 = dict["audio"] as? String, !audioB64.isEmpty {
             enqueuePCMChunk(base64PCM: audioB64)
         }
         if let isFinal = dict["isFinal"] as? Bool, isFinal == true {
             endRequested = true
-            // Close the WS once ElevenLabs has finalized output. Playback will drain from queued buffers.
             wsTask?.cancel(with: .normalClosure, reason: nil)
             wsTask = nil
             isConnected = false
@@ -221,8 +199,6 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
             task.send(.string(str)) { _ in }
         }
     }
-
-    // MARK: - Text flushing
 
     private func flushPendingTextSoon() {
         flushWorkItem?.cancel()
@@ -243,16 +219,32 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         sendEvent(["type": "text", "text": trimmed])
     }
 
-    // MARK: - Playback
-
     private func setupPlayerIfNeeded(engine: AVAudioEngine) {
         guard playerGraphConfigured == false else { return }
         if engine.attachedNodes.contains(playerNode) == false {
             engine.attach(playerNode)
         }
-        // Accessing `mainMixerNode` may crash if the engine doesn't have I/O nodes yet; by calling this
-        // only when we are about to play (after app launch), we avoid the startup crash.
         engine.connect(playerNode, to: engine.mainMixerNode, format: playbackFormat)
+        let tapFormat = engine.mainMixerNode.outputFormat(forBus: 0)
+        engine.mainMixerNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { [weak self] buffer, _ in
+            guard let self else { return }
+            guard let channelData = buffer.floatChannelData else { return }
+            let frames = buffer.frameLength
+            guard frames > 0 else { return }
+            var sum: Float = 0
+            let data = channelData[0]
+            for i in 0..<Int(frames) {
+                let sample = data[i]
+                sum += sample * sample
+            }
+            let rms = sqrt(sum / Float(frames))
+            let level = CGFloat(min(1, rms * 3))
+
+            Task { @MainActor in
+                self.speakerLevel = level
+            }
+        }
+
         playerGraphConfigured = true
     }
 
@@ -263,7 +255,6 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         }
         guard let engine = audioEngine else { return }
         do {
-            // Lazily create the player graph right before engine start.
             setupPlayerIfNeeded(engine: engine)
             engine.prepare()
             try engine.start()
@@ -284,16 +275,10 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
             guard frames > 0 else { return }
             guard let pcm = AVAudioPCMBuffer(pcmFormat: self.playbackFormat, frameCapacity: frames) else { return }
             pcm.frameLength = frames
-
-            // Copy bytes into int16 buffer
             data.withUnsafeBytes { raw in
                 guard let base = raw.baseAddress else { return }
                 memcpy(pcm.int16ChannelData!.pointee, base, data.count)
             }
-
-            // Update speaker level (peak)
-            let level = self.estimateLevel(fromPCM16Data: data)
-            Task { @MainActor in self.speakerLevel = level }
 
             self.queuedPlaybackBuffers += 1
             self.playerNode.scheduleBuffer(pcm, completionHandler: { [weak self] in
@@ -312,8 +297,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
             })
 
             if self.startedPlayback == false {
-                // small jitter buffer
-                if self.queuedPlaybackBuffers >= 2 {
+                if self.queuedPlaybackBuffers >= 2 || (self.endRequested && self.queuedPlaybackBuffers >= 1) {
                     self.startedPlayback = true
                     self.playerNode.play()
                     Task { @MainActor in self.isSpeaking = true }
@@ -325,7 +309,6 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
     private func stopPlayback() {
         audioQueue.async { [weak self] in
             guard let self else { return }
-            // Ensure the node is stopped even if the engine hasn't been created yet.
             self.playerNode.stop()
             self.queuedPlaybackBuffers = 0
             self.startedPlayback = false
@@ -337,7 +320,6 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
     }
 
     private func estimateLevel(fromPCM16Data data: Data) -> CGFloat {
-        // Peak across a subset of samples for speed.
         let maxSamples = 1200
         var peak: Int16 = 0
         data.withUnsafeBytes { raw in
@@ -351,11 +333,8 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
             }
         }
         let normalized = min(1, max(0, CGFloat(peak) / CGFloat(Int16.max)))
-        // Slight mid boost
         return sqrt(normalized)
     }
-
-    // MARK: - URL helpers
 
     private static func makeTTSStreamURL(
         baseURL: URL,

@@ -1,74 +1,42 @@
 import AVFoundation
 import Foundation
 
-/// iOS client for TalkToMe's `/speech/stt/stream` WebSocket (backend proxies to Deepgram streaming STT).
-///
-/// Responsibilities:
-/// - Connect/authenticate with Supabase access token
-/// - Stream microphone audio as PCM16 @ 24kHz mono (binary frames)
-/// - Maintain a continuously updating transcript with interim revisions + finalization on pauses
 final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
     struct Config: Equatable {
-        /// Deepgram language code (e.g. "en-US"). Backend defaults to "en-US".
         var language: String = "en-US"
-        /// Deepgram model (e.g. "nova-3"). Backend defaults to "nova-3".
         var model: String = "nova-3"
-        /// Milliseconds of silence to consider an utterance boundary.
         var endpointingMs: Int = 400
-        /// Audio sample rate we stream. Must match what we encode on-device.
         var sampleRateHz: Int = 24_000
     }
 
     enum TranscriptAggregation {
-        /// Keep a running transcript across multiple utterances (dictation).
         case accumulate
-        /// Keep only the active utterance (voice agent / speak mode).
         case perUtterance
     }
 
     @Published var isConnected: Bool = false
     @Published var isRecording: Bool = false
     @Published var lastError: String?
-
-    /// Quick waveform driver for any future mic UI (optional).
     @Published var spawnLevel: CGFloat = 0
-
-    /// The running transcript shown in the composer (committed + current interim).
     @Published var userTranscript: String = ""
-
-    /// Best-effort; derived from interim activity and `speech_final`.
     @Published var isUserSpeaking: Bool = false
-
-    /// Emits the most recently finalized utterance (when Deepgram reports an utterance boundary).
     @Published var lastFinalUtterance: String?
 
     private let urlSession: URLSession
     private var wsTask: URLSessionWebSocketTask?
 
     private var config: Config = .init()
-
-    /// Controls how `userTranscript` is presented.
-    /// Set this before calling `startRecording()`.
     var transcriptAggregation: TranscriptAggregation = .accumulate
 
-    // Audio (mic capture only)
     private var audioEngine: AVAudioEngine?
     private var inputConverter: AVAudioConverter?
 
     private let audioQueue = DispatchQueue(label: "talktome.deepgramSTT.audio")
     private let wsSendQueue = DispatchQueue(label: "talktome.deepgramSTT.wsSend")
-
-    // Best-effort "instant mic": prewarm audio session/engine so start/stop are responsive.
-    // Mutate only on `audioQueue`.
     private var didPrewarmAudio: Bool = false
-
-    // When the user taps the mic, we want to start capturing instantly even if the websocket
-    // handshake hasn't completed yet. Buffer a small amount of audio and flush once connected.
     private var bufferedAudioChunks: [Data] = []
     private var bufferedAudioBytes: Int = 0
-    private let maxBufferedAudioBytes: Int = 480_000 // ~10s @ 24kHz PCM16 mono (≈48KB/s)
-
-    // Transcript aggregation state (mutate only on MainActor).
+    private let maxBufferedAudioBytes: Int = 480_000
     private var committedParts: [String] = []
     private var currentInterim: String = ""
     private var currentUtteranceFinalParts: [String] = []
@@ -76,8 +44,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
     init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
     }
-
-    // MARK: - Public API
 
     @MainActor
     func connect(config: Config = .init()) async {
@@ -103,9 +69,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         } catch {
             let msg = "STT connection failed: \(error.localizedDescription)"
             self.lastError = msg
-#if DEBUG
-            print("🎙️ [DeepgramSTT] \(msg)")
-#endif
             self.isConnected = false
         }
     }
@@ -122,7 +85,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
     @MainActor
     func startRecording() {
         lastError = nil
-        // Fast path: if permission is already granted, start immediately (no async hop).
         if #available(iOS 17.0, *) {
             let perm = AVAudioApplication.shared.recordPermission
             if perm == .granted {
@@ -145,7 +107,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             }
         }
 
-        // Permission is undetermined; request it asynchronously.
         Task { @MainActor [weak self] in
             guard let self else { return }
             let granted = await self.requestMicrophonePermissionIfNeeded()
@@ -157,8 +118,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// Prepare audio session + engine ahead of time to minimize start/stop latency.
-    /// Does not prompt for permission (silent no-op if not granted).
     @MainActor
     func prewarmAudioForInstantStart() {
         let hasMicPermission: Bool = {
@@ -173,26 +132,19 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         audioQueue.async { [weak self] in
             guard let self else { return }
             guard self.didPrewarmAudio == false else { return }
-            // Don't surface errors here; this is best-effort.
             _ = self.configureAudioSessionForVoiceLocked(reportErrors: false)
-            _ = self.ensureEngineRunning(reportErrors: false)
             self.didPrewarmAudio = true
         }
     }
 
     @MainActor
     func stopRecording() {
-        // Flip UI state immediately; cleanup happens on the audio queue.
         isRecording = false
         stopRecordingIfNeeded()
-        // Try to flush any buffered frames before we finalize.
         flushBufferedAudioIfPossible()
-        // Best-effort flush to Deepgram (backend forwards a Finalize control message).
         sendJSONEvent(["type": "finalize"])
         clearBufferedAudio()
     }
-
-    // MARK: - WebSocket
 
     @MainActor
     private func openWebSocket(token: String) async throws {
@@ -207,7 +159,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         let task = urlSession.webSocketTask(with: req)
         task.resume()
 
-        // Confirm the connection is viable by waiting for the backend's ready message.
         do {
             let first = try await task.awaitReceive(timeout: 6.0)
             self.handle(message: first)
@@ -230,9 +181,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
                     if existing.isEmpty {
                         self.lastError = err.localizedDescription
                     }
-#if DEBUG
-                    print("🎙️ [DeepgramSTT] ws receive failure: \(err.localizedDescription)")
-#endif
                     self.isConnected = false
                     self.isUserSpeaking = false
                 case .success(let msg):
@@ -266,9 +214,7 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
               let dict = obj as? [String: Any]
         else { return }
 
-        // Backend control plane.
         if let t = dict["type"] as? String, t == "talktome.stt.ready" {
-            // Ready handshake.
             return
         }
         if let t = dict["type"] as? String, t == "talktome.error" {
@@ -279,7 +225,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             return
         }
 
-        // Deepgram results.
         let isFinal = dict["is_final"] as? Bool
         let speechFinal = dict["speech_final"] as? Bool
         let transcript: String? = {
@@ -290,7 +235,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             return first["transcript"] as? String
         }()
 
-        // Some messages (metadata, etc.) won't include `is_final` / transcript.
         guard let isFinal else { return }
 
         let trimmed = (transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -303,7 +247,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             currentInterim = ""
             updatePresentedTranscript()
         } else {
-            // Interim hypothesis: mutable, may be revised as more audio arrives.
             currentInterim = trimmed
             updatePresentedTranscript()
             isUserSpeaking = !trimmed.isEmpty
@@ -318,7 +261,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             currentUtteranceFinalParts = []
 
             if transcriptAggregation == .perUtterance {
-                // Clear the UI + buffers once an utterance ends (Speak Mode expects turn-by-turn).
                 committedParts = []
                 currentInterim = ""
                 updatePresentedTranscript()
@@ -348,7 +290,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             guard let self else { return }
             guard !data.isEmpty else { return }
 
-            // If we have an active websocket task, send immediately. Otherwise buffer while recording.
             if let task = self.wsTask {
                 task.send(.data(data)) { _ in }
                 return
@@ -409,8 +350,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         }
     }
 
-    // MARK: - Audio session / engine
-
     @MainActor
     private func requestMicrophonePermissionIfNeeded() async -> Bool {
         if #available(iOS 17.0, *) {
@@ -435,13 +374,16 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         }
     }
 
-    // Not @MainActor: can be slow; don't block UI updates.
     @discardableResult
     private func configureAudioSessionForVoiceLocked(reportErrors: Bool = true) -> Bool {
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
             try session.setActive(true, options: [])
+            let hwSampleRate = session.sampleRate
+            if hwSampleRate > 0 {
+                try session.setPreferredSampleRate(hwSampleRate)
+            }
         } catch {
             if reportErrors {
                 Task { @MainActor in
@@ -472,35 +414,33 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             return false
         }
 
-        if audioEngine == nil {
-            audioEngine = AVAudioEngine()
+        if let existing = audioEngine, existing.isRunning {
+            return true
         }
-        guard let engine = audioEngine else { return false }
+
+        audioEngine?.stop()
+        audioEngine = nil
+        let engine = AVAudioEngine()
+        audioEngine = engine
 
         _ = engine.inputNode
-        if engine.isRunning == false {
-            engine.prepare()
-            do {
-                try engine.start()
-            } catch {
-                if reportErrors {
-                    Task { @MainActor in
-                        self.lastError = "Audio engine start failed: \(error.localizedDescription)"
-                    }
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            if reportErrors {
+                Task { @MainActor in
+                    self.lastError = "Audio engine start failed: \(error.localizedDescription)"
                 }
-                return false
             }
+            return false
         }
         return engine.isRunning
     }
 
     @MainActor
     private func startRecordingAfterPermission() {
-        // Flip UI state immediately so the button reacts instantly.
-        // Audio session + engine setup happens off the critical path.
         isRecording = true
-
-        // Reset transcript for a new dictation run.
         userTranscript = ""
         isUserSpeaking = false
         lastFinalUtterance = nil
@@ -510,7 +450,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
 
         audioQueue.async { [weak self] in
             guard let self else { return }
-            // The user may have tapped "Stop" before our audio queue work runs.
             guard self.isRecording else { return }
             guard self.configureAudioSessionForVoiceLocked() else {
                 Task { @MainActor in self.isRecording = false }
@@ -527,7 +466,7 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
 
     @discardableResult
     private func installMicTapIfNeeded() -> Bool {
-        guard isRecording else { return true } // stopped before tap install; nothing to do
+        guard isRecording else { return true }
         guard ensureEngineRunning() else { return false }
         guard let engine = audioEngine else { return false }
 
@@ -602,8 +541,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             }
         }
     }
-
-    // MARK: - URL helpers
 
     private static func makeSTTURL(baseURL: URL, config: Config) -> URL? {
         let url = baseURL

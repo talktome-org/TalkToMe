@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import json
 import asyncio
+import json
 import os
+import re
 import time
 import traceback
 import uuid
+from contextlib import suppress
 from datetime import datetime
 from typing import Optional
 
@@ -13,6 +15,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
+from sqlalchemy import select, text
 
 from Backend.auth import get_current_user
 from Backend.crud.chat.chat_crud import (
@@ -36,20 +39,22 @@ from Backend.schemas.chat_models import ChatRequest, MessageDTO, MessagesRespons
 from Backend.crud.client_uploads.uploads_crud import create_upload
 from Backend.database import SessionLocal
 from Backend.models.client_uploads.upload_model import Upload
-from Backend.services.chat_service import ChatService, ChatTitleService
+from Backend.services.chat_service import ChatService, ChatTitleService, VoiceChatService
 from Backend.services.embedding_service import EmbeddingService
 from Backend.services.file_signing_service import sign_upload_id
 from Backend.crud.books.rag_crud import search_similar_chunks
 from Backend.crud.friends.friends_crud import get_friendship_id_for_pair, list_friends_for_user
 from Backend.models.profile.profile_model import Profile
 from Backend.models.friends.friendship_model import Friendship
-from sqlalchemy import select, text
+from Backend.services.voice_agent_prompts import VoiceAgentPromptLibrary
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 chat_service = ChatService()
 chat_title_service = ChatTitleService()
+voice_chat_service = VoiceChatService()
 embedding_service = EmbeddingService()
+voice_agent_prompts = VoiceAgentPromptLibrary()
 
 RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5") or "5")
 RAG_MAX_CHARS_PER_CHUNK = int(os.getenv("RAG_MAX_CHARS_PER_CHUNK", "1200") or "1200")
@@ -270,119 +275,127 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
             raise HTTPException(status_code=401, detail="Invalid user ID in token")
 
         public_base = _resolve_public_base_url(http_request)
+        is_ephemeral = chat_request.ephemeral
 
-        if chat_request.session_id is not None:
-            try:
-                await assert_session_owned_by_user(user_id=user_uuid, session_id=chat_request.session_id)
-                session_uuid = chat_request.session_id
-            except PermissionError:
-                raise HTTPException(status_code=403, detail="Forbidden: invalid session")
-        else:
-            session_row = await create_session(user_id=user_uuid, title=None)
-            session_uuid = _as_uuid(session_row["id"])
-
-        # Friend selection is OPTIONAL for AI chat.
-        # If provided, we attach the friendship to the session so partner messaging can reuse it later.
-        # (Partner messaging itself is handled via /partner/send-message, and may still require selection.)
-        if chat_request.friend_user_id is not None:
-            fid = await get_friendship_id_for_pair(user_id=user_uuid, friend_user_id=chat_request.friend_user_id)
-            if not fid:
-                raise HTTPException(status_code=400, detail="Not friends with selected user")
-            await attach_friendship_to_session(user_id=user_uuid, session_id=session_uuid, friendship_id=fid)
-
-        store_as_segments = bool(chat_request.attachments)
-        if store_as_segments:
-            segs = []
-            msg = (chat_request.message or "").strip()
-            if msg:
-                segs.append({"type": "text", "content": msg})
-            for a in chat_request.attachments or []:
+        # For ephemeral mode (speak), we don't create/use sessions or persist anything
+        session_uuid: Optional[uuid.UUID] = None
+        if not is_ephemeral:
+            if chat_request.session_id is not None:
                 try:
-                    t = getattr(a, "type", None) or (a.get("type") if isinstance(a, dict) else None)
-                    p = getattr(a, "path", None) or (a.get("path") if isinstance(a, dict) else None)
-                    fn = getattr(a, "filename", None) or (a.get("filename") if isinstance(a, dict) else None)
-                    ct = getattr(a, "content_type", None) or (a.get("content_type") if isinstance(a, dict) else None)
-                    if not t or not p:
-                        continue
-                    seg_obj = {"type": t, "path": p}
-                    if fn:
-                        seg_obj["filename"] = fn
-                    if ct:
-                        seg_obj["content_type"] = ct
-                    segs.append(seg_obj)
-                except Exception:
-                    continue
-            content_to_store = json.dumps({"_talktome": {"type": "segments", "segments": segs}}, ensure_ascii=False)
-        else:
-            content_to_store = chat_request.message
+                    await assert_session_owned_by_user(user_id=user_uuid, session_id=chat_request.session_id)
+                    session_uuid = chat_request.session_id
+                except PermissionError:
+                    raise HTTPException(status_code=403, detail="Forbidden: invalid session")
+            else:
+                session_row = await create_session(user_id=user_uuid, title=None)
+                session_uuid = _as_uuid(session_row["id"])
 
-        try:
-            await save_message_with_id(
-                user_id=user_uuid,
-                session_id=session_uuid,
-                role="user",
-                content=content_to_store,
-                message_id=chat_request.message_id,
-            )
-        except PermissionError:
-            # If the client reuses a message id that already exists for a different user/session, treat it as a bad request.
-            raise HTTPException(status_code=400, detail="Invalid message_id")
-        last_preview = (chat_request.message or "").strip()
-        if not last_preview and chat_request.attachments:
-            has_image = False
-            try:
+            # Friend selection is OPTIONAL for AI chat.
+            # If provided, we attach the friendship to the session so partner messaging can reuse it later.
+            # (Partner messaging itself is handled via /partner/send-message, and may still require selection.)
+            if chat_request.friend_user_id is not None:
+                fid = await get_friendship_id_for_pair(user_id=user_uuid, friend_user_id=chat_request.friend_user_id)
+                if not fid:
+                    raise HTTPException(status_code=400, detail="Not friends with selected user")
+                await attach_friendship_to_session(user_id=user_uuid, session_id=session_uuid, friendship_id=fid)
+
+            store_as_segments = bool(chat_request.attachments)
+            if store_as_segments:
+                segs = []
+                msg = (chat_request.message or "").strip()
+                if msg:
+                    segs.append({"type": "text", "content": msg})
                 for a in chat_request.attachments or []:
-                    t = getattr(a, "type", None) or (a.get("type") if isinstance(a, dict) else None)
-                    if t == "image":
-                        has_image = True
-                        break
-            except Exception:
-                has_image = False
-            last_preview = "Sent a photo." if has_image else "Sent an attachment."
-        await update_session_last_message(session_id=session_uuid, content=last_preview)
-        user_message_count = await count_user_messages(session_id=session_uuid)
+                    try:
+                        t = getattr(a, "type", None) or (a.get("type") if isinstance(a, dict) else None)
+                        p = getattr(a, "path", None) or (a.get("path") if isinstance(a, dict) else None)
+                        fn = getattr(a, "filename", None) or (a.get("filename") if isinstance(a, dict) else None)
+                        ct = getattr(a, "content_type", None) or (a.get("content_type") if isinstance(a, dict) else None)
+                        if not t or not p:
+                            continue
+                        seg_obj = {"type": t, "path": p}
+                        if fn:
+                            seg_obj["filename"] = fn
+                        if ct:
+                            seg_obj["content_type"] = ct
+                        segs.append(seg_obj)
+                    except Exception:
+                        continue
+                content_to_store = json.dumps({"_talktome": {"type": "segments", "segments": segs}}, ensure_ascii=False)
+            else:
+                content_to_store = chat_request.message
 
-        if user_message_count in (1, 2):
             try:
-                recent_user_messages = await get_recent_user_messages(session_id=session_uuid, limit=2)
-                chat_title = await chat_title_service.generate_chat_title(recent_user_messages)
-                if chat_title:
-                    await update_session_title(user_id=user_uuid, session_id=session_uuid, title=chat_title)
-            except Exception:
-                pass
+                await save_message_with_id(
+                    user_id=user_uuid,
+                    session_id=session_uuid,
+                    role="user",
+                    content=content_to_store,
+                    message_id=chat_request.message_id,
+                )
+            except PermissionError:
+                # If the client reuses a message id that already exists for a different user/session, treat it as a bad request.
+                raise HTTPException(status_code=400, detail="Invalid message_id")
+            last_preview = (chat_request.message or "").strip()
+            if not last_preview and chat_request.attachments:
+                has_image = False
+                try:
+                    for a in chat_request.attachments or []:
+                        t = getattr(a, "type", None) or (a.get("type") if isinstance(a, dict) else None)
+                        if t == "image":
+                            has_image = True
+                            break
+                except Exception:
+                    has_image = False
+                last_preview = "Sent a photo." if has_image else "Sent an attachment."
+            await update_session_last_message(session_id=session_uuid, content=last_preview)
+            user_message_count = await count_user_messages(session_id=session_uuid)
+
+            if user_message_count in (1, 2):
+                try:
+                    recent_user_messages = await get_recent_user_messages(session_id=session_uuid, limit=2)
+                    chat_title = await chat_title_service.generate_chat_title(recent_user_messages)
+                    if chat_title:
+                        await update_session_title(user_id=user_uuid, session_id=session_uuid, title=chat_title)
+                except Exception:
+                    pass
 
         # Provide minimal context about who the "other person" is (if selected / attached).
-        partner_ab_context_text: Optional[str] = None
-        try:
-            other_user_id: Optional[uuid.UUID] = None
-            if chat_request.friend_user_id is not None:
-                other_user_id = chat_request.friend_user_id
-            else:
-                sess = await get_session_by_id(user_id=user_uuid, session_id=session_uuid)
-                fid = sess.get("friendship_id") if isinstance(sess, dict) else None
-                if fid:
-                    try:
-                        fid_uuid = uuid.UUID(str(fid))
-                        other_user_id = await _resolve_other_user_id_from_friendship(
-                            friendship_id=fid_uuid, current_user_id=user_uuid
-                        )
-                    except Exception:
-                        other_user_id = None
+        # Skip for ephemeral mode since there's no session/friend context.
+        context_text: Optional[str] = None
+        if not is_ephemeral:
+            try:
+                other_user_id: Optional[uuid.UUID] = None
+                if chat_request.friend_user_id is not None:
+                    other_user_id = chat_request.friend_user_id
+                else:
+                    sess = await get_session_by_id(user_id=user_uuid, session_id=session_uuid)
+                    fid = sess.get("friendship_id") if isinstance(sess, dict) else None
+                    if fid:
+                        try:
+                            fid_uuid = uuid.UUID(str(fid))
+                            other_user_id = await _resolve_other_user_id_from_friendship(
+                                friendship_id=fid_uuid, current_user_id=user_uuid
+                            )
+                        except Exception:
+                            other_user_id = None
 
-            if other_user_id:
-                other_name = await _resolve_friend_display_name(user_id=other_user_id)
-                if other_name:
-                    partner_ab_context_text = (
-                        "Context:\n"
-                        f"- The other person in this chat is named {other_name}.\n"
-                    )
-        except Exception:
-            partner_ab_context_text = None
-        partner_letter = "A"
+                if other_user_id:
+                    other_name = await _resolve_friend_display_name(user_id=other_user_id)
+                    if other_name:
+                        context_text = (
+                            "Context:\n"
+                            f"- The other person in this chat is named {other_name}.\n"
+                        )
+            except Exception:
+                context_text = None
 
         state = {"final_text": "", "partner_texts": [], "segments": []}
 
         async def persist_stream_results():
+            # Skip persistence for ephemeral mode
+            if is_ephemeral or session_uuid is None:
+                return
             try:
                 final_text = (state.get("final_text") or "").strip()
                 segments = state.get("segments") or []
@@ -409,8 +422,10 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
         async def iter_sse():
             yield (":" + " " * 2048 + "\n\n").encode()
 
-            sess_payload = json.dumps({"session_id": str(session_uuid)})
-            yield f"event: session\ndata: {sess_payload}\n\n".encode()
+            # Only emit session event for persistent mode
+            if not is_ephemeral and session_uuid is not None:
+                sess_payload = json.dumps({"session_id": str(session_uuid)})
+                yield f"event: session\ndata: {sess_payload}\n\n".encode()
 
             full_text_parts = []
             segments_list = []
@@ -454,24 +469,37 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                     print(f"[RAG] retrieval failed: {e}")
                     rag_context_text = None
 
-                merged_partner_context = partner_ab_context_text
+                merged_context = context_text
                 if rag_context_text:
-                    # Append so partner context remains small and first.
-                    merged_partner_context = (partner_ab_context_text or "").rstrip()
-                    if merged_partner_context:
-                        merged_partner_context += "\n\n"
-                    merged_partner_context += rag_context_text
+                    # Append so friend context remains small and first.
+                    merged_context = (context_text or "").rstrip()
+                    if merged_context:
+                        merged_context += "\n\n"
+                    merged_context += rag_context_text
 
-                input_messages = chat_service.build_messages(
-                    session_partner_letter=partner_letter,
-                    last_user_message=chat_request.message,
-                    partner_ab_context_text=merged_partner_context,
-                    image_urls=image_urls or None,
-                    file_urls=file_urls or None,
-                )
+                system_prompt_override = None
+                if is_ephemeral:
+                    # Voice-first mode uses the selected voice agent prompt, NOT chat_prompt.txt.
+                    # Pass empty string if no agent found so we don't fall back to chat_prompt.
+                    system_prompt_override = voice_agent_prompts.get_prompt(chat_request.voice_agent) or ""
 
-                import re
-                from contextlib import suppress
+                # Use Gemini-based voice service for ephemeral mode, OpenAI for regular chat
+                if is_ephemeral:
+                    input_messages = voice_chat_service.build_messages(
+                        last_user_message=chat_request.message,
+                        context_text=merged_context,
+                        image_urls=image_urls or None,
+                        file_urls=file_urls or None,
+                        system_prompt_override=system_prompt_override,
+                    )
+                else:
+                    input_messages = chat_service.build_messages(
+                        last_user_message=chat_request.message,
+                        context_text=merged_context,
+                        image_urls=image_urls or None,
+                        file_urls=file_urls or None,
+                        system_prompt_override=system_prompt_override,
+                    )
 
                 open_pat = re.compile(r"<partner_message(?:\s+[^>]*)?>")
                 end_marker = "</partner_message>"
@@ -593,28 +621,37 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                                 in_partner = False
                                 continue
 
-                try:
-                    async with chat_service.stream_response(
+                # Use Gemini for ephemeral mode, OpenAI for regular chat
+                if is_ephemeral:
+                    async with voice_chat_service.stream_response(
                         messages=input_messages,
-                        previous_response_id=chat_request.previous_response_id,
+                        previous_response_id=None,  # Gemini doesn't support response chaining
                     ) as stream:
                         async for chunk in _consume_stream(stream):
                             yield chunk
-                except Exception as e:
-                    # If OpenAI rejects `previous_response_id`, retry once without it.
-                    msg = str(e)
-                    if chat_request.previous_response_id and (
-                        "previous_response_not_found" in msg
-                        or ("previous response with id" in msg and "not found" in msg)
-                    ):
-                        buffer = ""
-                        in_partner = False
-                        current_text_segment = ""
-                        async with chat_service.stream_response(messages=input_messages, previous_response_id=None) as stream:
+                else:
+                    try:
+                        async with chat_service.stream_response(
+                            messages=input_messages,
+                            previous_response_id=chat_request.previous_response_id,
+                        ) as stream:
                             async for chunk in _consume_stream(stream):
                                 yield chunk
-                    else:
-                        raise
+                    except Exception as e:
+                        # If OpenAI rejects `previous_response_id`, retry once without it.
+                        msg = str(e)
+                        if chat_request.previous_response_id and (
+                            "previous_response_not_found" in msg
+                            or ("previous response with id" in msg and "not found" in msg)
+                        ):
+                            buffer = ""
+                            in_partner = False
+                            current_text_segment = ""
+                            async with chat_service.stream_response(messages=input_messages, previous_response_id=None) as stream:
+                                async for chunk in _consume_stream(stream):
+                                    yield chunk
+                        else:
+                            raise
 
                 if buffer:
                     full_text_parts.append(buffer)

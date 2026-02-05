@@ -8,12 +8,10 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 PARENT = ROOT.parent
-# Load env for local runs.
-# Prefer Backend/.env, but also support repo-root .env (common when running from project root).
+
 load_dotenv(dotenv_path=ROOT / ".env", override=False)
 load_dotenv(dotenv_path=PARENT / ".env", override=False)
 
-# Add repo root so "Backend" package imports work
 if str(PARENT) not in sys.path:
     sys.path.insert(0, str(PARENT))
 

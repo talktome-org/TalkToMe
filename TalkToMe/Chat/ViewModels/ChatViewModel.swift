@@ -35,6 +35,7 @@ class ChatViewModel: ObservableObject {
     var elevenLabsStreamingTTS: ElevenLabsStreamingTTSService { voiceController.elevenLabsStreamingTTS }
 
     private var pendingInitialJump: Bool = false
+    private var didReceiveFirstToken: Bool = false
 
     private let backend = BackendService.shared
     private let authService = AuthService.shared
@@ -271,5 +272,44 @@ extension ChatViewModel: ChatStreamingDelegate {
 
     func setChatMessagesVMSessionId(_ id: UUID) {
         chatMessagesVM.sessionId = id
+    }
+
+    func streamingWillStart() {
+        didReceiveFirstToken = false
+
+        guard isSpeakModeActive else {
+            return
+        }
+
+        let voiceId = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !voiceId.isEmpty else { return }
+
+        Task { @MainActor in
+            await elevenLabsStreamingTTS.start(voiceId: voiceId)
+        }
+    }
+
+    func streamingDidReceiveToken(_ token: String) {
+        if !didReceiveFirstToken {
+            didReceiveFirstToken = true
+            voiceController.notifyStreamingStarted()
+        }
+
+        guard isSpeakModeActive else { return }
+        guard elevenLabsStreamingTTS.isConnected else {
+            return
+        }
+        elevenLabsStreamingTTS.appendTextDelta(token)
+    }
+
+    func streamingDidFinish() {
+        voiceController.notifyStreamingFinished()
+
+        guard isSpeakModeActive else { return }
+        guard elevenLabsStreamingTTS.isConnected else {
+            return
+        }
+        elevenLabsStreamingTTS.finish()
     }
 }

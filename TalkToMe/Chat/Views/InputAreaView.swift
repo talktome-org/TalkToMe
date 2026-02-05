@@ -4,6 +4,9 @@ struct InputAreaView: View {
     let isVoiceRecording: Bool
     let voiceModeEnabled: Bool
     let isSpeakModeActive: Bool
+    let speakModePhase: SpeakModePhase
+    let speakerLevel: CGFloat
+    let micLevel: CGFloat
     let onSpeakToggle: () -> Void
 
     @Binding var inputText: String
@@ -20,6 +23,7 @@ struct InputAreaView: View {
     @State private var pendingPhotoSelections: [String: PendingAttachment] = [:]
     @State private var attachmentIdToAssetId: [UUID: String] = [:]
 
+    @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var selectedVoiceName: String = ""
     @Environment(\.colorScheme) private var colorScheme
 
     private var trimmedInput: String {
@@ -32,182 +36,288 @@ struct InputAreaView: View {
 
     var body: some View {
         if #available(iOS 26.0, *) {
-            VStack(alignment: .leading, spacing: 8) {
-                if !pendingAttachments.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(pendingAttachments) { att in
-                                ZStack(alignment: .topTrailing) {
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(.thinMaterial)
-                                        .frame(width: 54, height: 54)
-                                        .overlay {
-                                            if case .image(let data, _) = att.kind, let uiImage = UIImage(data: data) {
-                                                Image(uiImage: uiImage)
-                                                    .resizable()
-                                                    .scaledToFill()
-                                                    .frame(width: 54, height: 54)
-                                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                            } else {
-                                                Image(systemName: "doc")
-                                                    .font(.system(size: 16, weight: .semibold))
-                                                    .foregroundColor(.secondary)
-                                            }
-                                        }
-
-                                    Button(action: {
-                                        Haptics.impact(.light)
-                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
-                                            // Clear from pending selections if this was from recent photos
-                                            if let assetId = attachmentIdToAssetId[att.id] {
-                                                pendingPhotoSelections.removeValue(forKey: assetId)
-                                                attachmentIdToAssetId.removeValue(forKey: att.id)
-                                            }
-                                            pendingAttachments.removeAll { $0.id == att.id }
-                                        }
-                                    }) {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundColor(.secondary)
-                                            .background(Color.clear)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .padding(4)
-                                }
-                                .transition(.scale.combined(with: .opacity))
+            VStack(spacing: 12) {
+                if isSpeakModeActive {
+                    SpeechInputDrawerView(
+                        phase: speakModePhase,
+                        micLevel: micLevel,
+                        speakerLevel: speakerLevel,
+                        onCancel: {
+                            withAnimation(.spring(response: 0.2, dampingFraction: 0.85)) {
+                                onSpeakToggle()
                             }
                         }
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                    }
+                    )
                     .transition(.asymmetric(
-                        insertion: .scale(scale: 0.8).combined(with: .opacity),
-                        removal: .scale(scale: 0.8).combined(with: .opacity)
+                        insertion: .push(from: .bottom),
+                        removal: .push(from: .top)
                     ))
                 }
 
-                TextField("Message TalkToMe", text: $inputText, axis: .vertical)
-                    .font(.system(size: 17, weight: .regular))
-                    .textFieldStyle(.plain)
-                    .focused(isInputFocused)
-                    .disabled(isVoiceRecording)
-                    .lineLimit(1...5)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 4)
-                    .padding(.top, !pendingAttachments.isEmpty ? 2 : 0)
-                    .padding(.bottom, 2)
+                VStack(alignment: .leading, spacing: 8) {
+                    if !pendingAttachments.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 10) {
+                                ForEach(pendingAttachments) { att in
+                                    ZStack(alignment: .topTrailing) {
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .fill(.thinMaterial)
+                                            .frame(width: 54, height: 54)
+                                            .overlay {
+                                                if case .image(let data, _) = att.kind, let uiImage = UIImage(data: data) {
+                                                    Image(uiImage: uiImage)
+                                                        .resizable()
+                                                        .scaledToFill()
+                                                        .frame(width: 54, height: 54)
+                                                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                                } else {
+                                                    Image(systemName: "doc")
+                                                        .font(.system(size: 16, weight: .semibold))
+                                                        .foregroundColor(.secondary)
+                                                }
+                                            }
 
-                HStack(spacing: 8) {
-                    Button(action: {
-                        isInputFocused.wrappedValue = false
-                        isMediaPanelVisible = true
-                    }) {
-                        Image(systemName: "paperclip")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(.primary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isVoiceRecording)
-
-                    Spacer(minLength: 0)
-
-                    Button(action: {
-                        Haptics.impact(.medium)
-                        isInputFocused.wrappedValue = false
-                        onSpeakToggle()
-                    }) {
-                        Text("Speak")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.primary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isVoiceRecording)
-
-                    Button(action: {
-                        if isVoiceRecording {
-                            Haptics.impact(.medium)
-                            onVoiceModeStop()
-                            return
+                                        Button(action: {
+                                            Haptics.impact(.light)
+                                            withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                                                if let assetId = attachmentIdToAssetId[att.id] {
+                                                    pendingPhotoSelections.removeValue(forKey: assetId)
+                                                    attachmentIdToAssetId.removeValue(forKey: att.id)
+                                                }
+                                                pendingAttachments.removeAll { $0.id == att.id }
+                                            }
+                                        }) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundColor(.secondary)
+                                                .background(Color.clear)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .padding(4)
+                                    }
+                                    .transition(.scale.combined(with: .opacity))
+                                }
+                            }
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
                         }
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.8).combined(with: .opacity),
+                            removal: .scale(scale: 0.8).combined(with: .opacity)
+                        ))
+                    }
 
-                        if !canSend {
-                            if isSpeakModeActive {
+                    TextField("Message TalkToMe", text: $inputText, axis: .vertical)
+                        .font(.system(size: 17, weight: .regular))
+                        .textFieldStyle(.plain)
+                        .focused(isInputFocused)
+                        .disabled(isVoiceRecording)
+                        .lineLimit(1...5)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 4)
+                        .padding(.top, !pendingAttachments.isEmpty ? 2 : 0)
+                        .padding(.bottom, 2)
+                        .offset(y: -4)
+
+                    HStack(spacing: 8) {
+                        Button(action: {
+                            isInputFocused.wrappedValue = false
+                            isMediaPanelVisible = true
+                        }) {
+                            Image(systemName: "paperclip")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(.primary)
+                                .frame(width: 32, height: 32)
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isVoiceRecording || isSpeakModeActive)
+
+                        Spacer(minLength: 0)
+
+                        if isVoiceRecording || isSpeakModeActive {
+                            // Single End button for both modes
+                            Button(action: {
                                 Haptics.impact(.medium)
-                                onSpeakToggle()
-                                return
+                                if isVoiceRecording {
+                                    onVoiceModeStop()
+                                }
+                                if isSpeakModeActive {
+                                    withAnimation(.spring(response: 0.2, dampingFraction: 0.85)) {
+                                        onSpeakToggle()
+                                    }
+                                }
+                            }) {
+                                Text("End")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.red)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(.ultraThinMaterial, in: Capsule())
                             }
-                            Haptics.impact(.medium)
-                            onVoiceModeStart()
-                            return
-                        }
-
-                        Haptics.impact(.light)
-                        if isLoading {
-                            stop()
+                            .buttonStyle(.plain)
+                            .transition(.opacity)
+                        } else if canSend || isLoading {
+                            // Send/Stop button - replaces mic and speak when there's content
+                            Button(action: {
+                                Haptics.impact(.light)
+                                if isLoading {
+                                    stop()
+                                } else {
+                                    withAnimation(.easeInOut(duration: 0.22)) {
+                                        isMediaPanelVisible = false
+                                    }
+                                    isInputFocused.wrappedValue = true
+                                    send()
+                                }
+                            }) {
+                                Text(isLoading ? "Stop" : "Send")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(isLoading ? .red : .primary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(.ultraThinMaterial, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .transition(.opacity)
                         } else {
-                            withAnimation(.easeInOut(duration: 0.22)) {
-                                isMediaPanelVisible = false
+                            // Mic button
+                            Button(action: {
+                                Haptics.impact(.medium)
+                                onVoiceModeStart()
+                            }) {
+                                Image(systemName: "mic")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                    .frame(width: 32, height: 32)
+                                    .background(.ultraThinMaterial, in: Circle())
                             }
-                            isInputFocused.wrappedValue = true
-                            send()
-                        }
-                    }) {
-                        let showSend = canSend && !isVoiceRecording
-                        let showMicEmoji = !showSend && !isVoiceRecording
-                        let iconName: String = {
-                            if isVoiceRecording { return "stop.fill" }
-                            return isLoading ? "stop.fill" : "arrow.up"
-                        }()
+                            .buttonStyle(.plain)
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .trailing).combined(with: .opacity),
+                                removal: .move(edge: .trailing).combined(with: .opacity)
+                            ))
 
-                        ZStack {
-                            if showMicEmoji {
-                                Text("🎙️")
-                                    .font(.system(size: 18, weight: .semibold))
-                                    .padding(.horizontal, 3)
-                            } else {
-                                Image(systemName: iconName)
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundColor(.white)
+                            // Speak to buddy button
+                            Button(action: {
+                                Haptics.impact(.medium)
+                                isInputFocused.wrappedValue = false
+                                withAnimation(.spring(response: 0.2, dampingFraction: 0.85)) {
+                                    onSpeakToggle()
+                                }
+                            }) {
+                                let buddyName = selectedVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Buddy" : selectedVoiceName
+                                Text("Speak to \(buddyName)")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(.ultraThinMaterial, in: Capsule())
                             }
+                            .buttonStyle(.plain)
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .trailing).combined(with: .opacity),
+                                removal: .move(edge: .trailing).combined(with: .opacity)
+                            ))
                         }
-                        .frame(width: 44, height: 44)
                     }
-                    .scaleEffect(isVoiceRecording ? 1.1 : 1.0)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isVoiceRecording)
-                    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: canSend)
-                    .buttonStyle(.plain)
+                    .animation(.smooth(duration: 0.25), value: isVoiceRecording)
+                    .animation(.smooth(duration: 0.25), value: isSpeakModeActive)
+                    .animation(.smooth(duration: 0.25), value: canSend)
                 }
-                .padding(.top, 2)
+                .frame(minHeight: 78, alignment: .bottomLeading)
+                .padding(.leading, 14)
+                .padding(.trailing, 8)
+                .padding(.vertical, 8)
+                .animation(.spring(response: 0.35, dampingFraction: 0.8), value: pendingAttachments.count)
+                .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                .sheet(isPresented: $isMediaPanelVisible) {
+                    MediaPickerPanelView(
+                        attachments: $pendingAttachments,
+                        pendingPhotoSelections: $pendingPhotoSelections,
+                        attachmentIdToAssetId: $attachmentIdToAssetId
+                    )
+                    .presentationDetents([.medium])
+                    .presentationDragIndicator(.visible)
+                }
             }
-            .frame(minHeight: 88, alignment: .bottomLeading)
-            .padding(.leading, 14)
-            .padding(.trailing, 8)
-            .padding(.vertical, 10)
-            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: pendingAttachments.count)
-            .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
             .padding(.horizontal)
-            .sheet(isPresented: $isMediaPanelVisible) {
-                MediaPickerPanelView(
-                    attachments: $pendingAttachments,
-                    pendingPhotoSelections: $pendingPhotoSelections,
-                    attachmentIdToAssetId: $attachmentIdToAssetId
-                )
-                .presentationDetents([.medium])
-                .presentationDragIndicator(.visible)
-            }
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isSpeakModeActive)
         }
     }
 }
 
-#Preview {
+#Preview("Default") {
     @FocusState var isFocused: Bool
     InputAreaView(
         isVoiceRecording: false,
         voiceModeEnabled: false,
         isSpeakModeActive: false,
+        speakModePhase: .idle,
+        speakerLevel: 0,
+        micLevel: 0,
+        onSpeakToggle: {},
+        inputText: .constant(""),
+        isLoading: .constant(false),
+        pendingAttachments: .constant([]),
+        isInputFocused: $isFocused,
+        send: {},
+        stop: {},
+        onVoiceModeStart: {},
+        onVoiceModeStop: {}
+    )
+}
+
+#Preview("Speak Mode - Listening") {
+    @FocusState var isFocused: Bool
+    InputAreaView(
+        isVoiceRecording: false,
+        voiceModeEnabled: false,
+        isSpeakModeActive: true,
+        speakModePhase: .listening,
+        speakerLevel: 0,
+        micLevel: 0.6,
+        onSpeakToggle: {},
+        inputText: .constant(""),
+        isLoading: .constant(false),
+        pendingAttachments: .constant([]),
+        isInputFocused: $isFocused,
+        send: {},
+        stop: {},
+        onVoiceModeStart: {},
+        onVoiceModeStop: {}
+    )
+}
+
+#Preview("Speak Mode - Processing") {
+    @FocusState var isFocused: Bool
+    InputAreaView(
+        isVoiceRecording: false,
+        voiceModeEnabled: false,
+        isSpeakModeActive: true,
+        speakModePhase: .processing,
+        speakerLevel: 0,
+        micLevel: 0,
+        onSpeakToggle: {},
+        inputText: .constant(""),
+        isLoading: .constant(false),
+        pendingAttachments: .constant([]),
+        isInputFocused: $isFocused,
+        send: {},
+        stop: {},
+        onVoiceModeStart: {},
+        onVoiceModeStop: {}
+    )
+}
+
+#Preview("Speak Mode - Answering") {
+    @FocusState var isFocused: Bool
+    InputAreaView(
+        isVoiceRecording: false,
+        voiceModeEnabled: false,
+        isSpeakModeActive: true,
+        speakModePhase: .answering,
+        speakerLevel: 0.7,
+        micLevel: 0,
         onSpeakToggle: {},
         inputText: .constant(""),
         isLoading: .constant(false),
