@@ -150,6 +150,9 @@ extension BackendService {
     struct OnboardingInfo: Codable {
         let full_name: String
         let onboarding_step: String
+        let gender: String?
+        let date_of_birth: String?
+        let relationship_topics: [String]?
     }
 
     func fetchOnboarding(accessToken: String) async throws -> OnboardingInfo {
@@ -169,6 +172,10 @@ extension BackendService {
 
     struct UpdateOnboardingRequest: Codable {
         let onboarding_step: String?
+        let full_name: String?
+        let gender: String?
+        let date_of_birth: String?
+        let relationship_topics: [String]?
     }
 
     struct SimpleSuccess: Codable { let success: Bool }
