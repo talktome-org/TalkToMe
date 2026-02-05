@@ -57,7 +57,8 @@ struct ChatScreenView: View {
                 onVoiceModeStart: { chatViewModel.voiceController.startVoiceModePushToTalk() },
                 onVoiceModeStop: { chatViewModel.voiceController.stopVoiceModePushToTalk() }
             )
-            .padding(.bottom, isInputFocused.wrappedValue ? 8 : 0)
+            .offset(y: 14)
+            .padding(.bottom, isInputFocused.wrappedValue ? 21 : 0)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
         .background(Color(.systemBackground))
