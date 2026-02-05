@@ -109,6 +109,8 @@ struct MainTabView: View {
                                 }
                                 .onEnded { value in
                                     if value.translation.width > dismissThreshold || value.predictedEndTranslation.width > dismissThreshold * 2 {
+                                        // Dismiss keyboard
+                                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                                         // Dismiss with a slide-out animation
                                         withAnimation(.easeOut(duration: 0.2)) {
                                             chatDragOffset = UIScreen.main.bounds.width
