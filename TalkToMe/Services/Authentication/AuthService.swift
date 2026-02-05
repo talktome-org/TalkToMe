@@ -10,6 +10,13 @@ class AuthService: ObservableObject {
     let client: SupabaseClient
     private let redirectURL: URL
 
+    enum EmailSignUpOutcome {
+        /// User is fully signed in (Supabase returned a session).
+        case signedIn
+        /// Account was created but Supabase did not return a session (typically because "Confirm email" is enabled).
+        case needsEmailConfirmation
+    }
+
     @Published var isAuthenticated = false
     @Published var currentUser: User?
     @Published var isCheckingAuth = true
@@ -66,6 +73,71 @@ class AuthService: ObservableObject {
             await MainActor.run {
                 self.lastAuthError = error.localizedDescription
             }
+        }
+    }
+
+    func signIn(email: String, password: String) async {
+        do {
+            let session = try await client.auth.signIn(email: email, password: password)
+            await MainActor.run {
+                UserDefaults.standard.set(false, forKey: PreferenceKeys.didExplicitSignOut)
+                self.lastAuthError = nil
+                self.applyAuthenticatedSession(session)
+            }
+        } catch {
+            await MainActor.run {
+                self.lastAuthError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Creates a new Supabase auth user using email+password.
+    /// - Note: If Supabase "Confirm email" is enabled, Supabase returns a user but **no session**.
+    ///         In that case we return `.needsEmailConfirmation` and do not set `isAuthenticated=true`.
+    func signUp(fullName: String, email: String, password: String) async -> EmailSignUpOutcome {
+        do {
+            _ = try await client.auth.signUp(email: email, password: password)
+
+            // If confirm-email is enabled, signUp succeeds but there is no session yet.
+            let session: Session
+            do {
+                session = try await client.auth.session
+            } catch {
+                await MainActor.run { self.lastAuthError = nil }
+                return .needsEmailConfirmation
+            }
+
+            // Best-effort: persist the entered name into `public.profiles` immediately
+            // so onboarding can start pre-filled.
+            do {
+                let trimmed = fullName.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    _ = try await BackendService.shared.updateOnboarding(
+                        accessToken: session.accessToken,
+                        update: .init(
+                            onboarding_step: nil,
+                            full_name: trimmed,
+                            gender: nil,
+                            date_of_birth: nil,
+                            relationship_topics: nil
+                        )
+                    )
+                }
+            } catch {
+                // Don't block sign-up on profile persistence.
+            }
+
+            await MainActor.run {
+                UserDefaults.standard.set(false, forKey: PreferenceKeys.didExplicitSignOut)
+                self.lastAuthError = nil
+                self.applyAuthenticatedSession(session)
+            }
+            return .signedIn
+        } catch {
+            await MainActor.run {
+                self.lastAuthError = error.localizedDescription
+            }
+            return .needsEmailConfirmation
         }
     }
 
