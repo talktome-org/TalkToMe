@@ -36,9 +36,20 @@ struct SidebarView: View {
     var body: some View {
         GeometryReader { geometry in
                 let pinnedHeaderBar = HStack {
-                    Spacer()
-                    ConnectionStatusPillView()
-                    Spacer()
+                    Button(action: {
+                        Haptics.impact(.light)
+                        Task { @MainActor in
+                            await sessionsViewModel.ensureProfilePictureCached()
+                            navigationViewModel.showSettingsSheet = true
+                        }
+                    }) {
+                        SidebarAvatarView(avatarURL: sessionsViewModel.myAvatarURL)
+                            .frame(width: 36, height: 36)
+                            .clipShape(Circle())
+                    }
+                    .frame(width: 44, height: 44)
+                    .buttonStyle(.plain)
+                    .modifier(HeaderCircleStyle())
 
                     Button(action: {
                         Haptics.impact(.light)
@@ -54,19 +65,22 @@ struct SidebarView: View {
                     .contentShape(Circle())
                     .modifier(HeaderCircleStyle())
 
+                    Spacer()
+                    ConnectionStatusPillView()
+                    Spacer()
+
                     Button(action: {
                         Haptics.impact(.light)
-                        Task { @MainActor in
-                            await sessionsViewModel.ensureProfilePictureCached()
-                            navigationViewModel.showSettingsSheet = true
-                        }
+                        onStartNewChat()
                     }) {
-                        SidebarAvatarView(avatarURL: sessionsViewModel.myAvatarURL)
-                            .frame(width: 36, height: 36)
-                            .clipShape(Circle())
+                        Image(systemName: "plus.bubble.fill")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 44, height: 44)
                     }
-                    .frame(width: 44, height: 44)
                     .buttonStyle(.plain)
+                    .accessibilityLabel("New Chat")
+                    .contentShape(Circle())
                     .modifier(HeaderCircleStyle())
                 }
                 .padding(.horizontal, 16)
