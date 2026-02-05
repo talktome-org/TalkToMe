@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Text, func, text
+from sqlalchemy import Date, DateTime, Text, func, text
+from sqlalchemy.dialects.postgresql import ENUM, JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.schema import ForeignKey
@@ -26,8 +27,15 @@ class Profile(Base):
     bio: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     full_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     partner_display_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Postgres enum type already exists in DB as `onboarding_step`.
     onboarding_step: Mapped[Optional[str]] = mapped_column(
-        Text,
+        ENUM("none", "asked_name", "completed", name="onboarding_step", create_type=False),
         nullable=True,
         server_default=text("'none'::onboarding_step"),
     )
+
+    # Onboarding fields
+    gender: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    date_of_birth: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    # JSON array of strings (e.g. ["Work","Family"])
+    relationship_topics: Mapped[Optional[list[str]]] = mapped_column(JSONB, nullable=True)
