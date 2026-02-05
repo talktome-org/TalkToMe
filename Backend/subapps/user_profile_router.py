@@ -251,11 +251,14 @@ async def get_onboarding(current_user: dict = Depends(get_current_user)):
         except Exception:
             raise HTTPException(status_code=401, detail="Invalid user ID in token")
 
-        row = _get_profile_fields(user_id, "full_name", "onboarding_step")
+        row = _get_profile_fields(user_id, "full_name", "onboarding_step", "gender", "date_of_birth", "relationship_topics")
 
         return {
             "full_name": row.get("full_name") or "",
             "onboarding_step": row.get("onboarding_step") or "none",
+            "gender": row.get("gender") or "",
+            "date_of_birth": (row.get("date_of_birth").isoformat() if row.get("date_of_birth") else None),
+            "relationship_topics": row.get("relationship_topics") or [],
         }
     except HTTPException:
         raise
@@ -271,7 +274,7 @@ async def update_onboarding(payload: dict = Body(...), current_user: dict = Depe
         except Exception:
             raise HTTPException(status_code=401, detail="Invalid user ID in token")
 
-        allowed_keys = {"onboarding_step"}
+        allowed_keys = {"onboarding_step", "full_name", "gender", "date_of_birth", "relationship_topics"}
         update_data = {k: v for k, v in (payload or {}).items() if k in allowed_keys}
 
         if not update_data:
@@ -286,12 +289,74 @@ async def update_onboarding(payload: dict = Body(...), current_user: dict = Depe
             if order.get(new_step, -1) < order.get(cur_step, 0) and new_step != "completed":
                 raise HTTPException(status_code=400, detail="Onboarding step cannot regress")
 
+        if "full_name" in update_data and update_data["full_name"] is not None:
+            full_name = str(update_data["full_name"]).strip()
+            if len(full_name) > 22:
+                raise HTTPException(status_code=400, detail="Full name must be 22 characters or fewer")
+            update_data["full_name"] = full_name
+
+        if "gender" in update_data and update_data["gender"] is not None:
+            gender = str(update_data["gender"]).strip()
+            if len(gender) > 32:
+                raise HTTPException(status_code=400, detail="Gender must be 32 characters or fewer")
+            update_data["gender"] = gender
+
+        if "date_of_birth" in update_data:
+            dob = update_data.get("date_of_birth")
+            if dob in (None, ""):
+                update_data["date_of_birth"] = None
+            else:
+                try:
+                    import datetime as _dt
+
+                    update_data["date_of_birth"] = _dt.date.fromisoformat(str(dob))
+                except Exception:
+                    raise HTTPException(status_code=400, detail="date_of_birth must be ISO format YYYY-MM-DD")
+
+        if "relationship_topics" in update_data:
+            topics = update_data.get("relationship_topics")
+            if topics is None:
+                update_data["relationship_topics"] = []
+            elif not isinstance(topics, list):
+                raise HTTPException(status_code=400, detail="relationship_topics must be an array")
+            else:
+                normalized: list[str] = []
+                for t in topics:
+                    if t is None:
+                        continue
+                    s = str(t).strip()
+                    if not s:
+                        continue
+                    if len(s) > 40:
+                        raise HTTPException(status_code=400, detail="Each relationship topic must be 40 characters or fewer")
+                    normalized.append(s)
+                # de-dupe preserving order
+                seen: set[str] = set()
+                deduped: list[str] = []
+                for t in normalized:
+                    if t in seen:
+                        continue
+                    seen.add(t)
+                    deduped.append(t)
+                update_data["relationship_topics"] = deduped
+
         _upsert_profile(user_id, update_data)
 
         return {"success": True}
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Log full traceback to Fly logs for debugging.
+        try:
+            import traceback
+
+            print("[onboarding] update_onboarding failed")
+            print(f"[onboarding] user_id={current_user.get('sub')}")
+            print(f"[onboarding] payload_keys={list((payload or {}).keys())}")
+            print(f"[onboarding] update_keys={list((update_data or {}).keys())}")
+            print(traceback.format_exc())
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
 
