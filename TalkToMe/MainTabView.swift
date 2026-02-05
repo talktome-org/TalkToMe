@@ -7,12 +7,20 @@
 
 import SwiftUI
 
+enum AppTab: Hashable {
+    case home
+    case diary
+    case chat
+    case search
+}
+
 struct MainTabView: View {
     @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
 
-    @State private var selectedTab: Int = 2
+    @State private var selectedTab: AppTab = .chat
     @State private var showChat: Bool = false
     @State private var chatDragOffset: CGFloat = 0
+    @State private var searchString: String = ""
 
     private let dismissThreshold: CGFloat = 100
 
@@ -22,8 +30,12 @@ struct MainTabView: View {
         } else {
             sessionsViewModel.startNewChat()
         }
-        withAnimation(.easeInOut(duration: 0.3)) {
-            showChat = true
+        // Start off-screen to the right
+        chatDragOffset = UIScreen.main.bounds.width
+        showChat = true
+        // Slide in from the right
+        withAnimation(.easeOut(duration: 0.20)) {
+            chatDragOffset = 0
         }
     }
 
@@ -40,26 +52,32 @@ struct MainTabView: View {
     var body: some View {
         ZStack {
             TabView(selection: $selectedTab) {
-                HomeView()
-                    .tabItem {
-                        Label("Home", systemImage: "house")
-                    }
-                    .tag(0)
+                Tab("Home", systemImage: "house", value: .home) {
+                    HomeView()
+                }
 
-                DiaryView()
-                    .tabItem {
-                        Label("Diary", systemImage: "book")
-                    }
-                    .tag(1)
+                Tab("Diary", systemImage: "book", value: .diary) {
+                    DiaryView()
+                }
 
-                MainAppView(
-                    onOpenChat: { sid in openChat(sessionId: sid) },
-                    onStartNewChat: { openChat(sessionId: nil) }
-                )
-                    .tabItem {
-                        Label("Chat", systemImage: "bubble.left.and.bubble.right")
+                Tab("Chat", systemImage: "bubble.left.and.bubble.right", value: .chat) {
+                    MainAppView(
+                        onOpenChat: { sid in openChat(sessionId: sid) },
+                        onStartNewChat: { openChat(sessionId: nil) }
+                    )
+                }
+
+                Tab(value: .search, role: .search) {
+                    NavigationStack {
+                        MainAppView(
+                            onOpenChat: { sid in openChat(sessionId: sid) },
+                            onStartNewChat: { openChat(sessionId: nil) },
+                            searchText: searchString
+                        )
+                        .searchable(text: $searchString)
+                        .navigationBarHidden(true)
                     }
-                    .tag(2)
+                }
             }
 
             if showChat {
@@ -73,6 +91,7 @@ struct MainTabView: View {
                 .id(viewId)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 44, style: .continuous))
                 .ignoresSafeArea()
                 .offset(x: chatDragOffset)
                 .overlay(alignment: .leading) {

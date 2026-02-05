@@ -19,14 +19,10 @@ struct ContentView: View {
     var body: some View {
         Group {
             if authService.isCheckingAuth {
-                // Telegram-like: show cached UI immediately; otherwise a minimal spinner.
-                // Only show cached UI if we have an effective user id (avoids flashing stale state across account switches).
-                if authService.currentUserId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
-                   !sessionsViewModel.sessions.isEmpty {
+                if authService.currentUserId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
                     MainTabView()
                         .transition(.opacity)
                 } else {
-                    // No spinner before cached UI: just show the app background.
                     Color(.systemBackground)
                         .ignoresSafeArea()
                         .transition(.opacity)

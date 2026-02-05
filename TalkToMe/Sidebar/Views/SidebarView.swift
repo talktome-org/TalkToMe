@@ -8,84 +8,66 @@ struct SidebarView: View {
 
     let onOpenChat: (UUID) -> Void
     let onStartNewChat: () -> Void
+    var searchText: String = ""
+    var hideHeader: Bool = false
 
-    @FocusState private var isSearchFieldFocused: Bool
+    private var filteredSessions: [ChatSession] {
+        guard !searchText.isEmpty else { return sessionsViewModel.sessions }
+        let query = searchText.lowercased()
+        return sessionsViewModel.sessions.filter { session in
+            session.title.lowercased().contains(query) ||
+            (session.lastMessageContent?.lowercased().contains(query) ?? false)
+        }
+    }
 
-    @State private var searchText: String = ""
     @State private var renameText: String = ""
     @State private var renameTargetId: UUID? = nil
 
     private enum ActiveSheet: String, Identifiable {
         case renameConversation
-        case friendsAdd
-        case friendsList
+        case friends
 
         var id: String { self.rawValue }
     }
 
     @State private var activeSheet: ActiveSheet? = nil
 
-    private var isSearchActive: Bool {
-        if isSearchFieldFocused { return true }
-        return !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var filteredSessions: [ChatSession] {
-        let term = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if term.isEmpty { return sessionsViewModel.sessions }
-        return sessionsViewModel.sessions.filter { $0.title.lowercased().contains(term) }
-    }
-
     @MainActor
     var body: some View {
         GeometryReader { geometry in
                 let pinnedHeaderBar = HStack {
-                    HStack {
-                        Button(action: {
-                            Haptics.impact(.light)
-                            isSearchFieldFocused = false
-                            presentSheet(.friendsAdd)
-                        }) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(.primary)
-                                .frame(width: 44, height: 44)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Add friend")
-                        .contentShape(Circle())
-                        .modifier(HeaderCircleStyle())
-
-                        Spacer(minLength: 0)
-                    }
-                    .frame(width: 110, height: 44, alignment: .leading)
-
                     Spacer()
                     ConnectionStatusPillView()
                     Spacer()
 
-                    HStack {
-                        Spacer(minLength: 0)
-                        if !friendsViewModel.friends.isEmpty {
-                            FriendsDominoAvatarsView(friends: Array(friendsViewModel.friends.prefix(4)))
-                                .accessibilityHidden(true)
-                        }
-                        Button(action: {
-                            Haptics.impact(.light)
-                            isSearchFieldFocused = false
-                            presentSheet(.friendsList)
-                        }) {
-                            Image(systemName: "person.2")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(.primary)
-                                .frame(width: 44, height: 44)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Friends list")
-                        .contentShape(Circle())
-                        .modifier(HeaderCircleStyle())
+                    Button(action: {
+                        Haptics.impact(.light)
+                        presentSheet(.friends)
+                    }) {
+                        Image(systemName: "person.2")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 44, height: 44)
                     }
-                    .frame(width: 110, height: 44, alignment: .trailing)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Friends")
+                    .contentShape(Circle())
+                    .modifier(HeaderCircleStyle())
+
+                    Button(action: {
+                        Haptics.impact(.light)
+                        Task { @MainActor in
+                            await sessionsViewModel.ensureProfilePictureCached()
+                            navigationViewModel.showSettingsSheet = true
+                        }
+                    }) {
+                        SidebarAvatarView(avatarURL: sessionsViewModel.myAvatarURL)
+                            .frame(width: 36, height: 36)
+                            .clipShape(Circle())
+                    }
+                    .frame(width: 44, height: 44)
+                    .buttonStyle(.plain)
+                    .modifier(HeaderCircleStyle())
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 6)
@@ -97,8 +79,6 @@ struct SidebarView: View {
                         LazyVStack(spacing: 6) {
                             ForEach(filteredSessions, id: \.id) { session in
                                 Button(action: {
-                                    Haptics.impact(.light)
-                                    isSearchFieldFocused = false
                                     onOpenChat(session.id)
                                 }) {
                                     let title = session.title
@@ -150,10 +130,9 @@ struct SidebarView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .refreshable { await sessionsViewModel.refreshSessions() }
                 .safeAreaInset(edge: .top) {
-                    pinnedHeaderBar
-                }
-                .safeAreaInset(edge: .bottom) {
-                    controlsBar(bottomInset: 0, availableWidth: geometry.size.width)
+                    if !hideHeader {
+                        pinnedHeaderBar
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -198,14 +177,8 @@ struct SidebarView: View {
                     .padding(20)
                     .presentationDetents([.medium])
 
-                case .friendsAdd:
-                    FriendsSheetView(isPresented: sheetPresentedBinding(for: .friendsAdd))
-                        .environmentObject(friendsViewModel)
-                        .presentationDetents([.large])
-                        .presentationDragIndicator(.visible)
-
-                case .friendsList:
-                    FriendsListSheetView(isPresented: sheetPresentedBinding(for: .friendsList))
+                case .friends:
+                    FriendsSheetView(isPresented: sheetPresentedBinding(for: .friends))
                         .environmentObject(friendsViewModel)
                         .presentationDetents([.medium, .large])
                         .presentationDragIndicator(.visible)
@@ -238,107 +211,6 @@ struct SidebarView: View {
                 }
             }
         )
-    }
-
-    private func controlsBar(bottomInset: CGFloat, availableWidth: CGFloat) -> some View {
-        let showLeftButtons: Bool = !isSearchActive
-        let isSearchCollapsed: Bool = !isSearchActive
-
-        let horizontalPadding: CGFloat = 40 // matches `.padding(.horizontal, 20)` below
-        let contentWidth: CGFloat = max(0, availableWidth - horizontalPadding)
-        let sideButtonWidth: CGFloat = 50
-        let buttonSpacing: CGFloat = 8
-
-        let fullSearchWidthBetweenButtons: CGFloat = max(0, contentWidth - sideButtonWidth - sideButtonWidth - (2 * buttonSpacing))
-        let collapsedSearchWidthFallback: CGFloat = 220
-        let collapsedSearchWidth: CGFloat = {
-            guard fullSearchWidthBetweenButtons > 0 else { return collapsedSearchWidthFallback }
-            return max(200, fullSearchWidthBetweenButtons * 0.90)
-        }()
-
-        return HStack(spacing: 8) {
-            if #available(iOS 26.0, *) {
-                if showLeftButtons {
-                    Button(action: {
-                        Haptics.impact(.light)
-                        Task { @MainActor in
-                            // Warm avatar before presenting Settings so it shows instantly.
-                            await sessionsViewModel.ensureProfilePictureCached()
-                            navigationViewModel.showSettingsSheet = true
-                        }
-                    }) {
-                        SidebarAvatarView(avatarURL: sessionsViewModel.myAvatarURL)
-                            .frame(width: 40, height: 40)
-                            .clipShape(Circle())
-                    }
-                    .frame(width: 50, height: 50)
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular, in: Circle())
-                }
-
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 17, weight: .regular))
-                        .foregroundStyle(.secondary)
-
-                    TextField("Search", text: $searchText)
-                        .focused($isSearchFieldFocused)
-                        .submitLabel(.search)
-                        .textInputAutocapitalization(.never)
-                        .disableAutocorrection(true)
-                        .font(.system(size: 17, weight: .regular))
-                        .padding(.vertical, 4)
-                }
-                .padding(.vertical, 10)
-                .padding(.horizontal, 14)
-                .frame(maxWidth: isSearchCollapsed ? collapsedSearchWidth : .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 999, style: .continuous))
-                .glassEffect(.regular.interactive())
-            }
-
-            if showLeftButtons {
-                if #available(iOS 26.0, *) {
-                    Button(action: {
-                        Haptics.impact(.light)
-                        isSearchFieldFocused = false
-                        onStartNewChat()
-                    }) {
-                        Image(systemName: "square.and.pencil")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .offset(y: -1)
-                    }
-                    .frame(width: 50, height: 50)
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("New chat")
-                    .glassEffect(.regular.interactive(), in: Circle())
-                }
-            }
-
-            if isSearchActive {
-                if #available(iOS 26.0, *) {
-                    Button(action: {
-                        Haptics.impact(.light)
-                        searchText = ""
-                        isSearchFieldFocused = false
-                    }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .frame(width: 50, height: 50)
-                    }
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: Circle())
-                    .accessibilityLabel("Close search")
-                }
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.bottom, bottomInset + 2 + (isSearchFieldFocused ? 12 : 0))
-        .contentShape(Rectangle())
-        .animation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0), value: isSearchActive)
-        .animation(.spring(response: 0.28, dampingFraction: 0.92, blendDuration: 0), value: isSearchFieldFocused)
-        .zIndex(10)
     }
 
     private func previewText(for session: ChatSession, availableWidth: CGFloat) -> String {
@@ -403,36 +275,6 @@ private struct HeaderCircleStyle: ViewModifier {
     }
 }
 
-private struct FriendsDominoAvatarsView: View {
-    let friends: [FriendSummary]
-
-    private let avatarSize: CGFloat = 22
-    private let step: CGFloat = 9
-
-    var body: some View {
-        let shown = Array(friends.prefix(4))
-        let totalWidth = avatarSize + step * CGFloat(max(0, shown.count - 1))
-
-        ZStack(alignment: .leading) {
-            ForEach(Array(shown.enumerated()), id: \.element.id) { index, friend in
-                SidebarAvatarView(avatarURL: friend.avatarURL)
-                    .frame(width: avatarSize, height: avatarSize)
-                    .clipShape(Circle())
-                    .overlay(
-                        Circle()
-                            .stroke(Color(.systemBackground).opacity(0.90), lineWidth: 1.25)
-                    )
-                    .shadow(color: .black.opacity(0.10), radius: 2, x: 0, y: 1)
-                    .offset(x: CGFloat(index) * step)
-                    // Keep visual stacking consistent with the friends array ordering:
-                    // first friend is the "top/front" avatar.
-                    .zIndex(Double(shown.count - index))
-            }
-        }
-        .frame(width: totalWidth, height: 44, alignment: .center)
-    }
-}
-
 private struct FriendsSheetView: View {
     @Binding var isPresented: Bool
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
@@ -447,37 +289,88 @@ private struct FriendsSheetView: View {
     }
     private var isCodeComplete: Bool { cleanedCodeToAdd.count == 4 }
 
+    private let avatarSize: CGFloat = 64
+
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    VStack(spacing: 6) {
-                        Text("Your code")
-                            .font(.system(size: 13, weight: .semibold))
+        VStack(spacing: 0) {
+            // Friends list section
+            VStack(alignment: .leading, spacing: 16) {
+                if friendsViewModel.isLoadingFriends && friendsViewModel.friends.isEmpty {
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 8) {
+                            ProgressView()
+                            Text("Loading…")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(.vertical, 20)
+                } else if friendsViewModel.friends.isEmpty {
+                    HStack {
+                        Spacer()
+                        Text("No friends yet")
+                            .font(.system(size: 14))
                             .foregroundStyle(.secondary)
-                        Text(friendsViewModel.myCode ?? "— — — —")
-                            .font(.system(size: 34, weight: .bold, design: .rounded))
+                        Spacer()
+                    }
+                    .padding(.vertical, 20)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 16) {
+                            ForEach(friendsViewModel.friends) { friend in
+                                VStack(spacing: 6) {
+                                    SidebarAvatarView(avatarURL: friend.avatarURL)
+                                        .frame(width: avatarSize, height: avatarSize)
+                                        .clipShape(Circle())
+
+                                    Text(friend.fullName.components(separatedBy: " ").first ?? friend.fullName)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                }
+                                .frame(width: avatarSize + 8)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                }
+            }
+            .padding(.top, 24)
+            .padding(.bottom, 16)
+
+            Divider()
+                .padding(.horizontal, 16)
+
+            // Your code & Add friend section
+            VStack(spacing: 16) {
+                HStack(spacing: 24) {
+                    VStack(spacing: 4) {
+                        Text("Your code")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Text(friendsViewModel.myCode ?? "----")
+                            .font(.system(size: 24, weight: .bold, design: .rounded))
                             .monospacedDigit()
                     }
-                    .padding(.top, 8)
 
-                    VStack(spacing: 12) {
-                        VStack(alignment: .center, spacing: 8) {
-                            Text("Add a friend")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.secondary)
+                    VStack(spacing: 4) {
+                        Text("Add a friend")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
 
-                            TextField("Enter 4-digit code", text: $codeToAdd)
+                        HStack(spacing: 8) {
+                            TextField("Code", text: $codeToAdd)
                                 .keyboardType(.numberPad)
                                 .textContentType(.oneTimeCode)
-                                .textInputAutocapitalization(.never)
-                                .disableAutocorrection(true)
                                 .multilineTextAlignment(.center)
-                                .font(.system(size: 20, weight: .semibold, design: .monospaced))
-                                .padding(.vertical, 12)
-                                .padding(.horizontal, 12)
+                                .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                                .frame(width: 80)
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 8)
                                 .background(Color(.secondarySystemBackground))
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                 .onChange(of: codeToAdd, initial: false) { _, newValue in
                                     let filtered = newValue.filter { $0.isNumber }
                                     let clipped = String(filtered.prefix(4))
@@ -485,166 +378,86 @@ private struct FriendsSheetView: View {
                                         codeToAdd = clipped
                                     }
                                 }
-                        }
-                        .frame(maxWidth: .infinity)
 
-                        Button {
-                            Task { await friendsViewModel.addFriendByCode(cleanedCodeToAdd) }
-                        } label: {
-                            HStack(spacing: 10) {
+                            Button {
+                                Task { await friendsViewModel.addFriendByCode(cleanedCodeToAdd) }
+                            } label: {
                                 if friendsViewModel.isAddingFriend {
                                     ProgressView()
                                         .controlSize(.small)
+                                } else {
+                                    Image(systemName: "plus.circle.fill")
+                                        .font(.system(size: 28))
                                 }
-                                Text(friendsViewModel.isAddingFriend ? "Adding…" : "Add")
                             }
-                            .frame(maxWidth: .infinity)
+                            .disabled(!isCodeComplete || friendsViewModel.isAddingFriend)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!isCodeComplete || friendsViewModel.isAddingFriend)
-                    }
-
-                    if let msg = friendsViewModel.lastActionMessage, !msg.isEmpty {
-                        Text(msg)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.top, 4)
-                    }
-
-                    Divider()
-                        .padding(.top, 6)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Contacts")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.primary)
-
-                        InviteContactsInlineListView(
-                            onInvite: { phone in
-                                let cleaned = phone.trimmingCharacters(in: .whitespacesAndNewlines)
-                                guard !cleaned.isEmpty else {
-                                    inviteErrorMessage = "That contact doesn't have a phone number."
-                                    return
-                                }
-                                guard InviteMessageComposerView.canSendText else {
-                                    inviteErrorMessage = "This device can't send texts."
-                                    return
-                                }
-                                inviteRecipients = [cleaned]
-                                showInviteMessageComposer = true
-                            }
-                        )
                     }
                 }
-                .padding(16)
-            }
-            .navigationTitle("Friends")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { isPresented = false }
+
+                if let msg = friendsViewModel.lastActionMessage, !msg.isEmpty {
+                    Text(msg)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
             }
-            .task { await friendsViewModel.refreshMyCode() }
-            .sheet(isPresented: $showInviteMessageComposer) {
-                InviteMessageComposerView(
-                    recipients: inviteRecipients,
-                    body: "",
-                    isPresented: $showInviteMessageComposer
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 16)
+
+            Divider()
+                .padding(.horizontal, 16)
+
+            // Contacts section
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Invite from Contacts")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+
+                InviteContactsInlineListView(
+                    onInvite: { phone in
+                        let cleaned = phone.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !cleaned.isEmpty else {
+                            inviteErrorMessage = "That contact doesn't have a phone number."
+                            return
+                        }
+                        guard InviteMessageComposerView.canSendText else {
+                            inviteErrorMessage = "This device can't send texts."
+                            return
+                        }
+                        inviteRecipients = [cleaned]
+                        showInviteMessageComposer = true
+                    }
                 )
+                .padding(.horizontal, 16)
             }
-            .alert("Invite", isPresented: Binding(get: {
-                inviteErrorMessage != nil
-            }, set: { newValue in
-                if !newValue { inviteErrorMessage = nil }
-            })) {
-                Button("OK", role: .cancel) { inviteErrorMessage = nil }
-            } message: {
-                Text(inviteErrorMessage ?? "")
-            }
+            .padding(.top, 14)
+            .padding(.bottom, 16)
+
+            Spacer(minLength: 0)
         }
-    }
-}
-
-private struct FriendsListSheetView: View {
-    @Binding var isPresented: Bool
-    @EnvironmentObject private var friendsViewModel: FriendsViewModel
-
-    var body: some View {
-        NavigationStack {
-            Group {
-                if friendsViewModel.friends.isEmpty {
-                    if friendsViewModel.isLoadingFriends {
-                        VStack(spacing: 10) {
-                            ProgressView()
-                            Text("Loading friends…")
-                                .font(.system(size: 14))
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(16)
-                    } else if let err = friendsViewModel.friendsLoadErrorMessage, !err.isEmpty {
-                        VStack(spacing: 10) {
-                            Text(err)
-                                .font(.system(size: 14))
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                            Button("Retry") {
-                                Haptics.impact(.light)
-                                Task { try? await friendsViewModel.loadFriends() }
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(16)
-                    } else {
-                        Text("No friends yet.")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .padding(16)
-                    }
-                } else {
-                    List {
-                        ForEach(friendsViewModel.friends) { friend in
-                            HStack(spacing: 10) {
-                                SidebarAvatarView(avatarURL: friend.avatarURL)
-                                    .frame(width: 36, height: 36)
-                                    .clipShape(Circle())
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(friend.fullName)
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundStyle(.primary)
-                                }
-                                Spacer()
-                            }
-                            .padding(.vertical, 6)
-                        }
-                    }
-                    .listStyle(.plain)
-                }
-            }
-            .navigationTitle("Friends")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { isPresented = false }
-                }
-                if friendsViewModel.isLoadingFriends && !friendsViewModel.friends.isEmpty {
-                    ToolbarItem(placement: .topBarLeading) {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-                }
-            }
-            .task {
-                // Don't blank the sheet on open; only load if we have nothing yet.
-                if friendsViewModel.friends.isEmpty {
-                    try? await friendsViewModel.loadFriends()
-                }
-            }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .task {
+            await friendsViewModel.refreshMyCode()
+            try? await friendsViewModel.loadFriends()
+        }
+        .sheet(isPresented: $showInviteMessageComposer) {
+            InviteMessageComposerView(
+                recipients: inviteRecipients,
+                body: "",
+                isPresented: $showInviteMessageComposer
+            )
+        }
+        .alert("Invite", isPresented: Binding(get: {
+            inviteErrorMessage != nil
+        }, set: { newValue in
+            if !newValue { inviteErrorMessage = nil }
+        })) {
+            Button("OK", role: .cancel) { inviteErrorMessage = nil }
+        } message: {
+            Text(inviteErrorMessage ?? "")
         }
     }
 }
@@ -654,12 +467,11 @@ private struct ConnectionStatusPillView: View {
     @ObservedObject private var authService = AuthService.shared
     @ObservedObject private var networkMonitor = NetworkMonitor.shared
 
-    @State private var lastPathSatisfied: Bool? = nil
+    @State private var lastPathSatisfied: Bool = (NetworkMonitor.shared.pathStatus == .satisfied)
     @State private var reconnectTask: Task<Void, Never>? = nil
     @State private var isReconnectUpdating: Bool = false
-    @State private var displayedStatus: PillStatus? = nil
 
-    private enum PillStatus: Equatable {
+    private enum PillStatus: Hashable {
         case waitingForNetwork
         case connecting
         case updating
@@ -675,9 +487,11 @@ private struct ConnectionStatusPillView: View {
 
     @MainActor
     var body: some View {
+        let status = pillStatus
         ZStack {
-            if let status = displayedStatus {
+            if let status {
                 pillView(status)
+                    .id(status)
                     .transition(
                         .asymmetric(
                             insertion: .scale(scale: 0.96).combined(with: .opacity),
@@ -686,28 +500,20 @@ private struct ConnectionStatusPillView: View {
                     )
             }
         }
-        .onAppear {
-            lastPathSatisfied = (networkMonitor.pathStatus == .satisfied)
-            displayedStatus = pillStatus
-        }
-        .onChange(of: pillStatus, initial: false) { _, newValue in
-            withAnimation(.spring(response: 0.30, dampingFraction: 0.70, blendDuration: 0)) {
-                displayedStatus = newValue
-            }
-        }
+        .animation(.spring(response: 0.30, dampingFraction: 0.70, blendDuration: 0), value: status)
         .onChange(of: networkMonitor.pathStatus, initial: false) { _, newStatus in
             let isSatisfied = (newStatus == .satisfied)
             let wasSatisfied = lastPathSatisfied
             lastPathSatisfied = isSatisfied
 
-            if isSatisfied == false {
+            if !isSatisfied {
                 reconnectTask?.cancel()
                 reconnectTask = nil
                 isReconnectUpdating = false
                 return
             }
 
-            guard wasSatisfied == false else { return }
+            guard !wasSatisfied else { return }
 
             sessionsViewModel.lastSessionsSyncSucceeded = nil
             sessionsViewModel.lastSessionsSyncAt = nil
