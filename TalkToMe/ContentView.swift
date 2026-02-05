@@ -13,6 +13,9 @@ struct ContentView: View {
     @EnvironmentObject private var navigationViewModel: SidebarNavigationViewModel
     @EnvironmentObject private var friendsVM: FriendsViewModel
 
+    @StateObject private var onboardingVM = OnboardingViewModel()
+    @State private var onboardingLoaded = false
+
     @Namespace private var profileNamespace
     @Environment(\.scenePhase) private var scenePhase
 
@@ -28,8 +31,13 @@ struct ContentView: View {
                         .transition(.opacity)
                 }
             } else if authService.isAuthenticated {
-                MainTabView()
-                    .transition(.opacity)
+                if onboardingLoaded, onboardingVM.step != .completed {
+                    OnboardingFlowView(viewModel: onboardingVM)
+                        .transition(.opacity)
+                } else {
+                    MainTabView()
+                        .transition(.opacity)
+                }
             } else {
                 AuthView()
                     .transition(.opacity)
@@ -48,6 +56,17 @@ struct ContentView: View {
         .onChange(of: scenePhase, initial: false) { _, newPhase in
             if newPhase == .active {
                 Task { await sessionsViewModel.refreshSessions() }
+            }
+        }
+        .onChange(of: authService.isAuthenticated, initial: true) { _, isAuthed in
+            if !isAuthed {
+                onboardingLoaded = false
+                onboardingVM.reset()
+                return
+            }
+            Task {
+                await onboardingVM.load()
+                await MainActor.run { onboardingLoaded = true }
             }
         }
         .animation(.easeInOut(duration: 0.3), value: authService.isAuthenticated)
