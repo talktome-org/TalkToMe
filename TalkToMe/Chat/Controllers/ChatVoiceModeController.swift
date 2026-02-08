@@ -26,6 +26,7 @@ final class ChatVoiceModeController: ObservableObject {
     @Published var isSpeakModeActive: Bool = false
     @Published var isDictationRecording: Bool = false
     @Published var speakModePhase: SpeakModePhase = .idle
+    @Published var isSpeakMicMuted: Bool = false
 
     @Published var micLevel: CGFloat = 0
     @Published var speakerLevel: CGFloat = 0
@@ -105,21 +106,8 @@ final class ChatVoiceModeController: ObservableObject {
             }
             .store(in: &cancellables)
 
-        speakSTTService.$userTranscript
-            .removeDuplicates()
-            .throttle(for: .milliseconds(120), scheduler: DispatchQueue.main, latest: true)
-            .sink { [weak self] transcript in
-                guard let self else { return }
-                guard self.isSpeakModeActive else { return }
-                guard self.isSpeakComposerLocked == false else { return }
-                guard self.speakSTTService.isRecording else { return }
-                guard self.speakModePhase == .listening else { return }
-
-                let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { return }
-                self.delegate?.inputText = transcript
-            }
-            .store(in: &cancellables)
+        // In speak mode, don't show live transcript in the message bar.
+        // The final utterance handler below auto-sends on pause instead.
 
 
         speakSTTService.$lastFinalUtterance
@@ -132,9 +120,7 @@ final class ChatVoiceModeController: ObservableObject {
                 guard !trimmed.isEmpty else { return }
 
                 // STT is paused during TTS, so any transcription here is genuine user speech
-                // Lock composer updates so STT resets don't wipe the message before send.
                 isSpeakComposerLocked = true
-                delegate?.inputText = trimmed
 
                 // If the assistant is currently answering, stop it so the new user message can send.
                 if isStreamingCheck() || elevenLabsStreamingTTS.isSpeaking || (delegate?.isLoading == true) {
@@ -144,12 +130,13 @@ final class ChatVoiceModeController: ObservableObject {
 
                 updatePhase(.processing)
 
+                // Send directly without writing to the message bar
                 pendingSpeakAutoSendTask?.cancel()
                 pendingSpeakAutoSendTask = Task { @MainActor [weak self] in
                     guard let self else { return }
                     try? await Task.sleep(nanoseconds: 60_000_000) // 60ms
                     guard self.isSpeakModeActive else { return }
-                    self.streamingController?.sendMessage()
+                    self.streamingController?.sendMessage(overrideText: trimmed)
                     self.isSpeakComposerLocked = false
                 }
             }
@@ -185,8 +172,10 @@ final class ChatVoiceModeController: ObservableObject {
                     // User is speaking over the AI - barge in
                     self.streamingController?.stopGeneration()
                     self.elevenLabsStreamingTTS.cancel()
-                    // Immediately resume STT capture
-                    self.speakSTTService.resumeCapture()
+                    // Immediately resume STT capture (unless user has manually muted)
+                    if !self.isSpeakMicMuted {
+                        self.speakSTTService.resumeCapture()
+                    }
                     self.updatePhase(.listening)
                 }
             }
@@ -216,9 +205,10 @@ final class ChatVoiceModeController: ObservableObject {
                         }
                     }
                     // Resume STT capture after a short delay for remaining echo to dissipate
+                    // (skip if user has manually muted)
                     Task { @MainActor [weak self] in
                         try? await Task.sleep(nanoseconds: UInt64(self?.echoCooldownSeconds ?? 1.0) * 1_000_000_000)
-                        guard let self, self.isSpeakModeActive else { return }
+                        guard let self, self.isSpeakModeActive, !self.isSpeakMicMuted else { return }
                         self.speakSTTService.resumeCapture()
                     }
                 }
@@ -371,8 +361,19 @@ final class ChatVoiceModeController: ObservableObject {
         }
     }
 
+    func toggleSpeakMicMute() {
+        guard isSpeakModeActive else { return }
+        isSpeakMicMuted.toggle()
+        if isSpeakMicMuted {
+            speakSTTService.pauseCapture()
+        } else {
+            speakSTTService.resumeCapture()
+        }
+    }
+
     func stopSpeakMode() {
         isSpeakModeActive = false
+        isSpeakMicMuted = false
         isSpeakComposerLocked = false
         pendingSpeakAutoSendTask?.cancel()
         pendingSpeakAutoSendTask = nil

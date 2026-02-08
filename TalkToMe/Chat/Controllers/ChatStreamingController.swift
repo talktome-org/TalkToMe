@@ -96,10 +96,10 @@ final class ChatStreamingController {
         }
     }
 
-    func sendMessage() {
+    func sendMessage(overrideText: String? = nil) {
         guard let delegate else { return }
 
-        let trimmedMessage = delegate.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedMessage = (overrideText ?? delegate.inputText).trimmingCharacters(in: .whitespacesAndNewlines)
         let attachmentsToSend = delegate.pendingAttachments
         guard !(trimmedMessage.isEmpty && attachmentsToSend.isEmpty) else { return }
         guard !isStreaming else { return }

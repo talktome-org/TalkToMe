@@ -10,7 +10,7 @@ struct ChatScreenView: View {
     let isInputFocused: FocusState<Bool>.Binding
 
     private var inputAreaHeight: CGFloat {
-        chatViewModel.pendingAttachments.isEmpty ? 68 : 128
+        chatViewModel.pendingAttachments.isEmpty ? 68 : 220
     }
 
     var body: some View {
@@ -27,6 +27,7 @@ struct ChatScreenView: View {
                 isVoiceRecording: chatViewModel.dictationSTTService.isRecording,
                 voiceModeEnabled: voiceModeEnabled,
                 isSpeakModeActive: chatViewModel.isSpeakModeActive,
+                isSpeakMicMuted: chatViewModel.voiceController.isSpeakMicMuted,
                 speakModePhase: chatViewModel.voiceController.speakModePhase,
                 speakerLevel: chatViewModel.voiceController.speakerLevel,
                 micLevel: chatViewModel.voiceController.micLevel,
@@ -36,6 +37,9 @@ struct ChatScreenView: View {
                     } else {
                         chatViewModel.voiceController.startSpeakMode()
                     }
+                },
+                onMicMuteToggle: {
+                    chatViewModel.voiceController.toggleSpeakMicMute()
                 },
                 inputText: $chatViewModel.inputText,
                 isLoading: $chatViewModel.isLoading,
@@ -56,6 +60,7 @@ struct ChatScreenView: View {
                 onVoiceModeStart: { chatViewModel.voiceController.startVoiceModePushToTalk() },
                 onVoiceModeStop: { chatViewModel.voiceController.stopVoiceModePushToTalk() }
             )
+            .frame(height: inputAreaHeight, alignment: .bottom)
             .offset(y: 14)
             .padding(.bottom, isInputFocused.wrappedValue ? 23 : 0)
             .transition(.move(edge: .bottom).combined(with: .opacity))

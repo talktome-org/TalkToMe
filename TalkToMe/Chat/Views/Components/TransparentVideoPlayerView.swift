@@ -23,6 +23,10 @@ final class TransparentPlayerUIView: UIView {
     private var queuePlayer: AVQueuePlayer?
     private var playerLooper: AVPlayerLooper?
     private var playerLayer: AVPlayerLayer?
+    private var statusObservation: NSKeyValueObservation?
+    private var rateObservation: NSKeyValueObservation?
+    private var heartbeatTimer: Timer?
+    private var shouldLoop = true
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -34,6 +38,7 @@ final class TransparentPlayerUIView: UIView {
     }
 
     func configure(videoName: String, extension ext: String, loop: Bool) {
+        self.shouldLoop = loop
         guard let url = Bundle.main.url(forResource: videoName, withExtension: ext) else {
             print("TransparentVideoPlayer: Could not find \(videoName).\(ext)")
             return
@@ -43,6 +48,8 @@ final class TransparentPlayerUIView: UIView {
         let playerItem = AVPlayerItem(asset: asset)
         let queuePlayer = AVQueuePlayer(playerItem: playerItem)
         queuePlayer.isMuted = true
+        // Local file – never wait for network buffering
+        queuePlayer.automaticallyWaitsToMinimizeStalling = false
         self.queuePlayer = queuePlayer
 
         // Use AVPlayerLooper for seamless gapless looping
@@ -61,6 +68,98 @@ final class TransparentPlayerUIView: UIView {
         playerLayer = layer
 
         queuePlayer.play()
+
+        guard loop else { return }
+
+        // KVO: restart if timeControlStatus becomes .paused or .waitingToPlayAtSpecifiedRate
+        statusObservation = queuePlayer.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+            guard let self, self.shouldLoop else { return }
+            if player.timeControlStatus != .playing {
+                DispatchQueue.main.async {
+                    self.forceResume()
+                }
+            }
+        }
+
+        // KVO: restart if rate drops to 0
+        rateObservation = queuePlayer.observe(\.rate, options: [.new]) { [weak self] player, _ in
+            guard let self, self.shouldLoop else { return }
+            if player.rate == 0 {
+                DispatchQueue.main.async {
+                    self.forceResume()
+                }
+            }
+        }
+
+        // Resume playback when app returns to foreground
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
+
+        // Resume after audio session interruption (e.g. STT claiming the session)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: nil
+        )
+
+        // Resume after audio route changes
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteChange),
+            name: AVAudioSession.routeChangeNotification,
+            object: nil
+        )
+
+        // Heartbeat timer as ultimate safety net – checks every 0.25s
+        // Use `.common` run loop modes so it still fires during UI tracking/animations.
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            guard let self, self.shouldLoop else { return }
+            self.forceResume()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        heartbeatTimer = timer
+    }
+
+    @objc private func appDidBecomeActive() {
+        forceResume()
+    }
+
+    @objc private func handleAudioInterruption(_ notification: Notification) {
+        guard shouldLoop, queuePlayer != nil else { return }
+        guard let info = notification.userInfo,
+              let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+
+        if type == .ended {
+            DispatchQueue.main.async { [weak self] in
+                self?.forceResume()
+            }
+        }
+    }
+
+    @objc private func handleRouteChange() {
+        DispatchQueue.main.async { [weak self] in
+            self?.forceResume()
+        }
+    }
+
+    /// Aggressively resume playback – seeks to unstick a player stuck in
+    /// `.waitingToPlayAtSpecifiedRate` after an audio session change.
+    private func forceResume() {
+        guard shouldLoop, let player = queuePlayer else { return }
+        guard player.rate == 0 || player.timeControlStatus != .playing else { return }
+
+        // A seek nudge unsticks the player when it's waiting on the audio session.
+        if player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
+            let t = player.currentTime()
+            player.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        player.play()
     }
 
     override func layoutSubviews() {
@@ -69,6 +168,14 @@ final class TransparentPlayerUIView: UIView {
     }
 
     func cleanup() {
+        shouldLoop = false
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
+        statusObservation?.invalidate()
+        statusObservation = nil
+        rateObservation?.invalidate()
+        rateObservation = nil
+        NotificationCenter.default.removeObserver(self)
         playerLooper?.disableLooping()
         playerLooper = nil
         queuePlayer?.pause()
