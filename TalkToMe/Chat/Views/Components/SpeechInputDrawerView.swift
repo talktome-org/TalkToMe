@@ -142,7 +142,7 @@ struct SpeechInputDrawerView: View {
     }
 }
 
-private struct AnimatedBarsView: View {
+struct AnimatedBarsView: View {
     let level: CGFloat
     let color: Color
     let isAnimating: Bool

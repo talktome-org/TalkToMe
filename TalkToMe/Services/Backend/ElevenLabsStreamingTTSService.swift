@@ -3,7 +3,7 @@ import Foundation
 
 final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable {
     struct Config: Equatable {
-        var modelId: String = "eleven_multilingual_v2"
+        var modelId: String = "eleven_flash_v2_5"
         var outputFormat: String = "pcm_24000"
     }
 
@@ -208,7 +208,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
             }
         }
         flushWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: item)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.035, execute: item)
     }
 
     private func flushPendingTextImmediately() {

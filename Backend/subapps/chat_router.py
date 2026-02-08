@@ -456,10 +456,11 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                             continue
 
                 # RAG: retrieve relevant book chunks from Supabase.
+                # Skip RAG for ephemeral/voice mode to reduce latency.
                 rag_context_text: Optional[str] = None
                 try:
                     q_text = (chat_request.message or "").strip()
-                    if q_text and RAG_TOP_K > 0:
+                    if q_text and RAG_TOP_K > 0 and not is_ephemeral:
                         # Embeddings call is synchronous; run it off the event loop.
                         q_embed = await run_in_threadpool(embedding_service.get_embedding, q_text)
                         rows = await search_similar_chunks(query_embedding=q_embed, limit=RAG_TOP_K)
@@ -477,16 +478,28 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                         merged_context += "\n\n"
                     merged_context += rag_context_text
 
+                use_voice_agent = bool((chat_request.voice_agent or "").strip())
+                use_gemini = is_ephemeral or use_voice_agent
+
                 system_prompt_override = None
-                if is_ephemeral:
-                    # Voice-first mode uses the selected voice agent prompt, NOT chat_prompt.txt.
-                    # Pass empty string if no agent found so we don't fall back to chat_prompt.
+                if use_gemini:
+                    # Voice-agent mode uses the selected voice agent prompt (VOLT/LUMA/etc),
+                    # not the general chat_prompt.txt. Pass empty string if not found so we
+                    # don't fall back to chat_prompt.txt.
                     system_prompt_override = voice_agent_prompts.get_prompt(chat_request.voice_agent) or ""
 
-                # Use Gemini-based voice service for ephemeral mode, OpenAI for regular chat
-                if is_ephemeral:
+                # Use Gemini for voice-agent / ephemeral mode, OpenAI otherwise.
+                if use_gemini:
+                    # Convert chat_history to list of dicts for Gemini
+                    history_for_gemini = None
+                    if chat_request.chat_history:
+                        history_for_gemini = [
+                            {"role": h.role, "content": h.content}
+                            for h in chat_request.chat_history
+                        ]
                     input_messages = voice_chat_service.build_messages(
                         last_user_message=chat_request.message,
+                        chat_history=history_for_gemini,
                         context_text=merged_context,
                         image_urls=image_urls or None,
                         file_urls=file_urls or None,
@@ -621,8 +634,8 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                                 in_partner = False
                                 continue
 
-                # Use Gemini for ephemeral mode, OpenAI for regular chat
-                if is_ephemeral:
+                # Use Gemini for voice-agent / ephemeral mode, OpenAI otherwise.
+                if use_gemini:
                     async with voice_chat_service.stream_response(
                         messages=input_messages,
                         previous_response_id=None,  # Gemini doesn't support response chaining

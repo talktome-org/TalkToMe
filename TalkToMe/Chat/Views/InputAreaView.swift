@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct InputAreaView: View {
     let isVoiceRecording: Bool
@@ -22,6 +23,7 @@ struct InputAreaView: View {
     @State private var isMediaPanelVisible: Bool = false
     @State private var pendingPhotoSelections: [String: PendingAttachment] = [:]
     @State private var attachmentIdToAssetId: [UUID: String] = [:]
+    @State private var inputAreaWidth: CGFloat = 0
 
     @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var selectedVoiceName: String = ""
     @Environment(\.colorScheme) private var colorScheme
@@ -34,130 +36,237 @@ struct InputAreaView: View {
         !(trimmedInput.isEmpty && pendingAttachments.isEmpty)
     }
 
-    var body: some View {
-        if #available(iOS 26.0, *) {
-            VStack(spacing: 12) {
-                if isSpeakModeActive {
-                    SpeechInputDrawerView(
-                        phase: speakModePhase,
-                        micLevel: micLevel,
-                        speakerLevel: speakerLevel,
-                        onCancel: {
-                            withAnimation(.spring(response: 0.2, dampingFraction: 0.85)) {
-                                onSpeakToggle()
-                            }
-                        }
-                    )
-                    .transition(.asymmetric(
-                        insertion: .push(from: .bottom),
-                        removal: .push(from: .top)
-                    ))
-                }
+    /// Hide the ghost as soon as any text is typed; show it again when input is cleared.
+    private var shouldHideGhostForText: Bool {
+        !trimmedInput.isEmpty
+    }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    if !pendingAttachments.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 10) {
-                                ForEach(pendingAttachments) { att in
-                                    ZStack(alignment: .topTrailing) {
-                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                            .fill(.thinMaterial)
-                                            .frame(width: 54, height: 54)
-                                            .overlay {
-                                                if case .image(let data, _) = att.kind, let uiImage = UIImage(data: data) {
-                                                    Image(uiImage: uiImage)
-                                                        .resizable()
-                                                        .scaledToFill()
-                                                        .frame(width: 54, height: 54)
-                                                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                                } else {
-                                                    Image(systemName: "doc")
-                                                        .font(.system(size: 16, weight: .semibold))
-                                                        .foregroundColor(.secondary)
-                                                }
-                                            }
+    /// Approximate text width available inside the capsule when the ghost is visible (collapsed layout).
+    private var collapsedTextWidthForMeasurement: CGFloat {
+        guard inputAreaWidth > 0 else { return 0 }
 
-                                        Button(action: {
-                                            Haptics.impact(.light)
-                                            withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
-                                                if let assetId = attachmentIdToAssetId[att.id] {
-                                                    pendingPhotoSelections.removeValue(forKey: assetId)
-                                                    attachmentIdToAssetId.removeValue(forKey: att.id)
-                                                }
-                                                pendingAttachments.removeAll { $0.id == att.id }
-                                            }
-                                        }) {
-                                            Image(systemName: "xmark.circle.fill")
-                                                .foregroundColor(.secondary)
-                                                .background(Color.clear)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .padding(4)
-                                    }
-                                    .transition(.scale.combined(with: .opacity))
-                                }
-                            }
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                        }
-                        .transition(.asymmetric(
-                            insertion: .scale(scale: 0.8).combined(with: .opacity),
-                            removal: .scale(scale: 0.8).combined(with: .opacity)
-                        ))
-                    }
+        // These constants mirror the current layout values (use unfocused padding for measurement).
+        let outerHorizontalPadding: CGFloat = 32 * 2
+        let outerSpacing: CGFloat = 6 * 2 // attachments<->capsule and capsule<->ghost
+        let attachmentsButtonWidth: CGFloat = 42
+        let ghostButtonWidth: CGFloat = 44
 
-                    TextField("Message TalkToMe", text: $inputText, axis: .vertical)
-                        .font(.system(size: 17, weight: .regular))
-                        .textFieldStyle(.plain)
-                        .focused(isInputFocused)
-                        .disabled(isVoiceRecording)
-                        .lineLimit(1...5)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 4)
-                        .padding(.top, !pendingAttachments.isEmpty ? 2 : 0)
-                        .padding(.bottom, 2)
-                        .offset(y: -4)
+        // Capsule padding (leading 14 + trailing 10)
+        let capsuleHorizontalPadding: CGFloat = 14 + 10
 
+        // Reserve space inside the capsule so text doesn't collide with the trailing control.
+        let trailingAccessoryInset: CGFloat = 44
+
+        let reserved = outerHorizontalPadding
+            + outerSpacing
+            + attachmentsButtonWidth
+            + ghostButtonWidth
+            + capsuleHorizontalPadding
+            + trailingAccessoryInset
+
+        return max(0, inputAreaWidth - reserved)
+    }
+
+    private func estimatedLineCount(for text: String, width: CGFloat) -> Int {
+        let font = UIFont.systemFont(ofSize: 17, weight: .regular)
+        let lineHeight = font.lineHeight
+        guard width > 0, lineHeight > 0 else { return 1 }
+
+        // Use a space so empty text counts as one line.
+        let raw = text.isEmpty ? " " : text
+        let rect = (raw as NSString).boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font],
+            context: nil
+        )
+        return max(1, Int(ceil(rect.height / lineHeight)))
+    }
+
+    private var barColor: Color {
+        switch speakModePhase {
+        case .idle: return .gray.opacity(0.5)
+        case .listening: return .red.opacity(0.8)
+        case .processing: return .orange.opacity(0.8)
+        case .answering: return .blue.opacity(0.8)
+        }
+    }
+
+    private var activeLevel: CGFloat {
+        switch speakModePhase {
+        case .listening: return micLevel
+        case .answering: return speakerLevel
+        default: return 0
+        }
+    }
+
+    private var ghostVideoName: String {
+        selectedVoiceName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var hasGhostVideo: Bool {
+        guard !ghostVideoName.isEmpty else { return false }
+        return Bundle.main.url(forResource: ghostVideoName, withExtension: "mp4") != nil
+    }
+
+    @ViewBuilder
+    private var ghostButtonContent: some View {
+        Group {
+            if hasGhostVideo {
+                TransparentVideoPlayerView(
+                    videoName: ghostVideoName,
+                    videoExtension: "mp4"
+                )
+                .id(ghostVideoName) // Force recreation when voice changes
+            } else {
+                // Fallback: empty rounded rect with material background
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            }
+        }
+        .frame(width: 44, height: 44)
+    }
+
+    // MARK: - Attachments button (Part 1)
+    @available(iOS 26.0, *)
+    @ViewBuilder
+    private var attachmentsButton: some View {
+        Button(action: {
+            isInputFocused.wrappedValue = false
+            isMediaPanelVisible = true
+        }) {
+            Image(systemName: "paperclip")
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundColor(.primary)
+                .frame(width: 42, height: 42)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: Circle())
+        .disabled(isVoiceRecording || isSpeakModeActive)
+        .offset(y: -2)
+    }
+
+    // MARK: - Message capsule (Part 2)
+    @available(iOS 26.0, *)
+    @ViewBuilder
+    private var messageCapsule: some View {
+        let trailingAccessoryInset: CGFloat = (canSend || isLoading) ? 76 : 44
+
+        VStack(alignment: .leading, spacing: 6) {
+            // Attachments preview row
+            if !pendingAttachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
+                        ForEach(pendingAttachments) { att in
+                            ZStack(alignment: .topTrailing) {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(.ultraThinMaterial)
+                                    .frame(width: 48, height: 48)
+                                    .overlay {
+                                        if case .image(let data, _) = att.kind, let uiImage = UIImage(data: data) {
+                                            Image(uiImage: uiImage)
+                                                .resizable()
+                                                .scaledToFill()
+                                                .frame(width: 48, height: 48)
+                                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                        } else {
+                                            Image(systemName: "doc")
+                                                .font(.system(size: 14, weight: .semibold))
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+
+                                Button(action: {
+                                    Haptics.impact(.light)
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                                        if let assetId = attachmentIdToAssetId[att.id] {
+                                            pendingPhotoSelections.removeValue(forKey: assetId)
+                                            attachmentIdToAssetId.removeValue(forKey: att.id)
+                                        }
+                                        pendingAttachments.removeAll { $0.id == att.id }
+                                    }
+                                }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 16))
+                                        .foregroundColor(.secondary)
+                                        .background(Color.clear)
+                                }
+                                .buttonStyle(.plain)
+                                .offset(x: 4, y: -4)
+                            }
+                            .transition(.scale.combined(with: .opacity))
+                        }
+                    }
+                }
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.8).combined(with: .opacity),
+                    removal: .scale(scale: 0.8).combined(with: .opacity)
+                ))
+            }
+
+            // Text field
+            TextField("Message TalkToMe", text: $inputText, axis: .vertical)
+                .font(.system(size: 17, weight: .regular))
+                .textFieldStyle(.plain)
+                .focused(isInputFocused)
+                .disabled(isVoiceRecording || isSpeakModeActive)
+                .lineLimit(1...5)
+
+        }
+        // Reserve room for the trailing control so text never sits under it.
+        .padding(.trailing, trailingAccessoryInset)
+        .padding(.leading, 14)
+        .padding(.trailing, 10)
+        .padding(.vertical, 8)
+        .frame(minHeight: 46)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .layoutPriority(1)
+        // Anchor trailing control to the bottom-right of the *final* padded bar,
+        // so it doesn't start a few points high and then settle.
+        .overlay(alignment: .bottomTrailing) {
+            Group {
+                if isSpeakModeActive {
+                    // Show animated bars when speak mode is active
+                    AnimatedBarsView(
+                        level: activeLevel,
+                        color: barColor,
+                        isAnimating: speakModePhase == .listening || speakModePhase == .answering,
+                        isPulsing: speakModePhase == .processing
+                    )
+                    .frame(height: 32)
+                    .transition(.scale.combined(with: .opacity))
+                } else if isVoiceRecording {
+                    // End button for dictation mode
+                    Button(action: {
+                        Haptics.impact(.medium)
+                        onVoiceModeStop()
+                    }) {
+                        Text("End")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.red)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(.ultraThinMaterial, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.opacity)
+                } else {
+                    // Mic + optional Send/Stop button
+                    HStack(spacing: 4) {
+                        // Mic button — always visible
                         Button(action: {
-                            isInputFocused.wrappedValue = false
-                            isMediaPanelVisible = true
+                            Haptics.impact(.medium)
+                            onVoiceModeStart()
                         }) {
-                            Image(systemName: "paperclip")
-                                .font(.system(size: 15, weight: .semibold))
+                            Image(systemName: "mic")
+                                .font(.system(size: 17, weight: .semibold))
                                 .foregroundColor(.primary)
                                 .frame(width: 32, height: 32)
-                                .background(.ultraThinMaterial, in: Circle())
                         }
                         .buttonStyle(.plain)
-                        .disabled(isVoiceRecording || isSpeakModeActive)
 
-                        Spacer(minLength: 0)
-
-                        if isVoiceRecording || isSpeakModeActive {
-                            // Single End button for both modes
-                            Button(action: {
-                                Haptics.impact(.medium)
-                                if isVoiceRecording {
-                                    onVoiceModeStop()
-                                }
-                                if isSpeakModeActive {
-                                    withAnimation(.spring(response: 0.2, dampingFraction: 0.85)) {
-                                        onSpeakToggle()
-                                    }
-                                }
-                            }) {
-                                Text("End")
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(.red)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(.ultraThinMaterial, in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                            .transition(.opacity)
-                        } else if canSend || isLoading {
-                            // Send/Stop button - replaces mic and speak when there's content
+                        if canSend || isLoading {
+                            // Send/Stop button
                             Button(action: {
                                 Haptics.impact(.light)
                                 if isLoading {
@@ -170,78 +279,79 @@ struct InputAreaView: View {
                                     send()
                                 }
                             }) {
-                                Text(isLoading ? "Stop" : "Send")
-                                    .font(.system(size: 14, weight: .semibold))
+                                Image(systemName: isLoading ? "stop.fill" : "arrow.up")
+                                    .font(.system(size: 17, weight: .semibold))
                                     .foregroundColor(isLoading ? .red : .primary)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(.ultraThinMaterial, in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                            .transition(.opacity)
-                        } else {
-                            // Mic button
-                            Button(action: {
-                                Haptics.impact(.medium)
-                                onVoiceModeStart()
-                            }) {
-                                Image(systemName: "mic")
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundColor(.primary)
                                     .frame(width: 32, height: 32)
-                                    .background(.ultraThinMaterial, in: Circle())
                             }
                             .buttonStyle(.plain)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .trailing).combined(with: .opacity),
-                                removal: .move(edge: .trailing).combined(with: .opacity)
-                            ))
-
-                            // Speak to buddy button
-                            Button(action: {
-                                Haptics.impact(.medium)
-                                isInputFocused.wrappedValue = false
-                                withAnimation(.spring(response: 0.2, dampingFraction: 0.85)) {
-                                    onSpeakToggle()
-                                }
-                            }) {
-                                let buddyName = selectedVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Buddy" : selectedVoiceName
-                                Text("Speak to \(buddyName)")
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(.primary)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(.ultraThinMaterial, in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .trailing).combined(with: .opacity),
-                                removal: .move(edge: .trailing).combined(with: .opacity)
-                            ))
+                            .transition(.scale.combined(with: .opacity))
                         }
                     }
-                    .animation(.smooth(duration: 0.25), value: isVoiceRecording)
-                    .animation(.smooth(duration: 0.25), value: isSpeakModeActive)
-                    .animation(.smooth(duration: 0.25), value: canSend)
-                }
-                .frame(minHeight: 78, alignment: .bottomLeading)
-                .padding(.leading, 14)
-                .padding(.trailing, 8)
-                .padding(.vertical, 8)
-                .animation(.spring(response: 0.35, dampingFraction: 0.8), value: pendingAttachments.count)
-                .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-                .sheet(isPresented: $isMediaPanelVisible) {
-                    MediaPickerPanelView(
-                        attachments: $pendingAttachments,
-                        pendingPhotoSelections: $pendingPhotoSelections,
-                        attachmentIdToAssetId: $attachmentIdToAssetId
-                    )
-                    .presentationDetents([.medium])
-                    .presentationDragIndicator(.visible)
                 }
             }
-            .padding(.horizontal)
+            .padding(.trailing, 10)
+            .padding(.bottom, 8)
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: pendingAttachments.count)
+        .animation(.smooth(duration: 0.25), value: isVoiceRecording)
+        .animation(.smooth(duration: 0.25), value: canSend)
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isSpeakModeActive)
+        .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    // MARK: - Ghost button (Part 3)
+    @ViewBuilder
+    private var ghostButton: some View {
+        Button(action: {
+            Haptics.impact(.medium)
+            isInputFocused.wrappedValue = false
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.85)) {
+                onSpeakToggle()
+            }
+        }) {
+            ghostButtonContent
+        }
+        .buttonStyle(.plain)
+        .offset(x: -1, y: -1)
+    }
+
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            HStack(alignment: .bottom, spacing: 6) {
+                // Part 1: Attachments button with glass circle
+                attachmentsButton
+
+                // Part 2: Message capsule
+                messageCapsule
+
+                // Part 3: Ghost button (no glass effect) - hidden when typing
+                if !shouldHideGhostForText {
+                    ghostButton
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, isInputFocused.wrappedValue ? 16 : 32)
+            .background(
+                GeometryReader { geo in
+                    Color.clear.onChange(of: geo.size.width, initial: true) { _, newWidth in
+                        inputAreaWidth = newWidth
+                    }
+                }
+            )
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isInputFocused.wrappedValue)
             .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isSpeakModeActive)
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: shouldHideGhostForText)
+            .sheet(isPresented: $isMediaPanelVisible) {
+                MediaPickerPanelView(
+                    attachments: $pendingAttachments,
+                    pendingPhotoSelections: $pendingPhotoSelections,
+                    attachmentIdToAssetId: $attachmentIdToAssetId
+                )
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+            }
         }
     }
 }
@@ -329,3 +439,4 @@ struct InputAreaView: View {
         onVoiceModeStop: {}
     )
 }
+

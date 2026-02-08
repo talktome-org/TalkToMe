@@ -167,15 +167,37 @@ class VoiceChatService:
         self,
         *,
         last_user_message: str,
+        chat_history: Optional[List[dict]] = None,
         context_text: Optional[str] = None,
         image_urls: Optional[List[str]] = None,
         file_urls: Optional[List[str]] = None,
         system_prompt_override: Optional[str] = None,
-    ) -> tuple[Optional[str], str]:
+    ) -> tuple[Optional[str], List[genai_types.Content]]:
         """
         Build messages for Gemini. Returns (system_instruction, contents).
         Gemini uses a different format: system_instruction is separate from contents.
+        Contents is a list of Content objects for multi-turn conversation.
         """
+        system_instruction = system_prompt_override if system_prompt_override is not None else None
+
+        # Build multi-turn conversation contents
+        contents: List[genai_types.Content] = []
+
+        # Add chat history as previous turns (if any)
+        if chat_history:
+            for msg in chat_history:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if not content:
+                    continue
+                # Gemini uses "user" and "model" roles (not "assistant")
+                gemini_role = "model" if role == "assistant" else "user"
+                contents.append(genai_types.Content(
+                    role=gemini_role,
+                    parts=[genai_types.Part.from_text(text=content)]
+                ))
+
+        # Build current user message
         input_text = last_user_message
         if file_urls:
             joined = "\n".join([u for u in file_urls if u])
@@ -185,15 +207,19 @@ class VoiceChatService:
         if context_text:
             input_text = f"Context:\n{context_text}\n\nUser message: {input_text}"
 
-        system_instruction = system_prompt_override if system_prompt_override is not None else None
+        # Add current user message
+        contents.append(genai_types.Content(
+            role="user",
+            parts=[genai_types.Part.from_text(text=input_text)]
+        ))
 
-        return system_instruction, input_text
+        return system_instruction, contents
 
     @asynccontextmanager
     async def stream_response(
         self,
         *,
-        messages: tuple[Optional[str], str],
+        messages: tuple[Optional[str], List[genai_types.Content]],
         previous_response_id: Optional[str] = None,
     ) -> AsyncIterator[AsyncIterator[GeminiStreamEvent]]:
         """
@@ -218,7 +244,7 @@ class VoiceChatService:
                     max_output_tokens=2048,
                 )
 
-                # Use async streaming
+                # Use async streaming with multi-turn contents
                 async for chunk in await self.client.aio.models.generate_content_stream(
                     model=self.model_name,
                     contents=contents,

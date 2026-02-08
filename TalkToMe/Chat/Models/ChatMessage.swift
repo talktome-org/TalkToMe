@@ -18,14 +18,16 @@ struct ChatMessage: Identifiable {
     let isFromPartnerUser: Bool
     let timestamp: Date
     let isToolLoading: Bool
+    let isFromVoiceMode: Bool
 
-    static func text(_ text: String, isFromUser: Bool, timestamp: Date = Date()) -> ChatMessage {
+    static func text(_ text: String, isFromUser: Bool, timestamp: Date = Date(), isFromVoiceMode: Bool = false) -> ChatMessage {
         return ChatMessage(
             segments: text.isEmpty ? (isFromUser ? [] : [.text("")]) : [.text(text)],
             isFromUser: isFromUser,
             isFromPartnerUser: false,
             timestamp: timestamp,
-            isToolLoading: false
+            isToolLoading: false,
+            isFromVoiceMode: isFromVoiceMode
         )
     }
 
@@ -36,7 +38,8 @@ struct ChatMessage: Identifiable {
         isFromUser: Bool,
         isFromPartnerUser: Bool = false,
         timestamp: Date = Date(),
-        isToolLoading: Bool = false
+        isToolLoading: Bool = false,
+        isFromVoiceMode: Bool = false
     ) {
         self.id = id
         self.senderUserId = senderUserId
@@ -45,6 +48,7 @@ struct ChatMessage: Identifiable {
         self.isFromPartnerUser = isFromPartnerUser
         self.timestamp = timestamp
         self.isToolLoading = isToolLoading
+        self.isFromVoiceMode = isFromVoiceMode
     }
 
     static func partnerReceived(_ text: String) -> ChatMessage {
@@ -53,7 +57,8 @@ struct ChatMessage: Identifiable {
             isFromUser: false,
             isFromPartnerUser: false,
             timestamp: Date(),
-            isToolLoading: false
+            isToolLoading: false,
+            isFromVoiceMode: false
         )
     }
 
@@ -122,6 +127,7 @@ struct ChatMessage: Identifiable {
         self.isFromPartnerUser = isFromPartnerUser
         self.timestamp = timestamp
         self.isToolLoading = false
+        self.isFromVoiceMode = false
     }
 
     private static func parseISO8601(_ iso: String?) -> Date? {

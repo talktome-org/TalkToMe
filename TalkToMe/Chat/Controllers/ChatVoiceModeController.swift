@@ -43,12 +43,14 @@ final class ChatVoiceModeController: ObservableObject {
     private weak var streamingController: ChatStreamingController?
     private var isStreamingCheck: () -> Bool = { false }
 
-    private var ephemeralConversationHistory: [BackendService.ChatHistoryMessage] = []
-    private var currentEphemeralStreamTask: Task<Void, Never>?
-    private var isEphemeralStreaming: Bool = false
-    private let backend = BackendService.shared
-    private var speakModeVoiceId: String?
+    private var pendingSpeakAutoSendTask: Task<Void, Never>?
+    private var isSpeakComposerLocked: Bool = false
     private var speakModeVoiceName: String?
+
+    /// Timestamp when TTS stopped speaking, used for echo cooldown
+    private var ttsStoppedSpeakingAt: Date?
+    /// Cooldown period after TTS stops to ignore potential echo (in seconds)
+    private let echoCooldownSeconds: TimeInterval = 1.0
 
     init() {}
 
@@ -96,30 +98,70 @@ final class ChatVoiceModeController: ObservableObject {
             }
             .store(in: &cancellables)
 
+        speakSTTService.$userTranscript
+            .removeDuplicates()
+            .throttle(for: .milliseconds(120), scheduler: DispatchQueue.main, latest: true)
+            .sink { [weak self] transcript in
+                guard let self else { return }
+                guard self.isSpeakModeActive else { return }
+                guard self.isSpeakComposerLocked == false else { return }
+                guard self.speakSTTService.isRecording else { return }
+                guard self.speakModePhase == .listening else { return }
+
+                let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+                self.delegate?.inputText = transcript
+            }
+            .store(in: &cancellables)
+
 
         speakSTTService.$lastFinalUtterance
             .compactMap { $0 }
             .receive(on: DispatchQueue.main)
             .sink { [weak self] transcript in
                 guard let self else { return }
+                guard self.isSpeakModeActive else { return }
                 let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return }
-                if self.isSpeakModeActive {
-                    if self.isEphemeralStreaming || self.elevenLabsStreamingTTS.isSpeaking {
-                        if self.elevenLabsStreamingTTS.isSpeaking {
-                            let mic = self.speakSTTService.spawnLevel
-                            let spk = self.elevenLabsStreamingTTS.speakerLevel
-                            let likelyEcho = mic <= max(0.28, spk + 0.14)
-                            if likelyEcho {
-                                return
-                            }
-                        }
 
-                        self.cancelEphemeralStream()
-                        self.elevenLabsStreamingTTS.cancel()
+                // If TTS is currently speaking, avoid auto-sending echo picked up from playback.
+                if self.elevenLabsStreamingTTS.isSpeaking {
+                    let mic = self.speakSTTService.spawnLevel
+                    let spk = self.elevenLabsStreamingTTS.speakerLevel
+                    let likelyEcho = mic <= max(0.30, spk + 0.12)
+                    if likelyEcho {
+                        return
                     }
-                    self.updatePhase(.processing)
-                    self.sendEphemeralMessage(trimmed)
+                }
+
+                // Also ignore transcriptions during cooldown period after TTS stops
+                // (echo can still arrive after TTS finishes due to STT processing delay)
+                if let stoppedAt = self.ttsStoppedSpeakingAt {
+                    let elapsed = Date().timeIntervalSince(stoppedAt)
+                    if elapsed < self.echoCooldownSeconds {
+                        return
+                    }
+                }
+
+                // Lock composer updates so STT resets don't wipe the message before send.
+                isSpeakComposerLocked = true
+                delegate?.inputText = trimmed
+
+                // If the assistant is currently answering, stop it so the new user message can send.
+                if isStreamingCheck() || elevenLabsStreamingTTS.isSpeaking || (delegate?.isLoading == true) {
+                    streamingController?.stopGeneration()
+                    elevenLabsStreamingTTS.cancel()
+                }
+
+                updatePhase(.processing)
+
+                pendingSpeakAutoSendTask?.cancel()
+                pendingSpeakAutoSendTask = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    try? await Task.sleep(nanoseconds: 60_000_000) // 60ms
+                    guard self.isSpeakModeActive else { return }
+                    self.streamingController?.sendMessage()
+                    self.isSpeakComposerLocked = false
                 }
             }
             .store(in: &cancellables)
@@ -133,9 +175,28 @@ final class ChatVoiceModeController: ObservableObject {
                 guard self.isSpeakModeActive else { return }
 
                 if speaking {
-                    if self.speakModePhase != .processing {
-                        self.updatePhase(.listening)
+                    // Ignore speaking detection during echo cooldown period
+                    if let stoppedAt = self.ttsStoppedSpeakingAt {
+                        let elapsed = Date().timeIntervalSince(stoppedAt)
+                        if elapsed < self.echoCooldownSeconds {
+                            return
+                        }
                     }
+
+                    // Barge-in: stop the assistant as soon as the user starts speaking.
+                    if self.isStreamingCheck() || self.elevenLabsStreamingTTS.isSpeaking || (self.delegate?.isLoading == true) {
+                        if self.elevenLabsStreamingTTS.isSpeaking {
+                            let mic = self.speakSTTService.spawnLevel
+                            let spk = self.elevenLabsStreamingTTS.speakerLevel
+                            let likelyEcho = mic <= max(0.30, spk + 0.12)
+                            if likelyEcho {
+                                return
+                            }
+                        }
+                        self.streamingController?.stopGeneration()
+                        self.elevenLabsStreamingTTS.cancel()
+                    }
+                    self.updatePhase(.listening)
                 } else {
                 }
             }
@@ -149,9 +210,19 @@ final class ChatVoiceModeController: ObservableObject {
                 guard self.isSpeakModeActive else { return }
 
                 if speaking {
+                    // Clear the cooldown timestamp when TTS starts speaking
+                    self.ttsStoppedSpeakingAt = nil
                     self.updatePhase(.answering)
-                } else if self.speakModePhase == .answering {
-                    self.updatePhase(.listening)
+                } else {
+                    // Track when TTS stopped to filter out echo during cooldown
+                    self.ttsStoppedSpeakingAt = Date()
+
+                    if self.speakModePhase == .answering {
+                        // Only transition to listening if the server isn't still streaming tokens.
+                        if !self.isStreamingCheck() {
+                            self.updatePhase(.listening)
+                        }
+                    }
                 }
             }
             .store(in: &cancellables)
@@ -257,18 +328,20 @@ final class ChatVoiceModeController: ObservableObject {
             return
         }
 
-        speakModeVoiceId = storedVoiceId
         var name = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if name.isEmpty, let cached = VoicesCache.shared.cachedVoices {
             name = (cached.first(where: { $0.voice_id == storedVoiceId })?.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         }
         speakModeVoiceName = name
+        streamingController?.activeVoiceAgentName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : name
 
         isSpeakModeActive = true
+        isSpeakComposerLocked = false
+        pendingSpeakAutoSendTask?.cancel()
+        pendingSpeakAutoSendTask = nil
         updatePhase(.listening)
-
-        ephemeralConversationHistory = []
+        delegate?.inputText = ""
 
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -285,127 +358,34 @@ final class ChatVoiceModeController: ObservableObject {
             }
 
             self.speakSTTService.transcriptAggregation = .perUtterance
-            self.speakSTTService.startRecording()
 
             if self.speakSTTService.isConnected == false {
                 await self.speakSTTService.connect(
                     config: .init(language: "en-US", model: "nova-3", endpointingMs: 800, sampleRateHz: 24_000)
                 )
             }
+
+            self.speakSTTService.startRecording()
         }
     }
 
     func stopSpeakMode() {
         isSpeakModeActive = false
+        isSpeakComposerLocked = false
+        pendingSpeakAutoSendTask?.cancel()
+        pendingSpeakAutoSendTask = nil
+        ttsStoppedSpeakingAt = nil
         updatePhase(.idle)
 
-        cancelEphemeralStream()
+        streamingController?.activeVoiceAgentName = nil
+        streamingController?.stopGeneration()
+        elevenLabsStreamingTTS.cancel()
 
-        ephemeralConversationHistory = []
-        speakModeVoiceId = nil
         speakModeVoiceName = nil
 
         speakSTTService.stopRecording()
         speakSTTService.disconnect()
-        elevenLabsStreamingTTS.cancel()
     }
-
-    private func sendEphemeralMessage(_ message: String) {
-        ephemeralConversationHistory.append(BackendService.ChatHistoryMessage(role: "user", content: message))
-
-        currentEphemeralStreamTask?.cancel()
-        currentEphemeralStreamTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            guard let accessToken = await self.delegate?.getAccessToken() else {
-                self.updatePhase(.listening)
-                return
-            }
-
-            self.isEphemeralStreaming = true
-            var assistantResponse = ""
-            var receivedFirstToken = false
-            var didStartTTS = false
-
-            let voiceId = (self.speakModeVoiceId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !voiceId.isEmpty else {
-                let msg = "Voice mode is not available. Please select an ElevenLabs voice in Settings."
-                self.elevenLabsStreamingTTS.lastError = msg
-                self.speakSTTService.lastError = msg
-                self.isEphemeralStreaming = false
-                self.isSpeakModeActive = false
-                self.updatePhase(.idle)
-                return
-            }
-
-            await self.elevenLabsStreamingTTS.start(voiceId: voiceId)
-            didStartTTS = self.elevenLabsStreamingTTS.isConnected
-            if !didStartTTS {
-                let msg = self.elevenLabsStreamingTTS.lastError ?? "Voice mode is not available right now."
-                self.elevenLabsStreamingTTS.lastError = msg
-                self.speakSTTService.lastError = msg
-                self.isEphemeralStreaming = false
-                self.isSpeakModeActive = false
-                self.updatePhase(.idle)
-                return
-            }
-
-            let stream = self.backend.streamEphemeralMessage(
-                message,
-                chatHistory: self.ephemeralConversationHistory.dropLast().map { $0 },
-                accessToken: accessToken,
-                voiceAgent: self.speakModeVoiceName
-            )
-
-            for await event in stream {
-                guard !Task.isCancelled else {
-                    break
-                }
-
-                switch event {
-                case .token(let token):
-                    if !receivedFirstToken {
-                        receivedFirstToken = true
-                        self.updatePhase(.answering)
-                    }
-                    assistantResponse += token
-                    if didStartTTS {
-                        self.elevenLabsStreamingTTS.appendTextDelta(token)
-                    }
-
-                case .done:
-                    if !assistantResponse.isEmpty {
-                        self.ephemeralConversationHistory.append(BackendService.ChatHistoryMessage(role: "assistant", content: assistantResponse))
-                    }
-                    if didStartTTS {
-                        self.elevenLabsStreamingTTS.finish()
-                    }
-
-                case .error(let errorMsg):
-                    _ = errorMsg
-
-                default:
-                    break
-                }
-            }
-
-            self.isEphemeralStreaming = false
-
-            guard !Task.isCancelled else { return }
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            guard !Task.isCancelled else { return }
-
-            if !self.elevenLabsStreamingTTS.isSpeaking && self.speakModePhase != .listening {
-                self.updatePhase(.listening)
-            }
-        }
-    }
-
-    private func cancelEphemeralStream() {
-        currentEphemeralStreamTask?.cancel()
-        currentEphemeralStreamTask = nil
-        isEphemeralStreaming = false
-    }
-
 
     func sendComposerMessage() {
         if dictationSTTService.isRecording {

@@ -193,36 +193,47 @@ struct ElevenLabsVoiceSuggestionsView: View {
 
     private func voiceCard(_ voice: BackendService.AppVoiceDTO) -> some View {
         let isSelected = voice.voice_id == selectedVoiceId
+        // Ghost video name matches the voice name (lowercase)
+        let ghostVideoName = voice.name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+
         return Button(action: {
             Haptics.impact(.light)
             selectedVoiceId = voice.voice_id
             selectedVoiceName = voice.name
         }) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .top) {
-                    Text(voice.name)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
+            HStack(spacing: 12) {
+                // Ghost video
+                TransparentVideoPlayerView(
+                    videoName: ghostVideoName,
+                    videoExtension: "mp4"
+                )
+                .frame(width: 56, height: 56)
 
-                    Spacer(minLength: 4)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .top) {
+                        Text(voice.name)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
 
-                    if isSelected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 18))
-                            .foregroundStyle(.white, .blue)
+                        Spacer(minLength: 4)
+
+                        if isSelected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 18))
+                                .foregroundStyle(.white, .blue)
+                        }
                     }
-                }
 
-                Text(voice.description)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(voice.description)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, minHeight: 90, alignment: .topLeading)
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 90, alignment: .leading)
             .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)

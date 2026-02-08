@@ -40,6 +40,10 @@ final class ChatStreamingController {
     private var onCacheUpdate: (() -> Void)?
     private let backend = BackendService.shared
 
+    /// When set, backend chat streaming will include `voice_agent` so the server can
+    /// use the matching voice-agent system prompt (and Gemini voice flow where applicable).
+    var activeVoiceAgentName: String? = nil
+
     init() {}
 
     func configure(delegate: ChatStreamingDelegate, onCacheUpdate: @escaping () -> Void) {
@@ -257,7 +261,8 @@ final class ChatStreamingController {
 
         cancelCurrentStream()
 
-        let placeholderMessage = ChatMessage.text("", isFromUser: false)
+        let isVoiceModeMessage = activeVoiceAgentName != nil
+        let placeholderMessage = ChatMessage.text("", isFromUser: false, isFromVoiceMode: isVoiceModeMessage)
         delegate.messages.append(placeholderMessage)
         currentAssistantMessageId = placeholderMessage.id
         delegate.assistantScrollTargetId = placeholderMessage.id
@@ -352,7 +357,8 @@ final class ChatStreamingController {
                             if !delegate.messages.isEmpty {
                                 delegate.messages[delegate.messages.count - 1] = ChatMessage.text(
                                     "Error: Failed to upload attachment.",
-                                    isFromUser: false
+                                    isFromUser: false,
+                                    isFromVoiceMode: isVoiceModeMessage
                                 )
                             }
                             delegate.isLoading = false
@@ -375,6 +381,10 @@ final class ChatStreamingController {
             let prevId: String? = {
                 return self.responseIdBySession[localSessionIdForSend]
             }()
+            let voiceAgentToSend: String? = {
+                let trimmed = (self.activeVoiceAgentName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }()
 
             let streamToken = UUID()
             let onEvent: (BackendService.StreamEvent) -> Void = { [weak self, weak delegate] event in
@@ -396,7 +406,7 @@ final class ChatStreamingController {
                             let idx: Int = {
                                 if let id = self.currentAssistantMessageId,
                                    let i = newMessages.firstIndex(where: { $0.id == id }) { return i }
-                                let placeholder = ChatMessage.text("", isFromUser: false)
+                                let placeholder = ChatMessage.text("", isFromUser: false, isFromVoiceMode: isVoiceModeMessage)
                                 newMessages.append(placeholder)
                                 self.currentAssistantMessageId = placeholder.id
                                 if let sid = delegate.sessionId { self.assistantMessageIdBySession[sid] = placeholder.id }
@@ -408,7 +418,8 @@ final class ChatStreamingController {
                                 segments: last.segments,
                                 isFromUser: false,
                                 timestamp: last.timestamp,
-                                isToolLoading: true
+                                isToolLoading: true,
+                                isFromVoiceMode: last.isFromVoiceMode
                             )
                             newMessages[idx] = updated
                             delegate.messages = newMessages
@@ -419,7 +430,7 @@ final class ChatStreamingController {
                             let idx: Int = {
                                 if let id = self.assistantMessageIdBySession[sid],
                                    let i = newMessages.firstIndex(where: { $0.id == id }) { return i }
-                                let placeholder = ChatMessage.text("", isFromUser: false)
+                                let placeholder = ChatMessage.text("", isFromUser: false, isFromVoiceMode: isVoiceModeMessage)
                                 newMessages.append(placeholder)
                                 self.assistantMessageIdBySession[sid] = placeholder.id
                                 return newMessages.count - 1
@@ -430,7 +441,8 @@ final class ChatStreamingController {
                                 segments: last.segments,
                                 isFromUser: false,
                                 timestamp: last.timestamp,
-                                isToolLoading: true
+                                isToolLoading: true,
+                                isFromVoiceMode: last.isFromVoiceMode
                             )
                             newMessages[idx] = updated
                             delegate.setCachedMessages(newMessages, for: sid)
@@ -447,7 +459,7 @@ final class ChatStreamingController {
                             let idx: Int = {
                                 if let id = self.currentAssistantMessageId,
                                    let i = newMessages.firstIndex(where: { $0.id == id }) { return i }
-                                let placeholder = ChatMessage.text("", isFromUser: false)
+                                let placeholder = ChatMessage.text("", isFromUser: false, isFromVoiceMode: isVoiceModeMessage)
                                 newMessages.append(placeholder)
                                 self.currentAssistantMessageId = placeholder.id
                                 if let sid = delegate.sessionId { self.assistantMessageIdBySession[sid] = placeholder.id }
@@ -459,7 +471,8 @@ final class ChatStreamingController {
                                 segments: last.segments,
                                 isFromUser: false,
                                 timestamp: last.timestamp,
-                                isToolLoading: false
+                                isToolLoading: false,
+                                isFromVoiceMode: last.isFromVoiceMode
                             )
                             newMessages[idx] = updated
                             delegate.messages = newMessages
@@ -470,7 +483,7 @@ final class ChatStreamingController {
                             let idx: Int = {
                                 if let id = self.assistantMessageIdBySession[sid],
                                    let i = newMessages.firstIndex(where: { $0.id == id }) { return i }
-                                let placeholder = ChatMessage.text("", isFromUser: false)
+                                let placeholder = ChatMessage.text("", isFromUser: false, isFromVoiceMode: isVoiceModeMessage)
                                 newMessages.append(placeholder)
                                 self.assistantMessageIdBySession[sid] = placeholder.id
                                 return newMessages.count - 1
@@ -481,7 +494,8 @@ final class ChatStreamingController {
                                 segments: last.segments,
                                 isFromUser: false,
                                 timestamp: last.timestamp,
-                                isToolLoading: false
+                                isToolLoading: false,
+                                isFromVoiceMode: last.isFromVoiceMode
                             )
                             newMessages[idx] = updated
                             delegate.setCachedMessages(newMessages, for: sid)
@@ -540,7 +554,7 @@ final class ChatStreamingController {
                             let idx: Int = {
                                 if let id = self.currentAssistantMessageId,
                                    let i = newMessages.firstIndex(where: { $0.id == id }) { return i }
-                                let placeholder = ChatMessage.text("", isFromUser: false)
+                                let placeholder = ChatMessage.text("", isFromUser: false, isFromVoiceMode: isVoiceModeMessage)
                                 newMessages.append(placeholder)
                                 self.currentAssistantMessageId = placeholder.id
                                 if let sid = delegate.sessionId { self.assistantMessageIdBySession[sid] = placeholder.id }
@@ -552,7 +566,8 @@ final class ChatStreamingController {
                                 segments: currentSegments,
                                 isFromUser: false,
                                 timestamp: last.timestamp,
-                                isToolLoading: last.isToolLoading
+                                isToolLoading: last.isToolLoading,
+                                isFromVoiceMode: last.isFromVoiceMode
                             )
                             newMessages[idx] = updated
                             delegate.messages = newMessages
@@ -563,7 +578,7 @@ final class ChatStreamingController {
                             let idx: Int = {
                                 if let id = self.assistantMessageIdBySession[sid],
                                    let i = newMessages.firstIndex(where: { $0.id == id }) { return i }
-                                let placeholder = ChatMessage.text("", isFromUser: false)
+                                let placeholder = ChatMessage.text("", isFromUser: false, isFromVoiceMode: isVoiceModeMessage)
                                 newMessages.append(placeholder)
                                 self.assistantMessageIdBySession[sid] = placeholder.id
                                 return newMessages.count - 1
@@ -574,7 +589,8 @@ final class ChatStreamingController {
                                 segments: currentSegments,
                                 isFromUser: false,
                                 timestamp: last.timestamp,
-                                isToolLoading: last.isToolLoading
+                                isToolLoading: last.isToolLoading,
+                                isFromVoiceMode: last.isFromVoiceMode
                             )
                             newMessages[idx] = updated
                             delegate.setCachedMessages(newMessages, for: sid)
@@ -595,7 +611,7 @@ final class ChatStreamingController {
                             let idx: Int = {
                                 if let id = self.currentAssistantMessageId,
                                    let i = newMessages.firstIndex(where: { $0.id == id }) { return i }
-                                let placeholder = ChatMessage.text("", isFromUser: false)
+                                let placeholder = ChatMessage.text("", isFromUser: false, isFromVoiceMode: isVoiceModeMessage)
                                 newMessages.append(placeholder)
                                 self.currentAssistantMessageId = placeholder.id
                                 if let sid = delegate.sessionId { self.assistantMessageIdBySession[sid] = placeholder.id }
@@ -607,7 +623,8 @@ final class ChatStreamingController {
                                 segments: currentSegments,
                                 isFromUser: false,
                                 timestamp: last.timestamp,
-                                isToolLoading: false
+                                isToolLoading: false,
+                                isFromVoiceMode: last.isFromVoiceMode
                             )
                             newMessages[idx] = updated
                             delegate.messages = newMessages
@@ -618,7 +635,7 @@ final class ChatStreamingController {
                             let idx: Int = {
                                 if let id = self.assistantMessageIdBySession[sid],
                                    let i = newMessages.firstIndex(where: { $0.id == id }) { return i }
-                                let placeholder = ChatMessage.text("", isFromUser: false)
+                                let placeholder = ChatMessage.text("", isFromUser: false, isFromVoiceMode: isVoiceModeMessage)
                                 newMessages.append(placeholder)
                                 self.assistantMessageIdBySession[sid] = placeholder.id
                                 return newMessages.count - 1
@@ -629,7 +646,8 @@ final class ChatStreamingController {
                                 segments: currentSegments,
                                 isFromUser: false,
                                 timestamp: last.timestamp,
-                                isToolLoading: false
+                                isToolLoading: false,
+                                isFromVoiceMode: last.isFromVoiceMode
                             )
                             newMessages[idx] = updated
                             delegate.setCachedMessages(newMessages, for: sid)
@@ -689,15 +707,15 @@ final class ChatStreamingController {
                         if let sid = targetSid, sid != delegate.sessionId {
                             var newMessages = delegate.getCachedMessages(for: sid) ?? []
                             if !newMessages.isEmpty {
-                                newMessages[newMessages.count - 1] = ChatMessage.text("Error: \(message)", isFromUser: false)
+                                newMessages[newMessages.count - 1] = ChatMessage.text("Error: \(message)", isFromUser: false, isFromVoiceMode: isVoiceModeMessage)
                             } else {
-                                newMessages.append(ChatMessage.text("Error: \(message)", isFromUser: false))
+                                newMessages.append(ChatMessage.text("Error: \(message)", isFromUser: false, isFromVoiceMode: isVoiceModeMessage))
                             }
                             delegate.setCachedMessages(newMessages, for: sid)
                             self.assistantMessageIdBySession[sid] = nil
                         } else {
                             if !delegate.messages.isEmpty {
-                                delegate.messages[delegate.messages.count - 1] = ChatMessage.text("Error: \(message)", isFromUser: false)
+                                delegate.messages[delegate.messages.count - 1] = ChatMessage.text("Error: \(message)", isFromUser: false, isFromVoiceMode: isVoiceModeMessage)
                             }
                             delegate.isLoading = false
                             delegate.isAssistantTyping = false
@@ -746,7 +764,9 @@ final class ChatStreamingController {
                     accessToken: accessToken,
                     previousResponseId: prevId,
                     friendUserId: friendToUse,
-                    messageId: clientMessageId
+                    messageId: clientMessageId,
+                    ephemeral: false,
+                    voiceAgent: voiceAgentToSend
                 )
                 for await event in stream {
                     onEvent(event)
