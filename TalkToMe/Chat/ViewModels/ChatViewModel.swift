@@ -297,9 +297,9 @@ extension ChatViewModel: ChatStreamingDelegate {
         }
 
         guard isSpeakModeActive else { return }
-        guard elevenLabsStreamingTTS.isConnected else {
-            return
-        }
+        // Always buffer tokens — the TTS service's pendingText buffer
+        // accumulates text even before the WebSocket is connected,
+        // and flushes it once connected. Don't drop tokens.
         elevenLabsStreamingTTS.appendTextDelta(token)
     }
 
@@ -307,9 +307,7 @@ extension ChatViewModel: ChatStreamingDelegate {
         voiceController.notifyStreamingFinished()
 
         guard isSpeakModeActive else { return }
-        guard elevenLabsStreamingTTS.isConnected else {
-            return
-        }
+        // Always call finish — it will wait for connection if needed
         elevenLabsStreamingTTS.finish()
     }
 }

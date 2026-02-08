@@ -97,7 +97,7 @@ extension BackendService {
             Body(
                 text: text,
                 voice_id: voiceId,
-                model_id: "eleven_multilingual_v2",
+                model_id: "eleven_flash_v2_5",
                 output_format: "mp3_44100_128"
             )
         )

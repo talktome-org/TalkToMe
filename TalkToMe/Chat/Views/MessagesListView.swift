@@ -6,6 +6,7 @@ struct MessagesListView: View {
 
     let isInputFocused: Bool
     let inputAreaHeight: CGFloat
+    let onBackgroundTap: () -> Void
 
     var sendAnimationNamespace: Namespace.ID? = nil
     var outgoingAnimatingMessageId: UUID? = nil
@@ -22,8 +23,8 @@ struct MessagesListView: View {
     private var initialJumpToken: Int { chatViewModel.initialJumpToken }
 
     private let nearBottomThreshold: CGFloat = 20
-    private let scrollButtonSize: CGFloat = 42
-    private let scrollButtonIconSize: CGFloat = 16
+    private let scrollButtonSize: CGFloat = 36
+    private let scrollButtonIconSize: CGFloat = 14
 
     private func scrollToBottomUIKit(_ scrollView: UIScrollView, animated: Bool) {
         let minOffsetY = -scrollView.adjustedContentInset.top
@@ -99,6 +100,10 @@ struct MessagesListView: View {
                 })
             )
         }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onBackgroundTap()
+        }
         .scrollBounceBehavior(.always)
         .scrollIndicators(.visible)
         .overlay(alignment: .bottomTrailing) {
@@ -127,7 +132,7 @@ struct MessagesListView: View {
 
     @ViewBuilder
     private var scrollToBottomButton: some View {
-        let bottomPadding: CGFloat = 16
+        let bottomPadding: CGFloat = -4
 
         ZStack(alignment: .bottomTrailing) {
             if shouldShowScrollButton {

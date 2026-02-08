@@ -17,12 +17,11 @@ struct ChatScreenView: View {
         MessagesListView(
             chatViewModel: chatViewModel,
             isInputFocused: isInputFocused.wrappedValue,
-            inputAreaHeight: inputAreaHeight
+            inputAreaHeight: inputAreaHeight,
+            onBackgroundTap: {
+                isInputFocused.wrappedValue = false
+            }
         )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            isInputFocused.wrappedValue = false
-        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             InputAreaView(
                 isVoiceRecording: chatViewModel.dictationSTTService.isRecording,

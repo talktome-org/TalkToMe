@@ -16,6 +16,7 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
 
     @Published var isConnected: Bool = false
     @Published var isRecording: Bool = false
+    @Published var isPaused: Bool = false
     @Published var lastError: String?
     @Published var spawnLevel: CGFloat = 0
     @Published var userTranscript: String = ""
@@ -40,6 +41,8 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
     private var committedParts: [String] = []
     private var currentInterim: String = ""
     private var currentUtteranceFinalParts: [String] = []
+    private var keepAliveTask: Task<Void, Never>?
+    private let keepAliveIntervalSeconds: TimeInterval = 10.0
 
     init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
@@ -65,6 +68,7 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             try await openWebSocket(token: token)
             self.isConnected = true
             self.receiveLoop()
+            self.startKeepAlive()
             self.flushBufferedAudioIfPossible()
         } catch {
             let msg = "STT connection failed: \(error.localizedDescription)"
@@ -73,9 +77,33 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         }
     }
 
+    private func startKeepAlive() {
+        keepAliveTask?.cancel()
+        keepAliveTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(self?.keepAliveIntervalSeconds ?? 10.0) * 1_000_000_000)
+                guard !Task.isCancelled else { break }
+                guard let self, self.isConnected, let task = self.wsTask else { break }
+                task.sendPing { error in
+                    if error != nil {
+                        Task { @MainActor in
+                            self.isConnected = false
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopKeepAlive() {
+        keepAliveTask?.cancel()
+        keepAliveTask = nil
+    }
+
     @MainActor
     func disconnect() {
         stopRecordingIfNeeded()
+        stopKeepAlive()
         isConnected = false
         clearBufferedAudio()
         wsTask?.cancel(with: .goingAway, reason: nil)
@@ -140,10 +168,27 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
     @MainActor
     func stopRecording() {
         isRecording = false
+        isPaused = false
         stopRecordingIfNeeded()
         flushBufferedAudioIfPossible()
         sendJSONEvent(["type": "finalize"])
         clearBufferedAudio()
+    }
+
+    /// Pause audio capture without disconnecting. Used to prevent echo during TTS playback.
+    @MainActor
+    func pauseCapture() {
+        guard isRecording, !isPaused else { return }
+        isPaused = true
+        isUserSpeaking = false
+        spawnLevel = 0
+    }
+
+    /// Resume audio capture after pause.
+    @MainActor
+    func resumeCapture() {
+        guard isRecording, isPaused else { return }
+        isPaused = false
     }
 
     @MainActor
@@ -485,7 +530,10 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             guard let self else { return }
+            // Always update level for barge-in detection, even when paused
             self.updateSpawnLevel(from: buffer)
+            // Skip sending audio to STT when paused (echo suppression during TTS)
+            guard !self.isPaused else { return }
             self.convertAndSend(buffer: buffer, targetFormat: target)
         }
         return true

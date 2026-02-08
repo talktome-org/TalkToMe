@@ -3,6 +3,8 @@ import Foundation
 
 final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable {
     struct Config: Equatable {
+        // eleven_v3 doesn't support WebSocket stream-input (HTTP 403)
+        // eleven_flash_v2_5 is the best low-latency streaming model
         var modelId: String = "eleven_flash_v2_5"
         var outputFormat: String = "pcm_24000"
     }
@@ -27,6 +29,8 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
     private var playerGraphConfigured: Bool = false
     private var pendingText: String = ""
     private var flushWorkItem: DispatchWorkItem?
+    private var keepAliveTask: Task<Void, Never>?
+    private let keepAliveIntervalSeconds: TimeInterval = 15.0
 
     private var playbackFormat: AVAudioFormat {
         AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24_000, channels: 1, interleaved: false)!
@@ -45,6 +49,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         self.isSpeaking = false
         self.speakerLevel = 0
         self.endRequested = false
+        self.pendingFinish = false
         self.queuedPlaybackBuffers = 0
         self.startedPlayback = false
 
@@ -57,11 +62,43 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
             try await openWebSocket(token: token)
             self.isConnected = true
             self.receiveLoop()
-            self.flushPendingTextSoon()
+            self.startKeepAlive()
+            // Flush any text that was buffered while connecting
+            self.flushPendingTextImmediately()
+            // If finish() was called while we were connecting, finalize now
+            if self.pendingFinish {
+                self.pendingFinish = false
+                self.endRequested = true
+                self.flushPendingTextImmediately()
+                self.sendEvent(["type": "end"])
+            }
         } catch {
             self.lastError = "TTS connection failed: \(error.localizedDescription)"
             self.isConnected = false
         }
+    }
+
+    private func startKeepAlive() {
+        keepAliveTask?.cancel()
+        keepAliveTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(self?.keepAliveIntervalSeconds ?? 15.0) * 1_000_000_000)
+                guard !Task.isCancelled else { break }
+                guard let self, self.isConnected, let task = self.wsTask else { break }
+                task.sendPing { error in
+                    if error != nil {
+                        Task { @MainActor in
+                            self.isConnected = false
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopKeepAlive() {
+        keepAliveTask?.cancel()
+        keepAliveTask = nil
     }
 
     @MainActor
@@ -81,14 +118,18 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         }
     }
 
+    private var pendingFinish: Bool = false
+
     @MainActor
     func finish() {
-        guard isConnected else {
-            return
+        if isConnected {
+            endRequested = true
+            flushPendingTextImmediately()
+            sendEvent(["type": "end"])
+        } else {
+            // WebSocket still connecting — mark pending so start() sends end after flush
+            pendingFinish = true
         }
-        endRequested = true
-        flushPendingTextImmediately()
-        sendEvent(["type": "end"])
     }
 
     @MainActor
@@ -97,6 +138,8 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         flushWorkItem = nil
         pendingText = ""
         endRequested = true
+        pendingFinish = false
+        stopKeepAlive()
         sendEvent(["type": "cancel"])
         wsTask?.cancel(with: .goingAway, reason: nil)
         wsTask = nil
@@ -183,6 +226,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         }
         if let isFinal = dict["isFinal"] as? Bool, isFinal == true {
             endRequested = true
+            stopKeepAlive()
             wsTask?.cancel(with: .normalClosure, reason: nil)
             wsTask = nil
             isConnected = false
@@ -221,10 +265,22 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
 
     private func setupPlayerIfNeeded(engine: AVAudioEngine) {
         guard playerGraphConfigured == false else { return }
+        
+        // Force output node to initialize (ensures audio routes to speakers)
+        _ = engine.outputNode
+        
         if engine.attachedNodes.contains(playerNode) == false {
             engine.attach(playerNode)
         }
+        
+        // Connect player -> mixer -> output
+        let mixerFormat = engine.mainMixerNode.outputFormat(forBus: 0)
         engine.connect(playerNode, to: engine.mainMixerNode, format: playbackFormat)
+        engine.connect(engine.mainMixerNode, to: engine.outputNode, format: mixerFormat)
+        
+        // Set volume explicitly
+        engine.mainMixerNode.outputVolume = 1.0
+        
         let tapFormat = engine.mainMixerNode.outputFormat(forBus: 0)
         engine.mainMixerNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { [weak self] buffer, _ in
             guard let self else { return }
@@ -248,9 +304,27 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         playerGraphConfigured = true
     }
 
+    private func configureAudioSessionForPlayback() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            // Use playAndRecord so mic can still work for barge-in detection
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
+            try session.setActive(true, options: [])
+        } catch {
+            Task { @MainActor in
+                self.lastError = "Audio session error: \(error.localizedDescription)"
+            }
+        }
+    }
+
     private func ensureEngineRunning() {
         if audioEngine?.isRunning == true { return }
+        
+        configureAudioSessionForPlayback()
+        
+        // Reset graph config if we're creating a new engine
         if audioEngine == nil {
+            playerGraphConfigured = false
             audioEngine = AVAudioEngine()
         }
         guard let engine = audioEngine else { return }
@@ -259,6 +333,10 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
             engine.prepare()
             try engine.start()
         } catch {
+            // Try resetting and retrying once
+            playerGraphConfigured = false
+            audioEngine?.stop()
+            audioEngine = nil
             Task { @MainActor in
                 self.lastError = "Audio engine failed: \(error.localizedDescription)"
             }
@@ -312,6 +390,13 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
             self.playerNode.stop()
             self.queuedPlaybackBuffers = 0
             self.startedPlayback = false
+            // Stop and reset the engine for clean state on next playback
+            if let engine = self.audioEngine {
+                engine.mainMixerNode.removeTap(onBus: 0)
+                engine.stop()
+            }
+            self.audioEngine = nil
+            self.playerGraphConfigured = false
             Task { @MainActor in
                 self.isSpeaking = false
                 self.speakerLevel = 0

@@ -234,7 +234,7 @@ async def list_elevenlabs_voices(current_user: dict = Depends(get_current_user))
 class TTSRequest(BaseModel):
     text: str
     voice_id: str
-    model_id: str = "eleven_multilingual_v2"
+    model_id: str = "eleven_flash_v2_5"
     output_format: str = "mp3_44100_128"
     # Optional overrides:
     voice_settings: Optional[dict[str, Any]] = None
@@ -335,7 +335,9 @@ async def elevenlabs_tts_stream(websocket: WebSocket):
         await websocket.close(code=1008, reason="Missing voice_id")
         return
 
-    model_id = (websocket.query_params.get("model_id") or "eleven_multilingual_v2").strip() or "eleven_multilingual_v2"
+    # eleven_v3 doesn't support WebSocket stream-input (HTTP 403)
+    # eleven_flash_v2_5 is the best low-latency streaming model
+    model_id = (websocket.query_params.get("model_id") or "eleven_flash_v2_5").strip() or "eleven_flash_v2_5"
     output_format = (websocket.query_params.get("output_format") or "pcm_24000").strip() or "pcm_24000"
 
     await websocket.accept()
@@ -344,21 +346,22 @@ async def elevenlabs_tts_stream(websocket: WebSocket):
         f"{ELEVEN_WS_BASE}/v1/text-to-speech/{voice_id}/stream-input"
         f"?model_id={model_id}"
         f"&output_format={output_format}"
-        f"&auto_mode=true"
         f"&inactivity_timeout=180"
     )
 
-    # Conservative defaults; can be tuned later or made client-configurable.
     init_payload: dict[str, Any] = {
         "text": " ",
         "voice_settings": {
             "stability": 0.45,
             "similarity_boost": 0.85,
-            "style": 0.0,
-            "use_speaker_boost": True,
             "speed": 1.0,
         },
     }
+
+    import logging
+    logger = logging.getLogger("speech.tts")
+
+    logger.info(f"[TTS] Connecting to ElevenLabs: model={model_id} voice={voice_id} format={output_format}")
 
     try:
         async with _ws_connect_with_headers(
@@ -366,50 +369,73 @@ async def elevenlabs_tts_stream(websocket: WebSocket):
             headers={"xi-api-key": api_key},
             max_size=16 * 1024 * 1024,
         ) as eleven_ws:
+            logger.info("[TTS] ElevenLabs upstream connected, sending init payload")
             await eleven_ws.send(json.dumps(init_payload))
 
             async def client_to_eleven():
-                while True:
-                    raw = await websocket.receive_text()
-                    try:
-                        evt = json.loads(raw)
-                    except Exception:
-                        continue
-                    if not isinstance(evt, dict):
-                        continue
-                    t = evt.get("type")
-                    if t == "text":
-                        txt = evt.get("text")
-                        if not isinstance(txt, str) or not txt:
+                try:
+                    while True:
+                        raw = await websocket.receive_text()
+                        try:
+                            evt = json.loads(raw)
+                        except Exception:
                             continue
-                        await eleven_ws.send(json.dumps({"text": txt, "try_trigger_generation": True}))
-                    elif t == "end":
-                        await eleven_ws.send(json.dumps({"text": ""}))
-                    elif t == "cancel":
-                        break
+                        if not isinstance(evt, dict):
+                            continue
+                        t = evt.get("type")
+                        if t == "text":
+                            txt = evt.get("text")
+                            if not isinstance(txt, str) or not txt:
+                                continue
+                            await eleven_ws.send(json.dumps({"text": txt, "try_trigger_generation": True}))
+                        elif t == "end":
+                            await eleven_ws.send(json.dumps({"text": ""}))
+                            logger.info("[TTS] Client sent end — waiting for ElevenLabs to finish")
+                        elif t == "cancel":
+                            logger.info("[TTS] Client sent cancel")
+                            break
+                except WebSocketDisconnect:
+                    logger.info("[TTS] Client WebSocket closed (normal)")
 
             async def eleven_to_client():
+                chunk_count = 0
                 async for raw in eleven_ws:
                     if isinstance(raw, str):
+                        chunk_count += 1
+                        if chunk_count <= 2:
+                            # Log first couple of chunks to see what ElevenLabs returns
+                            logger.info(f"[TTS] ElevenLabs chunk #{chunk_count}: {raw[:200]}")
                         await websocket.send_text(raw)
                     elif isinstance(raw, (bytes, bytearray)):
                         try:
                             await websocket.send_text(bytes(raw).decode("utf-8"))
                         except Exception:
                             continue
+                logger.info(f"[TTS] ElevenLabs stream ended after {chunk_count} chunks")
 
             forward_task = asyncio.create_task(client_to_eleven())
             back_task = asyncio.create_task(eleven_to_client())
-            done, pending = await asyncio.wait({forward_task, back_task}, return_when=asyncio.FIRST_EXCEPTION)
+            done, pending = await asyncio.wait(
+                {forward_task, back_task}, return_when=asyncio.FIRST_COMPLETED
+            )
             for t in pending:
                 t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
+            # Check for real errors (not normal completions)
             for t in done:
                 exc = t.exception()
                 if exc:
+                    logger.error(f"[TTS] Task exception: {type(exc).__name__}: {exc}")
                     raise exc
+            logger.info("[TTS] Session completed normally")
     except WebSocketDisconnect:
+        logger.info("[TTS] Client disconnected")
         return
     except Exception as e:
+        logger.error(f"[TTS] Stream error: {type(e).__name__}: {e}")
         try:
             await websocket.close(code=1011, reason=f"TTS stream error: {str(e)[:120]}")
         except Exception:
