@@ -29,7 +29,6 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
     private var config: Config = .init()
     var transcriptAggregation: TranscriptAggregation = .accumulate
 
-    private var audioEngine: AVAudioEngine?
     private var inputConverter: AVAudioConverter?
 
     private let audioQueue = DispatchQueue(label: "talktome.deepgramSTT.audio")
@@ -102,9 +101,11 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
 
     @MainActor
     func disconnect() {
-        stopRecordingIfNeeded()
+        SharedAudioEngine.shared.removeInputTap()
         stopKeepAlive()
         isConnected = false
+        isRecording = false
+        isPaused = false
         clearBufferedAudio()
         wsTask?.cancel(with: .goingAway, reason: nil)
         wsTask = nil
@@ -156,26 +157,21 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             }
         }()
         guard hasMicPermission else { return }
-
-        audioQueue.async { [weak self] in
-            guard let self else { return }
-            guard self.didPrewarmAudio == false else { return }
-            _ = self.configureAudioSessionForVoiceLocked(reportErrors: false)
-            self.didPrewarmAudio = true
-        }
+        guard !didPrewarmAudio else { return }
+        SharedAudioEngine.shared.ensureRunning()
+        didPrewarmAudio = true
     }
 
     @MainActor
     func stopRecording() {
         isRecording = false
         isPaused = false
-        stopRecordingIfNeeded()
+        SharedAudioEngine.shared.removeInputTap()
         flushBufferedAudioIfPossible()
         sendJSONEvent(["type": "finalize"])
         clearBufferedAudio()
     }
 
-    /// Pause audio capture without disconnecting. Used to prevent echo during TTS playback.
     @MainActor
     func pauseCapture() {
         guard isRecording, !isPaused else { return }
@@ -184,12 +180,13 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         spawnLevel = 0
     }
 
-    /// Resume audio capture after pause.
     @MainActor
     func resumeCapture() {
         guard isRecording, isPaused else { return }
         isPaused = false
     }
+
+    // MARK: - WebSocket
 
     @MainActor
     private func openWebSocket(token: String) async throws {
@@ -237,6 +234,8 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             }
         }
     }
+
+    // MARK: - Transcript handling
 
     @MainActor
     private func handle(message: URLSessionWebSocketTask.Message) {
@@ -330,6 +329,49 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         }
     }
 
+    // MARK: - Audio capture (SharedAudioEngine)
+
+    @MainActor
+    private func startRecordingAfterPermission() {
+        isRecording = true
+        userTranscript = ""
+        isUserSpeaking = false
+        lastFinalUtterance = nil
+        committedParts = []
+        currentInterim = ""
+        currentUtteranceFinalParts = []
+
+        let sampleRate = config.sampleRateHz
+        audioQueue.async { [weak self] in
+            guard let self, self.isRecording else { return }
+            self.installMicTap(sampleRateHz: sampleRate)
+        }
+    }
+
+    private func installMicTap(sampleRateHz: Int) {
+        SharedAudioEngine.shared.ensureRunning()
+
+        guard let inputFmt = SharedAudioEngine.shared.inputFormat else { return }
+
+        let target = AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: Double(sampleRateHz),
+            channels: 1,
+            interleaved: false
+        )!
+        inputConverter = AVAudioConverter(from: inputFmt, to: target)
+        guard inputConverter != nil else { return }
+
+        SharedAudioEngine.shared.installInputTap { [weak self] buffer, _ in
+            guard let self else { return }
+            self.updateSpawnLevel(from: buffer)
+            guard !self.isPaused else { return }
+            self.convertAndSend(buffer: buffer, targetFormat: target)
+        }
+    }
+
+    // MARK: - Audio sending
+
     private func sendAudio(_ data: Data) {
         wsSendQueue.async { [weak self] in
             guard let self else { return }
@@ -395,149 +437,7 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         }
     }
 
-    @MainActor
-    private func requestMicrophonePermissionIfNeeded() async -> Bool {
-        if #available(iOS 17.0, *) {
-            let perm = AVAudioApplication.shared.recordPermission
-            if perm == .granted { return true }
-            if perm == .denied { return false }
-            return await withCheckedContinuation { cont in
-                AVAudioApplication.requestRecordPermission { granted in
-                    cont.resume(returning: granted)
-                }
-            }
-        } else {
-            let session = AVAudioSession.sharedInstance()
-            let perm = session.recordPermission
-            if perm == .granted { return true }
-            if perm == .denied { return false }
-            return await withCheckedContinuation { cont in
-                session.requestRecordPermission { granted in
-                    cont.resume(returning: granted)
-                }
-            }
-        }
-    }
-
-    @discardableResult
-    private func configureAudioSessionForVoiceLocked(reportErrors: Bool = true) -> Bool {
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
-            try session.setActive(true, options: [])
-            let hwSampleRate = session.sampleRate
-            if hwSampleRate > 0 {
-                try session.setPreferredSampleRate(hwSampleRate)
-            }
-        } catch {
-            if reportErrors {
-                Task { @MainActor in
-                    self.lastError = "Audio session error: \(error.localizedDescription)"
-                }
-            }
-            return false
-        }
-        if session.isInputAvailable == false {
-            if reportErrors {
-                Task { @MainActor in
-                    self.lastError = "No microphone input available."
-                }
-            }
-            return false
-        }
-        return true
-    }
-
-    private func ensureEngineRunning(reportErrors: Bool = true) -> Bool {
-        let session = AVAudioSession.sharedInstance()
-        guard session.isInputAvailable else {
-            if reportErrors {
-                Task { @MainActor in
-                    self.lastError = "No microphone input available."
-                }
-            }
-            return false
-        }
-
-        if let existing = audioEngine, existing.isRunning {
-            return true
-        }
-
-        audioEngine?.stop()
-        audioEngine = nil
-        let engine = AVAudioEngine()
-        audioEngine = engine
-
-        _ = engine.inputNode
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            if reportErrors {
-                Task { @MainActor in
-                    self.lastError = "Audio engine start failed: \(error.localizedDescription)"
-                }
-            }
-            return false
-        }
-        return engine.isRunning
-    }
-
-    @MainActor
-    private func startRecordingAfterPermission() {
-        isRecording = true
-        userTranscript = ""
-        isUserSpeaking = false
-        lastFinalUtterance = nil
-        committedParts = []
-        currentInterim = ""
-        currentUtteranceFinalParts = []
-
-        audioQueue.async { [weak self] in
-            guard let self else { return }
-            guard self.isRecording else { return }
-            guard self.configureAudioSessionForVoiceLocked() else {
-                Task { @MainActor in self.isRecording = false }
-                return
-            }
-            guard self.isRecording else { return }
-            let ok = self.installMicTapIfNeeded()
-            guard ok else {
-                Task { @MainActor in self.isRecording = false }
-                return
-            }
-        }
-    }
-
-    @discardableResult
-    private func installMicTapIfNeeded() -> Bool {
-        guard isRecording else { return true }
-        guard ensureEngineRunning() else { return false }
-        guard let engine = audioEngine else { return false }
-
-        let input = engine.inputNode
-        let inputFormat = input.outputFormat(forBus: 0)
-
-        let target = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: Double(config.sampleRateHz),
-            channels: 1,
-            interleaved: false
-        )!
-        inputConverter = AVAudioConverter(from: inputFormat, to: target)
-        if inputConverter == nil { return false }
-
-        input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            // Always update level for barge-in detection, even when paused
-            self.updateSpawnLevel(from: buffer)
-            // Skip sending audio to STT when paused (echo suppression during TTS)
-            guard !self.isPaused else { return }
-            self.convertAndSend(buffer: buffer, targetFormat: target)
-        }
-        return true
-    }
+    // MARK: - Helpers
 
     private func convertAndSend(buffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat) {
         guard isRecording else { return }
@@ -581,11 +481,26 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func stopRecordingIfNeeded() {
-        audioQueue.async { [weak self] in
-            guard let self else { return }
-            if let engine = self.audioEngine, engine.isRunning {
-                engine.inputNode.removeTap(onBus: 0)
+    @MainActor
+    private func requestMicrophonePermissionIfNeeded() async -> Bool {
+        if #available(iOS 17.0, *) {
+            let perm = AVAudioApplication.shared.recordPermission
+            if perm == .granted { return true }
+            if perm == .denied { return false }
+            return await withCheckedContinuation { cont in
+                AVAudioApplication.requestRecordPermission { granted in
+                    cont.resume(returning: granted)
+                }
+            }
+        } else {
+            let session = AVAudioSession.sharedInstance()
+            let perm = session.recordPermission
+            if perm == .granted { return true }
+            if perm == .denied { return false }
+            return await withCheckedContinuation { cont in
+                session.requestRecordPermission { granted in
+                    cont.resume(returning: granted)
+                }
             }
         }
     }
@@ -612,4 +527,3 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         return comps.url
     }
 }
-

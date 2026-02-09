@@ -373,6 +373,7 @@ async def elevenlabs_tts_stream(websocket: WebSocket):
             await eleven_ws.send(json.dumps(init_payload))
 
             async def client_to_eleven():
+                """Returns reason: 'end', 'cancel', or 'disconnect'."""
                 try:
                     while True:
                         raw = await websocket.receive_text()
@@ -390,27 +391,34 @@ async def elevenlabs_tts_stream(websocket: WebSocket):
                             await eleven_ws.send(json.dumps({"text": txt, "try_trigger_generation": True}))
                         elif t == "end":
                             await eleven_ws.send(json.dumps({"text": ""}))
-                            logger.info("[TTS] Client sent end — waiting for ElevenLabs to finish")
+                            logger.info("[TTS] Client sent end — flushed to ElevenLabs")
+                            return "end"
                         elif t == "cancel":
                             logger.info("[TTS] Client sent cancel")
-                            break
+                            return "cancel"
                 except WebSocketDisconnect:
                     logger.info("[TTS] Client WebSocket closed (normal)")
+                    return "disconnect"
 
             async def eleven_to_client():
                 chunk_count = 0
-                async for raw in eleven_ws:
-                    if isinstance(raw, str):
-                        chunk_count += 1
-                        if chunk_count <= 2:
-                            # Log first couple of chunks to see what ElevenLabs returns
-                            logger.info(f"[TTS] ElevenLabs chunk #{chunk_count}: {raw[:200]}")
-                        await websocket.send_text(raw)
-                    elif isinstance(raw, (bytes, bytearray)):
-                        try:
-                            await websocket.send_text(bytes(raw).decode("utf-8"))
-                        except Exception:
-                            continue
+                try:
+                    async for raw in eleven_ws:
+                        if isinstance(raw, str):
+                            chunk_count += 1
+                            if chunk_count <= 2:
+                                # Log first couple of chunks to see what ElevenLabs returns
+                                logger.info(f"[TTS] ElevenLabs chunk #{chunk_count}: {raw[:200]}")
+                            await websocket.send_text(raw)
+                        elif isinstance(raw, (bytes, bytearray)):
+                            try:
+                                await websocket.send_text(bytes(raw).decode("utf-8"))
+                            except Exception:
+                                continue
+                except WebSocketDisconnect:
+                    # Client closed its WebSocket after receiving isFinal — normal
+                    logger.info(f"[TTS] Client disconnected during audio forwarding (after {chunk_count} chunks)")
+                    return
                 logger.info(f"[TTS] ElevenLabs stream ended after {chunk_count} chunks")
 
             forward_task = asyncio.create_task(client_to_eleven())
@@ -418,18 +426,49 @@ async def elevenlabs_tts_stream(websocket: WebSocket):
             done, pending = await asyncio.wait(
                 {forward_task, back_task}, return_when=asyncio.FIRST_COMPLETED
             )
-            for t in pending:
-                t.cancel()
+
+            if back_task in done:
+                # ElevenLabs finished first (normal) — cancel client listener
+                forward_task.cancel()
                 try:
-                    await t
+                    await forward_task
                 except (asyncio.CancelledError, Exception):
                     pass
-            # Check for real errors (not normal completions)
-            for t in done:
-                exc = t.exception()
+                exc = back_task.exception()
                 if exc:
-                    logger.error(f"[TTS] Task exception: {type(exc).__name__}: {exc}")
+                    logger.error(f"[TTS] ElevenLabs task error: {type(exc).__name__}: {exc}")
                     raise exc
+            else:
+                # Client direction finished first
+                exc = forward_task.exception()
+                if exc:
+                    back_task.cancel()
+                    try:
+                        await back_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                    raise exc
+                reason = forward_task.result()
+                if reason == "end":
+                    # Client sent end — wait for ElevenLabs to finish sending audio
+                    try:
+                        await asyncio.wait_for(back_task, timeout=30.0)
+                    except asyncio.TimeoutError:
+                        logger.warning("[TTS] Timed out waiting for ElevenLabs after end signal")
+                        back_task.cancel()
+                        try:
+                            await back_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                    except Exception as e:
+                        logger.error(f"[TTS] Error in ElevenLabs stream after end: {type(e).__name__}: {e}")
+                else:
+                    # Cancel or disconnect — stop immediately
+                    back_task.cancel()
+                    try:
+                        await back_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
             logger.info("[TTS] Session completed normally")
     except WebSocketDisconnect:
         logger.info("[TTS] Client disconnected")

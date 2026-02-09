@@ -15,6 +15,7 @@ protocol ChatVoiceModeDelegate: AnyObject {
 
 enum SpeakModePhase: Equatable {
     case idle
+    case connecting
     case listening
     case processing
     case answering
@@ -48,11 +49,6 @@ final class ChatVoiceModeController: ObservableObject {
     private var pendingSpeakAutoSendTask: Task<Void, Never>?
     private var isSpeakComposerLocked: Bool = false
     private var speakModeVoiceName: String?
-
-    /// Timestamp when TTS stopped speaking, used for echo cooldown
-    private var ttsStoppedSpeakingAt: Date?
-    /// Cooldown period after TTS stops to ignore potential echo (in seconds)
-    private let echoCooldownSeconds: TimeInterval = 1.0
 
     init() {}
 
@@ -106,10 +102,9 @@ final class ChatVoiceModeController: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // In speak mode, don't show live transcript in the message bar.
-        // The final utterance handler below auto-sends on pause instead.
-
-
+        // Speak mode: lastFinalUtterance triggers sending a message.
+        // STT stays active during TTS playback (SharedAudioEngine AEC removes echo),
+        // so transcripts during TTS = real user speech = barge-in interrupt.
         speakSTTService.$lastFinalUtterance
             .compactMap { $0 }
             .receive(on: DispatchQueue.main)
@@ -119,10 +114,15 @@ final class ChatVoiceModeController: ObservableObject {
                 let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return }
 
-                // STT is paused during TTS, so any transcription here is genuine user speech
+                // During TTS playback, require a longer utterance to confirm
+                // it's real speech (safety net in case AEC leaks a short fragment).
+                if self.elevenLabsStreamingTTS.isSpeaking {
+                    guard trimmed.count >= 8 else { return }
+                }
+
                 isSpeakComposerLocked = true
 
-                // If the assistant is currently answering, stop it so the new user message can send.
+                // If the assistant is currently answering, stop it (barge-in).
                 if isStreamingCheck() || elevenLabsStreamingTTS.isSpeaking || (delegate?.isLoading == true) {
                     streamingController?.stopGeneration()
                     elevenLabsStreamingTTS.cancel()
@@ -130,7 +130,6 @@ final class ChatVoiceModeController: ObservableObject {
 
                 updatePhase(.processing)
 
-                // Send directly without writing to the message bar
                 pendingSpeakAutoSendTask?.cancel()
                 pendingSpeakAutoSendTask = Task { @MainActor [weak self] in
                     guard let self else { return }
@@ -142,39 +141,20 @@ final class ChatVoiceModeController: ObservableObject {
             }
             .store(in: &cancellables)
 
-
         speakSTTService.$isUserSpeaking
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] speaking in
                 guard let self else { return }
                 guard self.isSpeakModeActive else { return }
-                // isUserSpeaking only fires when STT is not paused, so this is genuine user speech
                 if speaking {
-                    self.updatePhase(.listening)
-                }
-            }
-            .store(in: &cancellables)
-
-        // Barge-in detection: monitor mic level to detect user speaking during TTS playback
-        speakSTTService.$spawnLevel
-            .throttle(for: .milliseconds(100), scheduler: DispatchQueue.main, latest: true)
-            .sink { [weak self] micLevel in
-                guard let self else { return }
-                guard self.isSpeakModeActive else { return }
-                guard self.elevenLabsStreamingTTS.isSpeaking else { return }
-
-                // Detect barge-in: user speaking loud enough to interrupt
-                let speakerLevel = self.elevenLabsStreamingTTS.speakerLevel
-                // User voice must be significantly above the speaker echo level
-                let bargeInThreshold: CGFloat = max(0.45, speakerLevel + 0.20)
-                if micLevel > bargeInThreshold {
-                    // User is speaking over the AI - barge in
-                    self.streamingController?.stopGeneration()
-                    self.elevenLabsStreamingTTS.cancel()
-                    // Immediately resume STT capture (unless user has manually muted)
-                    if !self.isSpeakMicMuted {
-                        self.speakSTTService.resumeCapture()
+                    // If TTS is playing and user starts speaking, cancel TTS immediately.
+                    // Don't wait for the final transcript — stop the audio now so the
+                    // user hears silence while they talk. The message will be sent later
+                    // when lastFinalUtterance fires.
+                    if self.elevenLabsStreamingTTS.isSpeaking || self.isStreamingCheck() {
+                        self.streamingController?.stopGeneration()
+                        self.elevenLabsStreamingTTS.cancel()
                     }
                     self.updatePhase(.listening)
                 }
@@ -189,27 +169,14 @@ final class ChatVoiceModeController: ObservableObject {
                 guard self.isSpeakModeActive else { return }
 
                 if speaking {
-                    // Clear the cooldown timestamp when TTS starts speaking
-                    self.ttsStoppedSpeakingAt = nil
-                    // Pause STT capture to prevent echo from being transcribed
-                    self.speakSTTService.pauseCapture()
+                    // STT stays active — SharedAudioEngine voice processing
+                    // handles echo cancellation at the hardware level.
                     self.updatePhase(.answering)
                 } else {
-                    // Track when TTS stopped to filter out echo during cooldown
-                    self.ttsStoppedSpeakingAt = Date()
-
                     if self.speakModePhase == .answering {
-                        // Only transition to listening if the server isn't still streaming tokens.
                         if !self.isStreamingCheck() {
                             self.updatePhase(.listening)
                         }
-                    }
-                    // Resume STT capture after a short delay for remaining echo to dissipate
-                    // (skip if user has manually muted)
-                    Task { @MainActor [weak self] in
-                        try? await Task.sleep(nanoseconds: UInt64(self?.echoCooldownSeconds ?? 1.0) * 1_000_000_000)
-                        guard let self, self.isSpeakModeActive, !self.isSpeakMicMuted else { return }
-                        self.speakSTTService.resumeCapture()
                     }
                 }
             }
@@ -249,7 +216,6 @@ final class ChatVoiceModeController: ObservableObject {
         }
     }
 
-
     func preconnectDictationSTTIfNeeded() async {
         guard NetworkMonitor.shared.isOnline else { return }
         await MainActor.run {
@@ -265,7 +231,6 @@ final class ChatVoiceModeController: ObservableObject {
             stopSpeakMode()
         }
 
-        // Preserve any existing text so new transcription appends to it
         textBeforeRecording = (delegate?.inputText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
         isVoiceModeCapturing = true
@@ -307,7 +272,6 @@ final class ChatVoiceModeController: ObservableObject {
         textBeforeRecording = ""
     }
 
-
     func startSpeakMode() {
         let storedVoiceId = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -332,7 +296,7 @@ final class ChatVoiceModeController: ObservableObject {
         isSpeakComposerLocked = false
         pendingSpeakAutoSendTask?.cancel()
         pendingSpeakAutoSendTask = nil
-        updatePhase(.listening)
+        updatePhase(.connecting)
         delegate?.inputText = ""
 
         Task { @MainActor [weak self] in
@@ -351,13 +315,21 @@ final class ChatVoiceModeController: ObservableObject {
 
             self.speakSTTService.transcriptAggregation = .perUtterance
 
-            if self.speakSTTService.isConnected == false {
-                await self.speakSTTService.connect(
-                    config: .init(language: "en-US", model: "nova-3", endpointingMs: 800, sampleRateHz: 24_000)
-                )
-            }
+            // Connect STT and preconnect TTS in parallel
+            async let sttConnect: Void = {
+                if self.speakSTTService.isConnected == false {
+                    await self.speakSTTService.connect(
+                        config: .init(language: "en-US", model: "nova-3", endpointingMs: 400, sampleRateHz: 24_000)
+                    )
+                }
+            }()
+            async let ttsPreconnect: Void = self.elevenLabsStreamingTTS.preconnect(voiceId: storedVoiceId)
 
+            _ = await (sttConnect, ttsPreconnect)
+
+            guard self.isSpeakModeActive else { return }
             self.speakSTTService.startRecording()
+            self.updatePhase(.listening)
         }
     }
 
@@ -377,7 +349,6 @@ final class ChatVoiceModeController: ObservableObject {
         isSpeakComposerLocked = false
         pendingSpeakAutoSendTask?.cancel()
         pendingSpeakAutoSendTask = nil
-        ttsStoppedSpeakingAt = nil
         updatePhase(.idle)
 
         streamingController?.activeVoiceAgentName = nil
@@ -388,6 +359,9 @@ final class ChatVoiceModeController: ObservableObject {
 
         speakSTTService.stopRecording()
         speakSTTService.disconnect()
+
+        // Tear down the shared audio engine
+        SharedAudioEngine.shared.stop()
     }
 
     func sendComposerMessage() {

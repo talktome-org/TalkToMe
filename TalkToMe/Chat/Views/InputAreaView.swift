@@ -88,7 +88,7 @@ struct InputAreaView: View {
     }
 
     private var barColor: Color {
-        .primary
+        speakModePhase == .connecting ? .secondary : .primary
     }
 
     private var activeLevel: CGFloat {
@@ -372,14 +372,13 @@ struct InputAreaView: View {
                 if isSpeakModeActive && trimmedInput.isEmpty {
                     Button(action: {
                         Haptics.impact(.medium)
-                        // See note in `ghostButton` — avoid explicit animation transactions here.
                         onSpeakToggle()
                     }) {
                         AnimatedBarsView(
                             level: activeLevel,
                             color: barColor,
                             isAnimating: speakModePhase == .listening || speakModePhase == .answering,
-                            isPulsing: speakModePhase == .processing
+                            isPulsing: speakModePhase == .processing || speakModePhase == .connecting
                         )
                         .frame(height: 28)
                         .padding(.horizontal, 12)
