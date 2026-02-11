@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
+# Keep repository operations signed (commits/merges/tags) for auditability.
 echo "🔧 Conductor setup (secrets + resources + python venv)"
 
 # -------------------------
