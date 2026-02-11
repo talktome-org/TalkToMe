@@ -40,17 +40,16 @@ if [ ! -e TalkToMe/Resources ]; then
 fi
 
 # -------------------------
-# Python venv setup
+# Python venv setup (ROOT)
 # -------------------------
-if [ ! -d Backend/venv ]; then
-  echo "🐍 Creating Python virtual environment"
-  python3 -m venv Backend/venv
+if [ ! -d venv ]; then
+  echo "🐍 Creating Python virtual environment (root)"
+  python3 -m venv venv
 fi
 
 echo "📦 Installing Python dependencies"
-source Backend/venv/bin/activate
+source venv/bin/activate
 pip install --upgrade pip
 pip install -r Backend/requirements.txt
-
 
 echo "✅ Workspace fully ready"
