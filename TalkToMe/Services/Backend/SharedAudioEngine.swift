@@ -15,6 +15,7 @@ final class SharedAudioEngine: @unchecked Sendable {
     private let audioQueue = DispatchQueue(label: "talktome.sharedAudioEngine")
     private var isConfigured = false
     private var hasSpeakerLevelTap = false
+    private var hasInputTap = false
 
     private init() {}
 
@@ -48,6 +49,7 @@ final class SharedAudioEngine: @unchecked Sendable {
             engine = eng
             isConfigured = false
             hasSpeakerLevelTap = false
+            hasInputTap = false
         }
 
         if !isConfigured {
@@ -101,6 +103,7 @@ final class SharedAudioEngine: @unchecked Sendable {
             let format = input.outputFormat(forBus: 0)
             input.removeTap(onBus: 0)
             input.installTap(onBus: 0, bufferSize: bufferSize, format: format, block: block)
+            hasInputTap = true
         }
     }
 
@@ -108,6 +111,10 @@ final class SharedAudioEngine: @unchecked Sendable {
     func removeInputTap() {
         audioQueue.sync {
             engine?.inputNode.removeTap(onBus: 0)
+            hasInputTap = false
+        }
+        audioQueue.async {
+            self.deactivateAudioSessionIfIdleOnQueue()
         }
     }
 
@@ -139,12 +146,18 @@ final class SharedAudioEngine: @unchecked Sendable {
             engine?.mainMixerNode.removeTap(onBus: 0)
             hasSpeakerLevelTap = false
         }
+        audioQueue.async {
+            self.deactivateAudioSessionIfIdleOnQueue()
+        }
     }
 
     /// Stop the player node without stopping the engine.
     func stopPlayerNode() {
         audioQueue.sync {
             playerNode.stop()
+        }
+        audioQueue.async {
+            self.deactivateAudioSessionIfIdleOnQueue()
         }
     }
 
@@ -156,10 +169,12 @@ final class SharedAudioEngine: @unchecked Sendable {
                 hasSpeakerLevelTap = false
             }
             engine?.inputNode.removeTap(onBus: 0)
+            hasInputTap = false
             playerNode.stop()
             engine?.stop()
             engine = nil
             isConfigured = false
+            deactivateAudioSessionIfIdleOnQueue()
         }
     }
 
@@ -167,6 +182,18 @@ final class SharedAudioEngine: @unchecked Sendable {
     var inputFormat: AVAudioFormat? {
         audioQueue.sync {
             engine?.inputNode.outputFormat(forBus: 0)
+        }
+    }
+
+    private func deactivateAudioSessionIfIdleOnQueue() {
+        guard !hasInputTap else { return }
+        guard !hasSpeakerLevelTap else { return }
+        guard !playerNode.isPlaying else { return }
+
+        do {
+            try AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        } catch {
+            print("[SharedAudioEngine] Audio session deactivate error: \(error.localizedDescription)")
         }
     }
 }
