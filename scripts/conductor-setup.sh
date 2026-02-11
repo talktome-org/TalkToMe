@@ -22,7 +22,7 @@ if [ ! -d ~/.config/talktome/Resources ]; then
 fi
 
 # -------------------------
-# Link secrets + resources
+# Link secrets (symlink OK)
 # -------------------------
 if [ ! -e Backend/.env ]; then
   ln -s ~/.config/talktome/backend.env Backend/.env
@@ -34,9 +34,17 @@ if [ ! -e TalkToMe/Secrets.plist ]; then
   echo "✔ Linked TalkToMe/Secrets.plist"
 fi
 
-if [ ! -e TalkToMe/Resources ]; then
-  ln -s ~/.config/talktome/Resources TalkToMe/Resources
-  echo "✔ Linked TalkToMe/Resources"
+# -------------------------
+# Copy Resources (NO SYMLINKS)
+# -------------------------
+if [ -L TalkToMe/Resources ]; then
+  echo "⚠️ Removing old symlinked Resources"
+  rm TalkToMe/Resources
+fi
+
+if [ ! -d TalkToMe/Resources ]; then
+  echo "📂 Copying Resources into workspace"
+  cp -R ~/.config/talktome/Resources TalkToMe/
 fi
 
 # -------------------------
