@@ -18,6 +18,7 @@ class ChatAttachment(BaseModel):
     content_type: Optional[str] = None
 
 
+# Input payload accepted by the chat endpoint.
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[UUID] = None
