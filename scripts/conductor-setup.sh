@@ -50,6 +50,7 @@ fi
 # -------------------------
 # Python venv setup (ROOT)
 # -------------------------
+# Keep setup idempotent so reruns are safe in fresh or partially prepared workspaces.
 if [ ! -d venv ]; then
   echo "🐍 Creating Python virtual environment (root)"
   python3 -m venv venv
