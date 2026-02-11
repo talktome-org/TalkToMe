@@ -11,6 +11,7 @@ from .subapps.user_profile_router import router as profile_router
 
 app = FastAPI()
 
+# Keep router wiring centralized so the exposed API surface is easy to audit.
 app.include_router(aasa_router)
 app.include_router(files_router)
 app.include_router(friends_router)
