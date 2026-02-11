@@ -12,6 +12,7 @@ from .subapps.user_profile_router import router as profile_router
 app = FastAPI()
 # Main FastAPI application instance.
 
+# Register feature routers on the app.
 # Keep router wiring centralized so the exposed API surface is easy to audit.
 # Router include order does not affect route matching for these static prefixes.
 app.include_router(aasa_router)
