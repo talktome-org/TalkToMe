@@ -75,9 +75,9 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         raise HTTPException(status_code=500, detail=f"Auth not configured: {str(e)}")
 
     try:
+        # Delegate JWT validation to the shared auth helper.
         return auth.verify_jwt(credentials.credentials)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Invalid or expired token: {str(e)}")
-
