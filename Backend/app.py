@@ -22,5 +22,6 @@ app.include_router(friends_router)
 app.include_router(partner_router)
 app.include_router(profile_router)
 app.include_router(notifications_router)
+# Chat endpoints live under the chat router.
 app.include_router(chat_router)
 app.include_router(speech_router)
