@@ -55,7 +55,9 @@ struct ChatView: View {
                 isInputFocused: $isInputFocused
             )
             .task {
-                await viewModel.voiceController.preconnectDictationSTTIfNeeded()
+                async let dictationWarmup: Void = viewModel.voiceController.preconnectDictationSTTIfNeeded()
+                async let speakWarmup: Void = viewModel.voiceController.preconnectSpeakServicesIfNeeded()
+                _ = await (dictationWarmup, speakWarmup)
             }
             .toolbar {
                 if let onBack {

@@ -93,9 +93,12 @@ struct InputAreaView: View {
 
     private var activeLevel: CGFloat {
         switch speakModePhase {
-        case .listening: return micLevel
-        case .answering: return speakerLevel
-        default: return 0
+        case .idle: return 0
+        case .connecting, .listening, .processing:
+            return micLevel
+        case .answering:
+            // Keep mic activity visible during assistant playback for barge-in confidence.
+            return max(speakerLevel, micLevel * 0.85)
         }
     }
 
@@ -350,7 +353,7 @@ struct InputAreaView: View {
                 messageCapsule
 
                 // Mute mic button — separate glass circle, speak mode only (hide when typing)
-                if isSpeakModeActive && trimmedInput.isEmpty {
+                if isSpeakModeActive {
                     Button(action: {
                         Haptics.impact(.light)
                         withAnimation(.smooth(duration: 0.3)) {
@@ -369,7 +372,7 @@ struct InputAreaView: View {
                 }
 
                 // Waveform capsule (speak mode only, hide when typing)
-                if isSpeakModeActive && trimmedInput.isEmpty {
+                if isSpeakModeActive {
                     Button(action: {
                         Haptics.impact(.medium)
                         onSpeakToggle()
@@ -395,8 +398,8 @@ struct InputAreaView: View {
                 // Ghost — always mounted so the video never restarts
                 ghostButton
                     .offset(y: 4)
-                    .opacity((!shouldHideGhost || (isSpeakModeActive && trimmedInput.isEmpty)) ? 1 : 0)
-                    .frame(width: (!shouldHideGhost || (isSpeakModeActive && trimmedInput.isEmpty)) ? nil : 0)
+                    .opacity((!shouldHideGhost || isSpeakModeActive) ? 1 : 0)
+                    .frame(width: (!shouldHideGhost || isSpeakModeActive) ? nil : 0)
             }
             .padding(.vertical, 6)
             .padding(.horizontal, isInputFocused.wrappedValue ? 16 : 32)
@@ -522,4 +525,3 @@ struct InputAreaView: View {
         onVoiceModeStop: {}
     )
 }
-

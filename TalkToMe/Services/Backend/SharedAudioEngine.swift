@@ -16,6 +16,7 @@ final class SharedAudioEngine: @unchecked Sendable {
     private var isConfigured = false
     private var hasSpeakerLevelTap = false
     private var hasInputTap = false
+    private var isVoiceSessionActive = false
 
     private init() {}
 
@@ -27,19 +28,30 @@ final class SharedAudioEngine: @unchecked Sendable {
         }
     }
 
+    /// Return the app audio session to a non-blocking idle state.
+    /// Safe to call from any thread.
+    func ensureIdleAudioSession() {
+        audioQueue.sync {
+            self.configureIdleAudioSessionOnQueue()
+        }
+    }
+
     /// Must be called on audioQueue.
     private func ensureRunningOnQueue() {
-        if let e = engine, e.isRunning { return }
-
-        // Configure audio session
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
-            try session.setActive(true, options: [])
-        } catch {
-            print("[SharedAudioEngine] Audio session error: \(error.localizedDescription)")
-            return
+        // Re-acquire voice session only when needed.
+        if !isVoiceSessionActive {
+            let session = AVAudioSession.sharedInstance()
+            do {
+                try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
+                try session.setActive(true, options: [])
+                isVoiceSessionActive = true
+            } catch {
+                print("[SharedAudioEngine] Audio session error: \(error.localizedDescription)")
+                return
+            }
         }
+
+        if let e = engine, e.isRunning { return }
 
         let eng: AVAudioEngine
         if let existing = engine {
@@ -172,8 +184,6 @@ final class SharedAudioEngine: @unchecked Sendable {
             hasInputTap = false
             playerNode.stop()
             engine?.stop()
-            engine = nil
-            isConfigured = false
             deactivateAudioSessionIfIdleOnQueue()
         }
     }
@@ -190,10 +200,34 @@ final class SharedAudioEngine: @unchecked Sendable {
         guard !hasSpeakerLevelTap else { return }
         guard !playerNode.isPlaying else { return }
 
+        // Deactivate first so iOS can notify interrupted media apps to resume.
+        deactivateVoiceSessionOnQueue()
+
+        // Stop the running engine so hardware is released, but keep the graph warm
+        // to avoid slow mic startup on the next voice interaction.
+        playerNode.stop()
+        engine?.stop()
+    }
+
+    private func deactivateVoiceSessionOnQueue() {
+        let session = AVAudioSession.sharedInstance()
         do {
-            try AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+            try session.setActive(false, options: [.notifyOthersOnDeactivation])
         } catch {
             print("[SharedAudioEngine] Audio session deactivate error: \(error.localizedDescription)")
         }
+        do {
+            try session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+        } catch {
+            print("[SharedAudioEngine] Audio session idle category error: \(error.localizedDescription)")
+        }
+        isVoiceSessionActive = false
+    }
+
+    private func configureIdleAudioSessionOnQueue() {
+        guard !hasInputTap else { return }
+        guard !hasSpeakerLevelTap else { return }
+        guard !playerNode.isPlaying else { return }
+        deactivateVoiceSessionOnQueue()
     }
 }
