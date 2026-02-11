@@ -53,10 +53,13 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         self.lastError = nil
         self.isUserSpeaking = false
         self.lastFinalUtterance = nil
-        self.userTranscript = ""
-        self.committedParts = []
-        self.currentInterim = ""
-        self.currentUtteranceFinalParts = []
+        // Don't wipe active transcript state when reconnecting mid-capture.
+        if !self.isRecording {
+            self.userTranscript = ""
+            self.committedParts = []
+            self.currentInterim = ""
+            self.currentUtteranceFinalParts = []
+        }
 
         guard let token = await AuthService.shared.getAccessToken() else {
             self.lastError = "Not authenticated."
@@ -291,8 +294,11 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             currentInterim = ""
             updatePresentedTranscript()
         } else {
-            currentInterim = trimmed
-            updatePresentedTranscript()
+            // Ignore transient empty interim packets to prevent transcript flicker.
+            if !trimmed.isEmpty {
+                currentInterim = trimmed
+                updatePresentedTranscript()
+            }
             isUserSpeaking = !trimmed.isEmpty
         }
 
@@ -307,7 +313,7 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             if transcriptAggregation == .perUtterance {
                 committedParts = []
                 currentInterim = ""
-                updatePresentedTranscript()
+                // Keep the last utterance visible until new speech arrives.
             }
         }
     }

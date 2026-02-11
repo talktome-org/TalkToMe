@@ -10,8 +10,10 @@ from .subapps.partner_router import router as partner_router
 from .subapps.user_profile_router import router as profile_router
 
 app = FastAPI()
+# Main FastAPI application instance.
 
 # Keep router wiring centralized so the exposed API surface is easy to audit.
+# Router include order does not affect route matching for these static prefixes.
 app.include_router(aasa_router)
 app.include_router(files_router)
 app.include_router(friends_router)
