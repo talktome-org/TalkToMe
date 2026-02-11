@@ -50,6 +50,7 @@ fi
 echo "📦 Installing Python dependencies"
 source Backend/venv/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r Backend/requirements.txt
+
 
 echo "✅ Workspace fully ready"
