@@ -223,6 +223,22 @@ final class ChatVoiceModeController: ObservableObject {
         await dictationSTTService.connect()
     }
 
+    func preconnectSpeakServicesIfNeeded() async {
+        guard NetworkMonitor.shared.isOnline else { return }
+        guard await delegate?.getAccessToken() != nil else { return }
+
+        if speakSTTService.isConnected == false {
+            await speakSTTService.connect(
+                config: .init(language: "en-US", model: "nova-3", endpointingMs: 400, sampleRateHz: 24_000)
+            )
+        }
+
+        let storedVoiceId = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !storedVoiceId.isEmpty else { return }
+        await elevenLabsStreamingTTS.preconnect(voiceId: storedVoiceId)
+    }
+
     func startVoiceModePushToTalk() {
         if isSpeakModeActive {
             stopSpeakMode()
@@ -311,6 +327,8 @@ final class ChatVoiceModeController: ObservableObject {
             }
 
             self.speakSTTService.transcriptAggregation = .perUtterance
+            self.speakSTTService.startRecording()
+            self.updatePhase(.listening)
 
             // Connect STT and preconnect TTS in parallel
             async let sttConnect: Void = {
@@ -325,8 +343,9 @@ final class ChatVoiceModeController: ObservableObject {
             _ = await (sttConnect, ttsPreconnect)
 
             guard self.isSpeakModeActive else { return }
-            self.speakSTTService.startRecording()
-            self.updatePhase(.listening)
+            if self.speakSTTService.isConnected {
+                self.speakSTTService.lastError = nil
+            }
         }
     }
 
