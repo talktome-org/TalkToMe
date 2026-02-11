@@ -218,9 +218,6 @@ final class ChatVoiceModeController: ObservableObject {
 
     func preconnectDictationSTTIfNeeded() async {
         guard NetworkMonitor.shared.isOnline else { return }
-        await MainActor.run {
-            self.dictationSTTService.prewarmAudioForInstantStart()
-        }
         guard dictationSTTService.isConnected == false else { return }
         guard await delegate?.getAccessToken() != nil else { return }
         await dictationSTTService.connect()
