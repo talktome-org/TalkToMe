@@ -37,6 +37,10 @@ final class TransparentPlayerUIView: UIView {
     private var shouldLoop = true
     private(set) var currentVideoName: String = ""
 
+    // Stored config for recovery after player item failure.
+    private var configuredExtension: String = "mp4"
+    private var configuredStartTime: Double = 0
+
     // MARK: - Recycling pool
 
     private static let recycleLock = NSLock()
@@ -46,7 +50,10 @@ final class TransparentPlayerUIView: UIView {
     static func takeRecycled(for videoName: String) -> TransparentPlayerUIView? {
         recycleLock.lock()
         defer { recycleLock.unlock() }
-        return recycledViews.removeValue(forKey: videoName)
+        guard let view = recycledViews.removeValue(forKey: videoName) else { return nil }
+        // Resume playback — the player was paused when recycled.
+        view.queuePlayer?.play()
+        return view
     }
 
     /// Stash a view for reuse instead of destroying it.
@@ -58,6 +65,9 @@ final class TransparentPlayerUIView: UIView {
         }
         // Detach from old superview but keep the player + layer alive.
         view.removeFromSuperview()
+        // Pause so the player doesn't hold audio session resources
+        // (prevents blocking audio session deactivation / music resumption).
+        view.queuePlayer?.pause()
         recycleLock.lock()
         recycledViews[name] = view
         recycleLock.unlock()
@@ -130,6 +140,8 @@ final class TransparentPlayerUIView: UIView {
 
     func configure(videoName: String, extension ext: String, loop: Bool, startTime: Double = 0) {
         currentVideoName = videoName
+        configuredExtension = ext
+        configuredStartTime = startTime
         shouldLoop = loop
 
         // Decorative ghost playback should never claim exclusive audio focus.
@@ -261,6 +273,13 @@ final class TransparentPlayerUIView: UIView {
         guard UIApplication.shared.applicationState == .active else { return }
         guard let player = queuePlayer else { return }
 
+        // If the player item failed or the queue is empty, the looper is broken.
+        // Rebuild the player from scratch using the stored config.
+        if player.currentItem?.status == .failed || player.items().isEmpty {
+            rebuildPlayer()
+            return
+        }
+
         // After route/session changes AVPlayer may stick in waiting state until nudged.
         if player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
             let t = player.currentTime()
@@ -269,6 +288,18 @@ final class TransparentPlayerUIView: UIView {
         if player.rate == 0 || player.timeControlStatus != .playing {
             player.play()
         }
+    }
+
+    /// Tear down the current player and rebuild from scratch (recovery path).
+    private func rebuildPlayer() {
+        let name = currentVideoName
+        guard !name.isEmpty else { return }
+        let ext = configuredExtension
+        let start = configuredStartTime
+        let loop = shouldLoop
+
+        cleanup()
+        configure(videoName: name, extension: ext, loop: loop, startTime: start)
     }
 
     override func layoutSubviews() {

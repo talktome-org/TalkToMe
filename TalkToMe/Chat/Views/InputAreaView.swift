@@ -164,6 +164,10 @@ struct InputAreaView: View {
         .padding(.trailing, 10)
         .frame(minHeight: 46, alignment: .bottomLeading)
         .frame(maxWidth: .infinity, alignment: .bottomLeading)
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .onTapGesture {
+            isInputFocused.wrappedValue = true
+        }
         // Kill ALL inherited animations on capsule content — placeholder must never move
         .transaction { $0.animation = nil }
         .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -372,12 +376,12 @@ struct InputAreaView: View {
 
                 // Ghost — always mounted so the video never restarts
                 ghostButton
-                    .offset(y: 4)
+                    .offset(x: -2, y: isSpeakModeActive ? 4 : -1)
                     .opacity(!shouldHideGhost ? 1 : 0)
                     .frame(width: !shouldHideGhost ? nil : 0)
             }
             .padding(.vertical, 6)
-            .padding(.horizontal, isInputFocused.wrappedValue ? 16 : 32)
+            .padding(.horizontal, isInputFocused.wrappedValue ? 16 : 40)
             .background(
                 GeometryReader { geo in
                     Color.clear.onChange(of: geo.size.width, initial: true) { _, newWidth in
@@ -437,7 +441,7 @@ private struct GhostVideoContentView: View {
     }
 
     var body: some View {
-        let size: CGFloat = isSpeakModeActive ? 64 : 76
+        let size: CGFloat = isSpeakModeActive ? 80 : 48
 
         Group {
             if hasGhostVideo && isSpeechActive {

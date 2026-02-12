@@ -132,7 +132,7 @@ struct MessagesListView: View {
 
     @ViewBuilder
     private var scrollToBottomButton: some View {
-        let bottomPadding: CGFloat = -4
+        let bottomPadding: CGFloat = -10
 
         ZStack(alignment: .bottomTrailing) {
             if shouldShowScrollButton {
