@@ -7,65 +7,62 @@ struct PartnerMessageBlockView: View {
     let text: String
     let senderUserId: UUID?
 
+    private let bubbleColor = Color(.secondarySystemBackground)
+
+    private var resolvedFriend: FriendSummary? {
+        guard let senderUserId else { return nil }
+        return friendsViewModel.friends.first(where: { $0.id == senderUserId })
+    }
+
+    private var resolvedFirstName: String {
+        let fallbackName = PreferenceKeys.getPartnerDisplayName()
+        let resolvedName = (resolvedFriend?.fullName ?? fallbackName)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let nameToShow = resolvedName.isEmpty ? "Partner" : resolvedName
+        return nameToShow.split(separator: " ").first.map(String.init) ?? "Partner"
+    }
+
+    private var resolvedAvatarURL: String {
+        let fallback = (UserDefaults.standard.string(forKey: PreferenceKeys.partnerAvatarURL) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (resolvedFriend?.avatarURL ?? fallback)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var body: some View {
-        VStack(alignment: .leading) {
-            HStack {
-                HStack(spacing: 6) {
-                    let resolvedFriend: FriendSummary? = {
-                        guard let senderUserId else { return nil }
-                        return friendsViewModel.friends.first(where: { $0.id == senderUserId })
-                    }()
+        HStack(alignment: .bottom, spacing: 4) {
+            AvatarCacheManager.shared.cachedAsyncImage(
+                urlString: resolvedAvatarURL.isEmpty ? nil : resolvedAvatarURL,
+                placeholder: avatarPlaceholder,
+                fallback: avatarPlaceholder
+            )
+            .frame(width: 28, height: 28)
+            .clipShape(Circle())
 
-                    // If we can't resolve the sender from the friends list yet, fall back to the user's linked partner prefs.
-                    // (This is correct for direct partner messages, and avoids showing a random last-picked "send to" friend.)
-                    let fallbackName = PreferenceKeys.getPartnerDisplayName()
-                    let resolvedName = (resolvedFriend?.fullName ?? fallbackName).trimmingCharacters(in: .whitespacesAndNewlines)
-                    let nameToShow = resolvedName.isEmpty ? "Partner" : resolvedName
-                    let firstName = nameToShow.split(separator: " ").first.map(String.init)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(resolvedFirstName)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 10)
 
-                    let fallbackAvatarURL = (UserDefaults.standard.string(forKey: PreferenceKeys.partnerAvatarURL) ?? "")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    let avatarURL = (resolvedFriend?.avatarURL ?? fallbackAvatarURL).trimmingCharacters(in: .whitespacesAndNewlines)
-
-                    AvatarCacheManager.shared.cachedAsyncImage(
-                        urlString: avatarURL.isEmpty ? nil : avatarURL,
-                        placeholder: avatarPlaceholder,
-                        fallback: avatarPlaceholder
-                    )
-                    .frame(width: 16, height: 16)
-                    .clipShape(Circle())
-
-                    Text(firstName ?? "Partner")
-                        .font(.footnote)
-                        .foregroundColor(Color.secondary)
-                }
-                .offset(y: -4)
-
-                Spacer()
-
-                MessageActionsView(text: text)
-                    .offset(y: -4)
+                Text(text.isEmpty ? " " : text)
+                    .font(.system(size: 17))
+                    .lineSpacing(2)
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(bubbleColor, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(alignment: .bottomLeading) {
+                        BubbleTailShape()
+                            .fill(bubbleColor)
+                            .frame(width: 12, height: 8)
+                            .offset(x: -3, y: 1)
+                    }
             }
 
-            Divider()
-                .padding(.horizontal, -12)
-                .offset(y: -4)
-
-            Text(text.isEmpty ? " " : text)
-                .font(.callout)
-                .foregroundColor(.primary)
-                .padding(.vertical, 8)
-                .padding(.horizontal, 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 40)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(Color(.separator), lineWidth: 1)
-                .background(
-                    RoundedRectangle(cornerRadius: 16).fill(Color(.secondarySystemBackground))
-                )
-        )
+        .padding(.bottom, 2)
     }
 
     private func avatarPlaceholder() -> AnyView {
@@ -74,10 +71,27 @@ struct PartnerMessageBlockView: View {
                 .fill(Color.gray.opacity(0.2))
                 .overlay(
                     Image(systemName: "person.fill")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.gray)
                 )
         )
     }
 }
 
+private struct BubbleTailShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { p in
+            p.move(to: CGPoint(x: rect.width, y: 0))
+            p.addCurve(
+                to: CGPoint(x: 0, y: rect.height),
+                control1: CGPoint(x: rect.width, y: rect.height * 0.6),
+                control2: CGPoint(x: rect.width * 0.1, y: rect.height)
+            )
+            p.addCurve(
+                to: CGPoint(x: rect.width, y: rect.height * 0.4),
+                control1: CGPoint(x: rect.width * 0.3, y: rect.height * 0.9),
+                control2: CGPoint(x: rect.width * 0.7, y: rect.height * 0.5)
+            )
+        }
+    }
+}
