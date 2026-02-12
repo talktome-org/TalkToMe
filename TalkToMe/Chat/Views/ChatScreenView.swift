@@ -60,7 +60,7 @@ struct ChatScreenView: View {
                 onVoiceModeStart: { chatViewModel.voiceController.startVoiceModePushToTalk() },
                 onVoiceModeStop: { chatViewModel.voiceController.stopVoiceModePushToTalk() }
             )
-            .frame(height: inputAreaHeight, alignment: .bottom)
+            .frame(height: chatViewModel.pendingAttachments.isEmpty ? inputAreaHeight : nil, alignment: .bottom)
             .offset(y: 14)
             .padding(.bottom, isInputFocused.wrappedValue ? 23 : 0)
             .transition(.move(edge: .bottom).combined(with: .opacity))
