@@ -73,9 +73,15 @@ final class TransparentPlayerUIView: UIView {
             player.isMuted = true
             player.automaticallyWaitsToMinimizeStalling = false
 
-            let looper: AVPlayerLooper? = loop
-                ? AVPlayerLooper(player: player, templateItem: playerItem)
-                : nil
+            let looper: AVPlayerLooper? = {
+                guard loop else { return nil }
+                if startTime > 0 {
+                    let start = CMTime(seconds: startTime, preferredTimescale: 600)
+                    let range = CMTimeRange(start: start, end: CMTime.positiveInfinity)
+                    return AVPlayerLooper(player: player, templateItem: playerItem, timeRange: range)
+                }
+                return AVPlayerLooper(player: player, templateItem: playerItem)
+            }()
 
             DispatchQueue.main.async { [weak self] in
                 guard let self else {
@@ -103,10 +109,6 @@ final class TransparentPlayerUIView: UIView {
                 layer.frame = self.bounds
                 self.playerLayer = layer
 
-                if startTime > 0 {
-                    let time = CMTime(seconds: startTime, preferredTimescale: 600)
-                    player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
-                }
                 player.play()
 
                 NotificationCenter.default.addObserver(
