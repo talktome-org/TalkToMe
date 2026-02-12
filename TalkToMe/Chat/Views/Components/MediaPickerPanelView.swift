@@ -129,7 +129,7 @@ struct MediaPickerPanelView: View {
                     PhotosPicker(selection: $photoPickerItems, maxSelectionCount: 12, matching: .images) {
                         Text("See all")
                             .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(Color.accentColor)
                     }
                     .buttonStyle(.plain)
                 }
@@ -171,8 +171,8 @@ struct MediaPickerPanelView: View {
                     .padding(.horizontal, 16)
                 }
             }
-            .padding(.top, 24)
-            .padding(.bottom, 16)
+            .padding(.top, 28)
+            .padding(.bottom, 20)
 
             Divider()
                 .padding(.horizontal, 16)
@@ -180,7 +180,7 @@ struct MediaPickerPanelView: View {
             // Buddies (voice selection grid)
             ElevenLabsVoiceSuggestionsView()
                 .padding(.horizontal, 16)
-                .padding(.top, 14)
+                .padding(.top, 20)
                 .padding(.bottom, 16)
 
             Spacer(minLength: 0)
@@ -532,5 +532,3 @@ private final class RecentPhotosViewModel: ObservableObject {
     )
         .background(Color.black)
 }
-
-
