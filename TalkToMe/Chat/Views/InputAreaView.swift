@@ -94,10 +94,10 @@ struct InputAreaView: View {
         switch speakModePhase {
         case .idle: return 0
         case .connecting, .listening, .processing:
-            return micLevel
+            return isSpeakMicMuted ? 0 : micLevel
         case .answering:
             // Keep mic activity visible during assistant playback for barge-in confidence.
-            return max(speakerLevel, micLevel * 0.85)
+            return isSpeakMicMuted ? speakerLevel : max(speakerLevel, micLevel * 0.85)
         }
     }
 

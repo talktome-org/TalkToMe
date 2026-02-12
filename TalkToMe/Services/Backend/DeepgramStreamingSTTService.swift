@@ -370,8 +370,8 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
 
         SharedAudioEngine.shared.installInputTap { [weak self] buffer, _ in
             guard let self else { return }
-            self.updateSpawnLevel(from: buffer)
             guard !self.isPaused else { return }
+            self.updateSpawnLevel(from: buffer)
             self.convertAndSend(buffer: buffer, targetFormat: target)
         }
     }
@@ -483,6 +483,7 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         let gated = max(0, normalized - noiseFloor) / (1 - noiseFloor)
         let shaped = min(1, sqrt(gated))
         Task { @MainActor in
+            guard !self.isPaused else { return }
             self.spawnLevel = shaped
         }
     }
