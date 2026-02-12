@@ -5,14 +5,17 @@ struct TransparentVideoPlayerView: UIViewRepresentable {
     let videoName: String
     let videoExtension: String
     var loop: Bool = true
+    var startTime: Double = 0
 
     func makeUIView(context: Context) -> TransparentPlayerUIView {
         let view = TransparentPlayerUIView()
-        view.configure(videoName: videoName, extension: videoExtension, loop: loop)
+        view.configure(videoName: videoName, extension: videoExtension, loop: loop, startTime: startTime)
         return view
     }
 
-    func updateUIView(_ uiView: TransparentPlayerUIView, context: Context) {}
+    func updateUIView(_ uiView: TransparentPlayerUIView, context: Context) {
+        uiView.swapVideoIfNeeded(videoName: videoName, extension: videoExtension, loop: loop, startTime: startTime)
+    }
 
     static func dismantleUIView(_ uiView: TransparentPlayerUIView, coordinator: ()) {
         uiView.cleanup()
@@ -27,6 +30,7 @@ final class TransparentPlayerUIView: UIView {
     private var rateObservation: NSKeyValueObservation?
     private var heartbeatTimer: Timer?
     private var shouldLoop = true
+    private(set) var currentVideoName: String = ""
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -37,7 +41,14 @@ final class TransparentPlayerUIView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(videoName: String, extension ext: String, loop: Bool) {
+    func swapVideoIfNeeded(videoName: String, extension ext: String, loop: Bool, startTime: Double = 0) {
+        guard videoName != currentVideoName else { return }
+        cleanup()
+        configure(videoName: videoName, extension: ext, loop: loop, startTime: startTime)
+    }
+
+    func configure(videoName: String, extension ext: String, loop: Bool, startTime: Double = 0) {
+        currentVideoName = videoName
         shouldLoop = loop
 
         guard let url = Bundle.main.url(forResource: videoName, withExtension: ext) else {
@@ -48,71 +59,89 @@ final class TransparentPlayerUIView: UIView {
         // Decorative ghost playback should never claim exclusive audio focus.
         SharedAudioEngine.shared.ensureIdleAudioSession()
 
-        let asset = AVURLAsset(url: url)
-        let playerItem = AVPlayerItem(asset: asset)
-        // Disable embedded audio tracks so decorative ghost loops are strictly visual.
-        for track in playerItem.tracks where track.assetTrack?.mediaType == .audio {
-            track.isEnabled = false
+        // Build AVPlayer off the main thread to avoid blocking UI.
+        let capturedName = videoName
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let asset = AVURLAsset(url: url)
+            let playerItem = AVPlayerItem(asset: asset)
+            // Disable embedded audio tracks so decorative ghost loops are strictly visual.
+            for track in playerItem.tracks where track.assetTrack?.mediaType == .audio {
+                track.isEnabled = false
+            }
+            let player = AVQueuePlayer(playerItem: playerItem)
+            player.volume = 0
+            player.isMuted = true
+            player.automaticallyWaitsToMinimizeStalling = false
+
+            let looper: AVPlayerLooper? = loop
+                ? AVPlayerLooper(player: player, templateItem: playerItem)
+                : nil
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    player.pause()
+                    looper?.disableLooping()
+                    return
+                }
+                // Another video was requested while we were loading — discard.
+                guard self.currentVideoName == capturedName else {
+                    player.pause()
+                    looper?.disableLooping()
+                    return
+                }
+
+                self.queuePlayer = player
+                self.playerLooper = looper
+
+                let layer = AVPlayerLayer(player: player)
+                layer.videoGravity = .resizeAspect
+                layer.backgroundColor = UIColor.clear.cgColor
+                layer.pixelBufferAttributes = [
+                    kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+                ]
+                self.layer.addSublayer(layer)
+                layer.frame = self.bounds
+                self.playerLayer = layer
+
+                if startTime > 0 {
+                    let time = CMTime(seconds: startTime, preferredTimescale: 600)
+                    player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+                }
+                player.play()
+
+                NotificationCenter.default.addObserver(
+                    self,
+                    selector: #selector(self.appDidBecomeActive),
+                    name: UIApplication.didBecomeActiveNotification,
+                    object: nil
+                )
+                NotificationCenter.default.addObserver(
+                    self,
+                    selector: #selector(self.handleAudioInterruption(_:)),
+                    name: AVAudioSession.interruptionNotification,
+                    object: nil
+                )
+                NotificationCenter.default.addObserver(
+                    self,
+                    selector: #selector(self.handleRouteChange),
+                    name: AVAudioSession.routeChangeNotification,
+                    object: nil
+                )
+
+                self.statusObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
+                    self?.resumeIfNeeded()
+                }
+                self.rateObservation = player.observe(\.rate, options: [.new]) { [weak self] _, _ in
+                    self?.resumeIfNeeded()
+                }
+
+                let timer = Timer(timeInterval: 0.8, repeats: true) { [weak self] _ in
+                    self?.resumeIfNeeded()
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                self.heartbeatTimer = timer
+            }
         }
-        let queuePlayer = AVQueuePlayer(playerItem: playerItem)
-        queuePlayer.volume = 0
-        queuePlayer.isMuted = true
-        // Local file – never wait for network buffering
-        queuePlayer.automaticallyWaitsToMinimizeStalling = false
-        self.queuePlayer = queuePlayer
-
-        // Use AVPlayerLooper for seamless gapless looping
-        if loop {
-            playerLooper = AVPlayerLooper(player: queuePlayer, templateItem: playerItem)
-        }
-
-        let layer = AVPlayerLayer(player: queuePlayer)
-        layer.videoGravity = .resizeAspect
-        layer.backgroundColor = UIColor.clear.cgColor
-        // Enable alpha channel rendering for HEVC with alpha
-        layer.pixelBufferAttributes = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ]
-        self.layer.addSublayer(layer)
-        playerLayer = layer
-
-        queuePlayer.play()
-
-        // Resume playback when app returns to foreground.
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(appDidBecomeActive),
-            name: UIApplication.didBecomeActiveNotification,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleAudioInterruption(_:)),
-            name: AVAudioSession.interruptionNotification,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleRouteChange),
-            name: AVAudioSession.routeChangeNotification,
-            object: nil
-        )
-
-        // Keep the ghost moving if voice mode audio/session changes pause it.
-        statusObservation = queuePlayer.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
-            self?.resumeIfNeeded()
-        }
-        rateObservation = queuePlayer.observe(\.rate, options: [.new]) { [weak self] _, _ in
-            self?.resumeIfNeeded()
-        }
-
-        // Lightweight safety net: if AVPlayer silently stalls after session switches,
-        // this keeps the loop alive without the old high-frequency timer overhead.
-        let timer = Timer(timeInterval: 0.8, repeats: true) { [weak self] _ in
-            self?.resumeIfNeeded()
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        heartbeatTimer = timer
     }
 
     @objc private func appDidBecomeActive() {

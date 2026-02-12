@@ -29,7 +29,6 @@ struct InputAreaView: View {
     @State private var showMicSlash: Bool = false
     @State private var hideMicForStop: Bool = false
 
-    @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var selectedVoiceName: String = ""
     @Environment(\.colorScheme) private var colorScheme
 
     private var trimmedInput: String {
@@ -102,32 +101,8 @@ struct InputAreaView: View {
         }
     }
 
-    private var ghostVideoName: String {
-        selectedVoiceName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var hasGhostVideo: Bool {
-        guard !ghostVideoName.isEmpty else { return false }
-        return Bundle.main.url(forResource: ghostVideoName, withExtension: "mp4") != nil
-    }
-
-    @ViewBuilder
-    private var ghostButtonContent: some View {
-        Group {
-            if hasGhostVideo {
-                TransparentVideoPlayerView(
-                    videoName: ghostVideoName,
-                    videoExtension: "mp4"
-                )
-                .id(ghostVideoName) // Force recreation when voice changes
-            } else {
-                // Fallback: empty rounded rect with material background
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            }
-        }
-        .frame(width: isSpeakModeActive ? 56 : 76, height: isSpeakModeActive ? 56 : 76)
-    }
+    // Ghost video logic is in GhostVideoContentView below to isolate
+    // @AppStorage re-renders from InputAreaView (prevents sheet/photo reload).
 
     // MARK: - Attachments button (Part 1)
     @available(iOS 26.0, *)
@@ -340,7 +315,7 @@ struct InputAreaView: View {
             // freezing the ghost video during the transition.
             onSpeakToggle()
         }) {
-            ghostButtonContent
+            GhostVideoContentView(isSpeakModeActive: isSpeakModeActive)
         }
         .buttonStyle(.plain)
     }
@@ -431,6 +406,50 @@ struct InputAreaView: View {
                 .presentationDragIndicator(.visible)
             }
         }
+    }
+
+}
+
+// MARK: - Ghost Video Content (isolated from InputAreaView to prevent re-renders)
+
+/// Owns the `@AppStorage` for voice selection so that voice changes only
+/// re-render this small view — not the entire InputAreaView (which would
+/// tear down the media picker sheet and reload photos).
+private struct GhostVideoContentView: View {
+    let isSpeakModeActive: Bool
+
+    @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var selectedVoiceName: String = ""
+
+    private static let ghostStartTimes: [String: Double] = [
+        "jay": 0.1,
+        "hex": 0.1,
+        "snow": 0.1
+    ]
+
+    private var ghostVideoName: String {
+        ElevenLabsVoiceSuggestionsView.ghostVideoName(for: selectedVoiceName)
+            ?? selectedVoiceName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var hasGhostVideo: Bool {
+        guard !ghostVideoName.isEmpty else { return false }
+        return Bundle.main.url(forResource: ghostVideoName, withExtension: "mp4") != nil
+    }
+
+    var body: some View {
+        Group {
+            if hasGhostVideo {
+                TransparentVideoPlayerView(
+                    videoName: ghostVideoName,
+                    videoExtension: "mp4",
+                    startTime: Self.ghostStartTimes[ghostVideoName] ?? 0
+                )
+            } else {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            }
+        }
+        .frame(width: isSpeakModeActive ? 56 : 76, height: isSpeakModeActive ? 56 : 76)
     }
 }
 

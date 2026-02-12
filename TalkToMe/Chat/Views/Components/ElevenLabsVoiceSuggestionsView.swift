@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Voices Cache
 
@@ -56,18 +57,152 @@ final class VoicesCache {
     }
 }
 
+private struct BuddyDefinition: Identifiable {
+    let key: String
+    let name: String
+    let description: String
+    let imageName: String
+    let videoName: String
+    let aliases: Set<String>
+
+    var id: String { key }
+}
+
+private struct BuddyOption: Identifiable {
+    let definition: BuddyDefinition
+    let configuredVoiceId: String?
+    let resolvedDescription: String
+
+    var id: String { definition.id }
+}
+
 // MARK: - View
 
 struct ElevenLabsVoiceSuggestionsView: View {
     @State private var voices: [BackendService.AppVoiceDTO] = VoicesCache.shared.cachedVoices ?? []
     @State private var defaultVoiceId: String = VoicesCache.shared.cachedDefaultVoiceId ?? ""
     @State private var isLoading: Bool = false
-    @State private var errorMessage: String?
 
-    @AppStorage(PreferenceKeys.elevenLabsVoiceId) private var selectedVoiceId: String = ""
-    @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var selectedVoiceName: String = ""
+    // Local-only selection state — reads/writes UserDefaults directly to avoid
+    // @AppStorage re-rendering this view when the chat view processes the change.
+    @State private var localVoiceId: String = ""
+    @State private var localVoiceName: String = ""
 
     @State private var currentPage: Int? = 0
+
+    // Required buddy objects for MediaPickerPanelView. These are always shown even
+    // when backend ElevenLabs voices are not configured in a dev environment.
+    private static let requiredBuddies: [BuddyDefinition] = [
+        BuddyDefinition(
+            key: "luma",
+            name: "Luma",
+            description: "Warm, compassionate. Soft, airy timbre with gentle breathiness and a reassuring smile.",
+            imageName: "luma",
+            videoName: "luma",
+            aliases: ["luma"]
+        ),
+        BuddyDefinition(
+            key: "jay",
+            name: "Jay",
+            description: "Confident, heroic and encouraging. Upbeat cadence with clear articulation.",
+            imageName: "jay",
+            videoName: "jay",
+            aliases: ["jay"]
+        ),
+        BuddyDefinition(
+            key: "hex",
+            name: "Hex",
+            description: "Bright, playful and magical. Light airy tone with expressive inflection.",
+            imageName: "hex",
+            videoName: "hex",
+            aliases: ["hex"]
+        ),
+        BuddyDefinition(
+            key: "mira",
+            name: "Mira",
+            description: "Cheerful, affectionate with light, bubbly warmth. Soft breathiness, smiling delivery.",
+            imageName: "mira",
+            videoName: "mira",
+            aliases: ["mira"]
+        ),
+        BuddyDefinition(
+            key: "pax",
+            name: "Pax",
+            description: "Clear, articulate warmth with a patient teacher vibe. Steady cadence, gentle humor.",
+            imageName: "pax",
+            videoName: "pax",
+            aliases: ["pax"]
+        ),
+        BuddyDefinition(
+            key: "snow",
+            name: "Snow",
+            description: "Soft-spoken and serene with a cozy, calming tone and steady, reflective pacing.",
+            imageName: "snow",
+            videoName: "snow",
+            aliases: ["snow"]
+        )
+    ]
+
+    static let ghostImageCache = NSCache<NSString, UIImage>()
+
+    private static func normalizedGhostKey(_ rawName: String) -> String {
+        rawName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func mappedBuddy(for voiceName: String) -> BuddyDefinition? {
+        let key = normalizedGhostKey(voiceName)
+        guard !key.isEmpty else { return nil }
+        return requiredBuddies.first(where: { $0.aliases.contains(key) || $0.key == key })
+    }
+
+    private static func buddyKey(for voiceName: String) -> String {
+        mappedBuddy(for: voiceName)?.key ?? normalizedGhostKey(voiceName)
+    }
+
+    static func ghostImageName(for voiceName: String) -> String? {
+        if let mapped = mappedBuddy(for: voiceName) {
+            return mapped.imageName
+        }
+        let fallback = normalizedGhostKey(voiceName)
+        return fallback.isEmpty ? nil : fallback
+    }
+
+    static func ghostVideoName(for voiceName: String) -> String? {
+        if let mapped = mappedBuddy(for: voiceName) {
+            return mapped.videoName
+        }
+        let fallback = normalizedGhostKey(voiceName)
+        return fallback.isEmpty ? nil : fallback
+    }
+
+    private var selectedBuddyKey: String {
+        let keyFromName = Self.buddyKey(for: localVoiceName)
+        if !keyFromName.isEmpty { return keyFromName }
+
+        if let configured = voices.first(where: { $0.voice_id == localVoiceId }) {
+            return Self.buddyKey(for: configured.name)
+        }
+        return ""
+    }
+
+    private var buddyOptions: [BuddyOption] {
+        let configuredByAlias: [String: BackendService.AppVoiceDTO] = Dictionary(
+            uniqueKeysWithValues: voices.map { (Self.normalizedGhostKey($0.name), $0) }
+        )
+
+        return Self.requiredBuddies.map { buddy in
+            let matched = buddy.aliases.compactMap { configuredByAlias[$0] }.first
+            let resolvedDescription: String = {
+                let serverDescription = matched?.description.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return serverDescription.isEmpty ? buddy.description : serverDescription
+            }()
+            return BuddyOption(
+                definition: buddy,
+                configuredVoiceId: matched?.voice_id,
+                resolvedDescription: resolvedDescription
+            )
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -75,45 +210,30 @@ struct ElevenLabsVoiceSuggestionsView: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            if isLoading && voices.isEmpty {
-                voiceSkeletonGrid
-            } else if let msg = errorMessage, !msg.isEmpty, voices.isEmpty {
-                Text(msg)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                voiceGrid
+            voiceGrid
+
+            if isLoading {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                        .scaleEffect(0.85)
+                    Spacer()
+                }
             }
+        }
+        .onAppear {
+            localVoiceId = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? ""
+            localVoiceName = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? ""
         }
         .task { await loadVoices() }
     }
 
     @ViewBuilder
-    private var voiceSkeletonGrid: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                ForEach(0..<2, id: \.self) { _ in
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Color.secondary.opacity(0.12))
-                        .frame(height: 90)
-                }
-            }
-            HStack(spacing: 12) {
-                ForEach(0..<2, id: \.self) { _ in
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Color.secondary.opacity(0.12))
-                        .frame(height: 90)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
     private var voiceGrid: some View {
-        // Group voices into pages of 4 (2x2 grid per page)
-        let pages: [[BackendService.AppVoiceDTO]] = {
-            var result: [[BackendService.AppVoiceDTO]] = []
-            var remaining = voices
+        // Group buddies into pages of 4 (2x2 grid per page).
+        let pages: [[BuddyOption]] = {
+            var result: [[BuddyOption]] = []
+            var remaining = buddyOptions
             while !remaining.isEmpty {
                 let page = Array(remaining.prefix(4))
                 result.append(page)
@@ -138,7 +258,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
                 .scrollPosition(id: $currentPage)
                 .scrollTargetBehavior(.viewAligned)
             }
-            .frame(height: 200) // 2 rows × 90pt + spacing
+            .frame(height: 200) // 2 rows × 92pt + spacing
 
             // Page indicator dots
             if pages.count > 1 {
@@ -154,15 +274,15 @@ struct ElevenLabsVoiceSuggestionsView: View {
     }
 
     @ViewBuilder
-    private func voicePage(voices pageVoices: [BackendService.AppVoiceDTO], width: CGFloat) -> some View {
+    private func voicePage(voices pageVoices: [BuddyOption], width: CGFloat) -> some View {
         let topRow = Array(pageVoices.prefix(2))
         let bottomRow = Array(pageVoices.dropFirst(2).prefix(2))
 
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             // First row
             HStack(spacing: 12) {
-                ForEach(topRow) { voice in
-                    voiceCard(voice)
+                ForEach(topRow) { buddy in
+                    voiceCard(buddy)
                 }
                 // Fill empty space if only 1 in row
                 if topRow.count == 1 {
@@ -173,8 +293,8 @@ struct ElevenLabsVoiceSuggestionsView: View {
             // Second row
             if !bottomRow.isEmpty {
                 HStack(spacing: 12) {
-                    ForEach(bottomRow) { voice in
-                        voiceCard(voice)
+                    ForEach(bottomRow) { buddy in
+                        voiceCard(buddy)
                     }
                     // Fill empty space if only 1 in row
                     if bottomRow.count == 1 {
@@ -184,66 +304,100 @@ struct ElevenLabsVoiceSuggestionsView: View {
             } else if pageVoices.count <= 2 {
                 // Empty second row placeholder
                 HStack(spacing: 12) {
-                    Color.clear.frame(maxWidth: .infinity, minHeight: 90)
+                    Color.clear.frame(maxWidth: .infinity, minHeight: 92)
                 }
             }
         }
         .frame(width: width)
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
-    private func voiceCard(_ voice: BackendService.AppVoiceDTO) -> some View {
-        let isSelected = voice.voice_id == selectedVoiceId
-        // Ghost video name matches the voice name (lowercase)
-        let ghostVideoName = voice.name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    static func ghostUIImage(for voiceName: String) -> UIImage? {
+        guard let imageName = ghostImageName(for: voiceName) else { return nil }
 
-        return Button(action: {
-            Haptics.impact(.light)
-            selectedVoiceId = voice.voice_id
-            selectedVoiceName = voice.name
-        }) {
-            HStack(spacing: 12) {
-                // Ghost video
-                TransparentVideoPlayerView(
-                    videoName: ghostVideoName,
-                    videoExtension: "mp4"
-                )
-                .frame(width: 56, height: 56)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .top) {
-                        Text(voice.name)
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-
-                        Spacer(minLength: 4)
-
-                        if isSelected {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 18))
-                                .foregroundStyle(.white, .blue)
-                        }
-                    }
-
-                    Text(voice.description)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 90, alignment: .leading)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(
-                        isSelected ? Color.blue.opacity(0.6) : Color.primary.opacity(0.08),
-                        lineWidth: isSelected ? 2 : 1
-                    )
-            )
+        if let cached = ghostImageCache.object(forKey: imageName as NSString) {
+            return cached
         }
-        .buttonStyle(.plain)
+
+        if let image = UIImage(named: imageName) {
+            ghostImageCache.setObject(image, forKey: imageName as NSString)
+            return image
+        }
+        guard let imageURL = Bundle.main.url(forResource: imageName, withExtension: "png") else {
+            return nil
+        }
+        guard let image = UIImage(contentsOfFile: imageURL.path) else {
+            return nil
+        }
+        ghostImageCache.setObject(image, forKey: imageName as NSString)
+        return image
+    }
+
+    @ViewBuilder
+    private func ghostPreview(for voiceName: String) -> some View {
+        if let uiImage = Self.ghostUIImage(for: voiceName) {
+            Image(uiImage: uiImage)
+                .resizable()
+                .scaledToFit()
+        } else {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+        }
+    }
+
+    private func voiceCard(_ buddy: BuddyOption) -> some View {
+        let isSelected = buddy.definition.key == selectedBuddyKey
+
+        return HStack(spacing: 12) {
+            ghostPreview(for: buddy.definition.name)
+                .frame(width: 58, height: 58)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .top) {
+                    Text(buddy.definition.name)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 4)
+
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundStyle(.white, .blue)
+                    }
+                }
+
+                Text(buddy.resolvedDescription)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(
+                    isSelected ? Color.blue.opacity(0.6) : Color.primary.opacity(0.08),
+                    lineWidth: isSelected ? 2 : 1
+                )
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            Haptics.impact(.light)
+            localVoiceId = buddy.configuredVoiceId ?? ""
+            localVoiceName = buddy.definition.name
+            UserDefaults.standard.set(buddy.configuredVoiceId ?? "", forKey: PreferenceKeys.elevenLabsVoiceId)
+            UserDefaults.standard.set(buddy.definition.name, forKey: PreferenceKeys.elevenLabsVoiceName)
+        }
     }
 
     private func loadVoices() async {
@@ -255,10 +409,13 @@ struct ElevenLabsVoiceSuggestionsView: View {
             defaultVoiceId = cache.cachedDefaultVoiceId ?? ""
 
             // Set default selection if not already set
-            if selectedVoiceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let storedId = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? ""
+            if storedId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                let defaultVoice = cached.first(where: { $0.voice_id == defaultVoiceId }) ?? cached.first {
-                selectedVoiceId = defaultVoice.voice_id
-                selectedVoiceName = defaultVoice.name
+                UserDefaults.standard.set(defaultVoice.voice_id, forKey: PreferenceKeys.elevenLabsVoiceId)
+                UserDefaults.standard.set(defaultVoice.name, forKey: PreferenceKeys.elevenLabsVoiceName)
+                localVoiceId = defaultVoice.voice_id
+                localVoiceName = defaultVoice.name
             }
 
             // If cache is still valid, skip network refresh
@@ -266,14 +423,10 @@ struct ElevenLabsVoiceSuggestionsView: View {
         }
 
         guard !isLoading else { return }
-        isLoading = voices.isEmpty // Only show loading if no cached data
-        errorMessage = nil
+        isLoading = true
         defer { isLoading = false }
 
         guard let token = await AuthService.shared.getAccessToken() else {
-            if voices.isEmpty {
-                errorMessage = "Sign in to load voices."
-            }
             return
         }
 
@@ -286,15 +439,15 @@ struct ElevenLabsVoiceSuggestionsView: View {
             cache.cache(voices: result.voices, defaultVoiceId: result.default_voice_id)
 
             // Set default selection if not already set
-            if selectedVoiceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let storedId2 = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? ""
+            if storedId2.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                let defaultVoice = result.voices.first(where: { $0.voice_id == result.default_voice_id }) ?? result.voices.first {
-                selectedVoiceId = defaultVoice.voice_id
-                selectedVoiceName = defaultVoice.name
+                UserDefaults.standard.set(defaultVoice.voice_id, forKey: PreferenceKeys.elevenLabsVoiceId)
+                UserDefaults.standard.set(defaultVoice.name, forKey: PreferenceKeys.elevenLabsVoiceName)
+                localVoiceId = defaultVoice.voice_id
+                localVoiceName = defaultVoice.name
             }
         } catch {
-            if voices.isEmpty {
-                errorMessage = error.localizedDescription
-            }
             // If we have cached data, silently ignore network errors
         }
     }
