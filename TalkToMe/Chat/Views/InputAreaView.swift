@@ -328,7 +328,7 @@ struct InputAreaView: View {
                 messageCapsule
 
                 // Mute mic button — separate glass circle, speak mode only (hide when typing)
-                if isSpeakModeActive {
+                if isSpeakModeActive && !shouldHideGhost {
                     Button(action: {
                         Haptics.impact(.light)
                         withAnimation(.smooth(duration: 0.3)) {
@@ -347,7 +347,7 @@ struct InputAreaView: View {
                 }
 
                 // Waveform capsule (speak mode only, hide when typing)
-                if isSpeakModeActive {
+                if isSpeakModeActive && !shouldHideGhost {
                     Button(action: {
                         Haptics.impact(.medium)
                         onSpeakToggle()
@@ -373,8 +373,8 @@ struct InputAreaView: View {
                 // Ghost — always mounted so the video never restarts
                 ghostButton
                     .offset(y: 4)
-                    .opacity((!shouldHideGhost || isSpeakModeActive) ? 1 : 0)
-                    .frame(width: (!shouldHideGhost || isSpeakModeActive) ? nil : 0)
+                    .opacity(!shouldHideGhost ? 1 : 0)
+                    .frame(width: !shouldHideGhost ? nil : 0)
             }
             .padding(.vertical, 6)
             .padding(.horizontal, isInputFocused.wrappedValue ? 16 : 32)
