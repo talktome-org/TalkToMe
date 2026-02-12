@@ -152,6 +152,19 @@ struct ElevenLabsVoiceSuggestionsView: View {
         "snow": 0.1
     ]
 
+    /// Pre-warm AVPlayers for all ghost videos so they display instantly in the media picker.
+    static func preloadGhostVideos() {
+        for buddy in requiredBuddies {
+            guard Bundle.main.url(forResource: buddy.videoName, withExtension: "mp4") != nil else { continue }
+            TransparentPlayerUIView.preload(
+                videoName: buddy.videoName,
+                extension: "mp4",
+                loop: true,
+                startTime: ghostStartTimes[buddy.videoName] ?? 0
+            )
+        }
+    }
+
     static let ghostImageCache = NSCache<NSString, UIImage>()
 
     private static func normalizedGhostKey(_ rawName: String) -> String {
