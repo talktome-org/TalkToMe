@@ -85,38 +85,16 @@ struct ElevenLabsVoiceSuggestionsView: View {
 
     // Local-only selection state — reads/writes UserDefaults directly to avoid
     // @AppStorage re-rendering this view when the chat view processes the change.
-    @State private var localVoiceId: String = ""
-    @State private var localVoiceName: String = ""
+    // Initialized directly from UserDefaults so state is correct immediately on
+    // view creation (avoids the flash when the sheet recreates this view).
+    @State private var localVoiceId: String = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? ""
+    @State private var localVoiceName: String = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? ""
 
     @State private var currentPage: Int? = 0
 
     // Required buddy objects for MediaPickerPanelView. These are always shown even
     // when backend ElevenLabs voices are not configured in a dev environment.
     private static let requiredBuddies: [BuddyDefinition] = [
-        BuddyDefinition(
-            key: "luma",
-            name: "Luma",
-            description: "Warm, compassionate. Soft, airy timbre with gentle breathiness and a reassuring smile.",
-            imageName: "luma",
-            videoName: "luma",
-            aliases: ["luma"]
-        ),
-        BuddyDefinition(
-            key: "jay",
-            name: "Jay",
-            description: "Confident, heroic and encouraging. Upbeat cadence with clear articulation.",
-            imageName: "jay",
-            videoName: "jay",
-            aliases: ["jay"]
-        ),
-        BuddyDefinition(
-            key: "hex",
-            name: "Hex",
-            description: "Bright, playful and magical. Light airy tone with expressive inflection.",
-            imageName: "hex",
-            videoName: "hex",
-            aliases: ["hex"]
-        ),
         BuddyDefinition(
             key: "mira",
             name: "Mira",
@@ -134,13 +112,44 @@ struct ElevenLabsVoiceSuggestionsView: View {
             aliases: ["pax"]
         ),
         BuddyDefinition(
+            key: "luma",
+            name: "Luma",
+            description: "Warm, compassionate. Soft, airy timbre with gentle breathiness and a reassuring smile.",
+            imageName: "luma",
+            videoName: "luma",
+            aliases: ["luma"]
+        ),
+        BuddyDefinition(
             key: "snow",
             name: "Snow",
             description: "Soft-spoken and serene with a cozy, calming tone and steady, reflective pacing.",
             imageName: "snow",
             videoName: "snow",
             aliases: ["snow"]
+        ),
+        BuddyDefinition(
+            key: "jay",
+            name: "Jay",
+            description: "Confident, heroic and encouraging. Upbeat cadence with clear articulation.",
+            imageName: "jay",
+            videoName: "jay",
+            aliases: ["jay"]
+        ),
+        BuddyDefinition(
+            key: "hex",
+            name: "Hex",
+            description: "Bright, playful and magical. Light airy tone with expressive inflection.",
+            imageName: "hex",
+            videoName: "hex",
+            aliases: ["hex"]
         )
+    ]
+
+    /// Per-buddy start offsets so the first visible frame isn't a blank/awkward pose.
+    static let ghostStartTimes: [String: Double] = [
+        "jay": 0.1,
+        "hex": 0.1,
+        "snow": 0.1
     ]
 
     static let ghostImageCache = NSCache<NSString, UIImage>()
@@ -220,10 +229,6 @@ struct ElevenLabsVoiceSuggestionsView: View {
                     Spacer()
                 }
             }
-        }
-        .onAppear {
-            localVoiceId = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? ""
-            localVoiceName = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? ""
         }
         .task { await loadVoices() }
     }
@@ -334,8 +339,15 @@ struct ElevenLabsVoiceSuggestionsView: View {
     }
 
     @ViewBuilder
-    private func ghostPreview(for voiceName: String) -> some View {
-        if let uiImage = Self.ghostUIImage(for: voiceName) {
+    private func ghostPreview(for buddy: BuddyDefinition) -> some View {
+        let videoExists = Bundle.main.url(forResource: buddy.videoName, withExtension: "mp4") != nil
+        if videoExists {
+            TransparentVideoPlayerView(
+                videoName: buddy.videoName,
+                videoExtension: "mp4",
+                startTime: Self.ghostStartTimes[buddy.videoName] ?? 0
+            )
+        } else if let uiImage = Self.ghostUIImage(for: buddy.name) {
             Image(uiImage: uiImage)
                 .resizable()
                 .scaledToFit()
@@ -354,8 +366,9 @@ struct ElevenLabsVoiceSuggestionsView: View {
         let isSelected = buddy.definition.key == selectedBuddyKey
 
         return HStack(spacing: 12) {
-            ghostPreview(for: buddy.definition.name)
-                .frame(width: 58, height: 58)
+            ghostPreview(for: buddy.definition)
+                .frame(width: 72, height: 72)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .top) {
@@ -382,7 +395,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(
@@ -393,10 +406,38 @@ struct ElevenLabsVoiceSuggestionsView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             Haptics.impact(.light)
-            localVoiceId = buddy.configuredVoiceId ?? ""
             localVoiceName = buddy.definition.name
-            UserDefaults.standard.set(buddy.configuredVoiceId ?? "", forKey: PreferenceKeys.elevenLabsVoiceId)
             UserDefaults.standard.set(buddy.definition.name, forKey: PreferenceKeys.elevenLabsVoiceName)
+            // Only write voiceId when a real backend ID is available so we don't
+            // overwrite a previously-valid ID with "".  loadVoices() will back-fill
+            // the ID once voices arrive from the network.
+            if let voiceId = buddy.configuredVoiceId {
+                localVoiceId = voiceId
+                UserDefaults.standard.set(voiceId, forKey: PreferenceKeys.elevenLabsVoiceId)
+            }
+        }
+    }
+
+    /// Returns true when the user has not explicitly picked any buddy yet.
+    private static func isSelectionEmpty() -> Bool {
+        let id = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return id.isEmpty && name.isEmpty
+    }
+
+    /// If the user selected a buddy by name but we didn't have a backend voice ID
+    /// yet, back-fill the ID now that voices are available.
+    private func backfillVoiceIdIfNeeded(from voiceList: [BackendService.AppVoiceDTO]) {
+        let storedId = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard storedId.isEmpty, !localVoiceName.isEmpty else { return }
+
+        let key = Self.normalizedGhostKey(localVoiceName)
+        if let matched = voiceList.first(where: { Self.normalizedGhostKey($0.name) == key }) {
+            localVoiceId = matched.voice_id
+            UserDefaults.standard.set(matched.voice_id, forKey: PreferenceKeys.elevenLabsVoiceId)
         }
     }
 
@@ -408,15 +449,16 @@ struct ElevenLabsVoiceSuggestionsView: View {
             voices = cached
             defaultVoiceId = cache.cachedDefaultVoiceId ?? ""
 
-            // Set default selection if not already set
-            let storedId = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? ""
-            if storedId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            // Set default selection only when the user has never picked a buddy
+            if Self.isSelectionEmpty(),
                let defaultVoice = cached.first(where: { $0.voice_id == defaultVoiceId }) ?? cached.first {
                 UserDefaults.standard.set(defaultVoice.voice_id, forKey: PreferenceKeys.elevenLabsVoiceId)
                 UserDefaults.standard.set(defaultVoice.name, forKey: PreferenceKeys.elevenLabsVoiceName)
                 localVoiceId = defaultVoice.voice_id
                 localVoiceName = defaultVoice.name
             }
+
+            backfillVoiceIdIfNeeded(from: cached)
 
             // If cache is still valid, skip network refresh
             if cache.isCacheValid { return }
@@ -438,15 +480,16 @@ struct ElevenLabsVoiceSuggestionsView: View {
             // Cache the result
             cache.cache(voices: result.voices, defaultVoiceId: result.default_voice_id)
 
-            // Set default selection if not already set
-            let storedId2 = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? ""
-            if storedId2.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            // Set default selection only when the user has never picked a buddy
+            if Self.isSelectionEmpty(),
                let defaultVoice = result.voices.first(where: { $0.voice_id == result.default_voice_id }) ?? result.voices.first {
                 UserDefaults.standard.set(defaultVoice.voice_id, forKey: PreferenceKeys.elevenLabsVoiceId)
                 UserDefaults.standard.set(defaultVoice.name, forKey: PreferenceKeys.elevenLabsVoiceName)
                 localVoiceId = defaultVoice.voice_id
                 localVoiceName = defaultVoice.name
             }
+
+            backfillVoiceIdIfNeeded(from: result.voices)
         } catch {
             // If we have cached data, silently ignore network errors
         }

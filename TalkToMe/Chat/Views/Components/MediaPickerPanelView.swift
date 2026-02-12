@@ -115,7 +115,7 @@ struct MediaPickerPanelView: View {
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var showCamera: Bool = false
     @State private var showCameraUnavailableAlert: Bool = false
-    @StateObject private var recentPhotos = RecentPhotosViewModel()
+    @ObservedObject private var recentPhotos = RecentPhotosViewModel.shared
     private let recentThumbSize: CGFloat = 100
 
     var body: some View {
@@ -187,8 +187,7 @@ struct MediaPickerPanelView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task {
-            let _ = await recentPhotos.requestAccessIfNeeded()
-            await recentPhotos.bootstrap(limit: 20)
+            await recentPhotos.bootstrapIfNeeded(limit: 20)
         }
         .onChange(of: photoPickerItems, initial: false) { _, newItems in
             Task {
@@ -364,6 +363,8 @@ struct MediaPickerPanelView: View {
 
 @MainActor
 private final class RecentPhotosViewModel: ObservableObject {
+    static let shared = RecentPhotosViewModel()
+
     @Published private(set) var authStatus: PHAuthorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
     @Published private(set) var recentAssets: [PHAsset] = []
     /// Local trigger to force view updates when thumbnails load from shared cache.
@@ -371,6 +372,7 @@ private final class RecentPhotosViewModel: ObservableObject {
 
     private let imageManager = PHCachingImageManager()
     private let thumbnailCache = PhotoThumbnailCache.shared
+    private var hasBootstrapped = false
 
     var canShowRecents: Bool {
         authStatus == .authorized || authStatus == .limited
@@ -381,6 +383,13 @@ private final class RecentPhotosViewModel: ObservableObject {
         if canShowRecents {
             loadRecentAssets(limit: limit)
         }
+    }
+
+    func bootstrapIfNeeded(limit: Int) async {
+        guard !hasBootstrapped else { return }
+        hasBootstrapped = true
+        let _ = await requestAccessIfNeeded()
+        await bootstrap(limit: limit)
     }
 
     func refreshAuthStatus() {

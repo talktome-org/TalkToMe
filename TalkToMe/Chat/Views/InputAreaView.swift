@@ -315,7 +315,7 @@ struct InputAreaView: View {
             // freezing the ghost video during the transition.
             onSpeakToggle()
         }) {
-            GhostVideoContentView(isSpeakModeActive: isSpeakModeActive)
+            GhostVideoContentView(isSpeakModeActive: isSpeakModeActive, speakModePhase: speakModePhase)
         }
         .buttonStyle(.plain)
     }
@@ -417,14 +417,9 @@ struct InputAreaView: View {
 /// tear down the media picker sheet and reload photos).
 private struct GhostVideoContentView: View {
     let isSpeakModeActive: Bool
+    let speakModePhase: SpeakModePhase
 
     @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var selectedVoiceName: String = ""
-
-    private static let ghostStartTimes: [String: Double] = [
-        "jay": 0.1,
-        "hex": 0.1,
-        "snow": 0.1
-    ]
 
     private var ghostVideoName: String {
         ElevenLabsVoiceSuggestionsView.ghostVideoName(for: selectedVoiceName)
@@ -436,20 +431,38 @@ private struct GhostVideoContentView: View {
         return Bundle.main.url(forResource: ghostVideoName, withExtension: "mp4") != nil
     }
 
+    /// Show the animated mp4 whenever speak mode is active.
+    private var isSpeechActive: Bool {
+        isSpeakModeActive
+    }
+
     var body: some View {
+        let size: CGFloat = isSpeakModeActive ? 64 : 76
+
         Group {
-            if hasGhostVideo {
+            if hasGhostVideo && isSpeechActive {
                 TransparentVideoPlayerView(
                     videoName: ghostVideoName,
                     videoExtension: "mp4",
-                    startTime: Self.ghostStartTimes[ghostVideoName] ?? 0
+                    startTime: ElevenLabsVoiceSuggestionsView.ghostStartTimes[ghostVideoName] ?? 0
                 )
             } else {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                ghostImage
             }
         }
-        .frame(width: isSpeakModeActive ? 56 : 76, height: isSpeakModeActive ? 56 : 76)
+        .frame(width: size, height: size)
+    }
+
+    @ViewBuilder
+    private var ghostImage: some View {
+        if let uiImage = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: selectedVoiceName) {
+            Image(uiImage: uiImage)
+                .resizable()
+                .scaledToFit()
+        } else {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(.ultraThinMaterial)
+        }
     }
 }
 
