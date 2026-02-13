@@ -204,6 +204,9 @@ final class FriendsViewModel: ObservableObject {
         if let url = partner.avatarURL?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty {
             UserDefaults.standard.set(url, forKey: PreferenceKeys.partnerAvatarURL)
         }
+        if let voice = partner.voiceName?.trimmingCharacters(in: .whitespacesAndNewlines), !voice.isEmpty {
+            UserDefaults.standard.set(voice, forKey: PreferenceKeys.partnerVoiceName)
+        }
         UserDefaults.standard.set(partnerId.uuidString, forKey: PreferenceKeys.partnerUserId)
     }
 

@@ -11,6 +11,7 @@ enum PreferenceKeys {
     static let partnerName = "partner_name"
     static let partnerAvatarURL = "partner_avatar_url"
     static let partnerDisplayName = "partner_display_name"
+    static let partnerVoiceName = "partner_voice_name"
     static let ttsVoiceIdentifier = "tts_voice_identifier"
     static let currentUserId = "current_user_id"
     static let didExplicitSignOut = "did_explicit_sign_out"

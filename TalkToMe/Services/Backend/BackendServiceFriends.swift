@@ -67,7 +67,7 @@ extension BackendService {
             // Backwards-compat: older backend versions returned `[UUID]`.
             if let legacy = try? jsonDecoder.decode(FriendsListResponseBodyLegacy.self, from: data) {
                 return legacy.friends.map {
-                    FriendSummary(id: $0, fullName: "Friend", authProvider: "Unknown", avatarURL: nil)
+                    FriendSummary(id: $0, fullName: "Friend", authProvider: "Unknown", avatarURL: nil, voiceName: nil)
                 }
             }
             let raw = String(data: data, encoding: .utf8) ?? "<non-utf8>"
