@@ -67,7 +67,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         self.finishSent = false
         self.pendingFinish = false
 
-        audioQueue.sync {
+        audioQueue.async {
             self.startedPlayback = false
         }
 

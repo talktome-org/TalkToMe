@@ -31,7 +31,7 @@ final class SharedAudioEngine: @unchecked Sendable {
     /// Return the app audio session to a non-blocking idle state.
     /// Safe to call from any thread.
     func ensureIdleAudioSession() {
-        audioQueue.sync {
+        audioQueue.async {
             self.configureIdleAudioSessionOnQueue()
         }
     }
@@ -121,11 +121,9 @@ final class SharedAudioEngine: @unchecked Sendable {
 
     /// Remove the input tap (when STT stops recording).
     func removeInputTap() {
-        audioQueue.sync {
-            engine?.inputNode.removeTap(onBus: 0)
-            hasInputTap = false
-        }
         audioQueue.async {
+            self.engine?.inputNode.removeTap(onBus: 0)
+            self.hasInputTap = false
             self.deactivateAudioSessionIfIdleOnQueue()
         }
     }
@@ -153,38 +151,35 @@ final class SharedAudioEngine: @unchecked Sendable {
 
     /// Remove the speaker level tap.
     func removeSpeakerLevelTap() {
-        audioQueue.sync {
-            guard hasSpeakerLevelTap else { return }
-            engine?.mainMixerNode.removeTap(onBus: 0)
-            hasSpeakerLevelTap = false
-        }
         audioQueue.async {
+            guard self.hasSpeakerLevelTap else { return }
+            self.engine?.mainMixerNode.removeTap(onBus: 0)
+            self.hasSpeakerLevelTap = false
             self.deactivateAudioSessionIfIdleOnQueue()
         }
     }
 
     /// Stop the player node without stopping the engine.
     func stopPlayerNode() {
-        audioQueue.sync {
-            playerNode.stop()
-        }
         audioQueue.async {
+            self.playerNode.stop()
             self.deactivateAudioSessionIfIdleOnQueue()
         }
     }
 
     /// Fully stop the engine and tear down. Called when exiting speak mode.
     func stop() {
-        audioQueue.sync {
-            if hasSpeakerLevelTap {
-                engine?.mainMixerNode.removeTap(onBus: 0)
-                hasSpeakerLevelTap = false
+        audioQueue.async {
+            if self.hasSpeakerLevelTap {
+                self.engine?.mainMixerNode.removeTap(onBus: 0)
+                self.hasSpeakerLevelTap = false
             }
-            engine?.inputNode.removeTap(onBus: 0)
-            hasInputTap = false
-            playerNode.stop()
-            engine?.stop()
-            deactivateAudioSessionIfIdleOnQueue()
+            self.engine?.inputNode.removeTap(onBus: 0)
+            self.hasInputTap = false
+            self.playerNode.stop()
+            self.engine?.stop()
+            // Always deactivate on full stop so background music can resume.
+            self.deactivateVoiceSessionOnQueue()
         }
     }
 
