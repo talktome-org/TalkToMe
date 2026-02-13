@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 @MainActor
-final class ElevenLabsTTSPlayer: ObservableObject {
+final class ElevenLabsTTSPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate {
     static let shared = ElevenLabsTTSPlayer()
 
     @Published var isSpeaking: Bool = false
@@ -10,12 +10,16 @@ final class ElevenLabsTTSPlayer: ObservableObject {
 
     private var player: AVAudioPlayer?
 
-    private init() {}
+    private override init() {
+        super.init()
+    }
 
     func stop() {
         player?.stop()
+        player?.delegate = nil
         player = nil
         isSpeaking = false
+        deactivateAudioSession()
     }
 
     func speak(_ text: String) {
@@ -31,6 +35,21 @@ final class ElevenLabsTTSPlayer: ObservableObject {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
         try? session.setActive(true, options: [])
+    }
+
+    private func deactivateAudioSession() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+        try? session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in
+            self.player?.delegate = nil
+            self.player = nil
+            self.isSpeaking = false
+            self.deactivateAudioSession()
+        }
     }
 
     private func resolveVoiceId() -> String? {
@@ -61,6 +80,7 @@ final class ElevenLabsTTSPlayer: ObservableObject {
             }
             let p = try AVAudioPlayer(data: data)
             self.player = p
+            p.delegate = self
             p.prepareToPlay()
             isSpeaking = true
             p.play()
