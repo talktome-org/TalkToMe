@@ -11,7 +11,7 @@ import UIKit
 
 // MARK: - API DTOs
 
-private struct DiarySettingsRow: Codable {
+struct DiarySettingsRow: Codable {
     let user_id: UUID
     var name: String
     var description: String
@@ -20,7 +20,7 @@ private struct DiarySettingsRow: Codable {
     var updated_at: String?
 }
 
-private struct DiaryEntryRow: Codable {
+struct DiaryEntryRow: Codable {
     let id: UUID
     let user_id: UUID
     var date: String  // "yyyy-MM-dd"
