@@ -110,6 +110,7 @@ final class PhotoThumbnailCache {
 struct MediaPickerPanelView: View {
     @Binding var attachments: [PendingAttachment]
     @Binding var pendingPhotoSelections: [String: PendingAttachment]
+    @Binding var pendingSelectionOrder: [String]
     @Binding var attachmentIdToAssetId: [UUID: String]
     @Environment(\.dismiss) private var dismiss
     @State private var photoPickerItems: [PhotosPickerItem] = []
@@ -209,15 +210,16 @@ struct MediaPickerPanelView: View {
             .ignoresSafeArea()
         }
         .onDisappear {
-            // Add pending selections to attachments when sheet is dismissed
-            for (assetId, attachment) in pendingPhotoSelections {
-                if attachments.count < 12 {
+            // Add pending selections to attachments in selection order
+            for assetId in pendingSelectionOrder {
+                if let attachment = pendingPhotoSelections[assetId], attachments.count < 12 {
                     attachments.append(attachment)
                     attachmentIdToAssetId[attachment.id] = assetId
                 }
             }
             // Clear pending selections after adding
             pendingPhotoSelections.removeAll()
+            pendingSelectionOrder.removeAll()
         }
         .alert("Camera not available", isPresented: $showCameraUnavailableAlert) {
             Button("OK", role: .cancel) {}
@@ -256,7 +258,10 @@ struct MediaPickerPanelView: View {
         if pendingPhotoSelections[assetId] != nil {
             await MainActor.run {
                 Haptics.impact(.light)
-                pendingPhotoSelections.removeValue(forKey: assetId)
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    pendingPhotoSelections.removeValue(forKey: assetId)
+                    pendingSelectionOrder.removeAll { $0 == assetId }
+                }
             }
             return
         }
@@ -265,8 +270,10 @@ struct MediaPickerPanelView: View {
         if let attachmentId = attachmentIdToAssetId.first(where: { $0.value == assetId })?.key {
             await MainActor.run {
                 Haptics.impact(.light)
-                attachments.removeAll { $0.id == attachmentId }
-                attachmentIdToAssetId.removeValue(forKey: attachmentId)
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    attachments.removeAll { $0.id == attachmentId }
+                    attachmentIdToAssetId.removeValue(forKey: attachmentId)
+                }
             }
             return
         }
@@ -302,9 +309,19 @@ struct MediaPickerPanelView: View {
         await MainActor.run {
             if attachments.count + pendingPhotoSelections.count < 12 {
                 Haptics.impact(.light)
-                pendingPhotoSelections[assetId] = attachment
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    pendingPhotoSelections[assetId] = attachment
+                    pendingSelectionOrder.append(assetId)
+                }
             }
         }
+    }
+
+    private func selectionNumber(for assetId: String) -> Int? {
+        if let index = pendingSelectionOrder.firstIndex(of: assetId) {
+            return index + 1
+        }
+        return nil
     }
 
     @ViewBuilder
@@ -334,13 +351,20 @@ struct MediaPickerPanelView: View {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Color.black.opacity(0.25))
                         .frame(width: recentThumbSize, height: recentThumbSize)
+                        .transition(.opacity)
 
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(.white, .blue)
-                        .padding(6)
+                    if let number = selectionNumber(for: assetId) {
+                        Text("\(number)")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 24, height: 24)
+                            .background(Circle().fill(Color.blue))
+                            .padding(6)
+                            .transition(.scale.combined(with: .opacity))
+                    }
                 }
             }
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isSelected)
         }
         .buttonStyle(.plain)
         .onAppear {
@@ -537,6 +561,7 @@ private final class RecentPhotosViewModel: ObservableObject {
     MediaPickerPanelView(
         attachments: .constant([]),
         pendingPhotoSelections: .constant([:]),
+        pendingSelectionOrder: .constant([]),
         attachmentIdToAssetId: .constant([:])
     )
         .background(Color.black)

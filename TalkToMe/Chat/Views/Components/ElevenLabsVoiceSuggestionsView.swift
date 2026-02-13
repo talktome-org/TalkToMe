@@ -98,7 +98,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "mira",
             name: "Mira",
-            description: "Cheerful, affectionate with light, bubbly warmth. Soft breathiness, smiling delivery.",
+            description: "Bright, bubbly, and joyful",
             imageName: "mira",
             videoName: "mira",
             aliases: ["mira"]
@@ -106,7 +106,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "pax",
             name: "Pax",
-            description: "Clear, articulate warmth with a patient teacher vibe. Steady cadence, gentle humor.",
+            description: "Calm, clear, and wise",
             imageName: "pax",
             videoName: "pax",
             aliases: ["pax"]
@@ -114,7 +114,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "luma",
             name: "Luma",
-            description: "Warm, compassionate. Soft, airy timbre with gentle breathiness and a reassuring smile.",
+            description: "Soft, warm, and caring",
             imageName: "luma",
             videoName: "luma",
             aliases: ["luma"]
@@ -122,7 +122,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "snow",
             name: "Snow",
-            description: "Soft-spoken and serene with a cozy, calming tone and steady, reflective pacing.",
+            description: "Regal, poised, and grand",
             imageName: "snow",
             videoName: "snow",
             aliases: ["snow"]
@@ -130,7 +130,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "jay",
             name: "Jay",
-            description: "Confident, heroic and encouraging. Upbeat cadence with clear articulation.",
+            description: "Bold, quick, and driven",
             imageName: "jay",
             videoName: "jay",
             aliases: ["jay"]
@@ -138,7 +138,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "hex",
             name: "Hex",
-            description: "Bright, playful and magical. Light airy tone with expressive inflection.",
+            description: "Bookish, arcane, and curious",
             imageName: "hex",
             videoName: "hex",
             aliases: ["hex"]
@@ -214,10 +214,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
 
         return Self.requiredBuddies.map { buddy in
             let matched = buddy.aliases.compactMap { configuredByAlias[$0] }.first
-            let resolvedDescription: String = {
-                let serverDescription = matched?.description.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return serverDescription.isEmpty ? buddy.description : serverDescription
-            }()
+            let resolvedDescription = buddy.description
             return BuddyOption(
                 definition: buddy,
                 configuredVoiceId: matched?.voice_id,
@@ -378,37 +375,36 @@ struct ElevenLabsVoiceSuggestionsView: View {
     private func voiceCard(_ buddy: BuddyOption) -> some View {
         let isSelected = buddy.definition.key == selectedBuddyKey
 
-        return HStack(spacing: 12) {
+        return HStack(alignment: .center, spacing: 12) {
             ghostPreview(for: buddy.definition)
                 .frame(width: 72, height: 72)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .top) {
-                    Text(buddy.definition.name)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 4)
-
-                    if isSelected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 18))
-                            .foregroundStyle(.white, .blue)
-                    }
-                }
+                Text(buddy.definition.name)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
 
                 Text(buddy.resolvedDescription)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-                    .multilineTextAlignment(.leading)
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(alignment: .topTrailing) {
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(.white, .blue)
+                    .padding(8)
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isSelected)
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(
