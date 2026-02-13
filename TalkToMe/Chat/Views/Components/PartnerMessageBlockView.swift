@@ -28,43 +28,15 @@ struct PartnerMessageBlockView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var resolvedVoiceName: String {
-        if let name = resolvedFriend?.voiceName?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !name.isEmpty {
-            return name
-        }
-        let fallback = (UserDefaults.standard.string(forKey: PreferenceKeys.partnerVoiceName) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !fallback.isEmpty { return fallback }
-        // Default ghost when partner's voice is unknown
-        return "mira"
-    }
-
-    private var ghostImage: UIImage? {
-        ElevenLabsVoiceSuggestionsView.ghostUIImage(for: resolvedVoiceName)
-    }
-
     var body: some View {
         HStack(alignment: .bottom, spacing: 6) {
-            // Domino: ghost on left (shifted up), profile pic overlaps from right
-            HStack(alignment: .bottom, spacing: -14) {
-                if let ghostImage {
-                    Image(uiImage: ghostImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 48, height: 48)
-                        .offset(y: 1)
-                }
-
-                AvatarCacheManager.shared.cachedAsyncImage(
-                    urlString: resolvedAvatarURL.isEmpty ? nil : resolvedAvatarURL,
-                    placeholder: avatarPlaceholder,
-                    fallback: avatarPlaceholder
-                )
-                .frame(width: 43, height: 43)
-                .clipShape(Circle())
-                .zIndex(1)
-            }
+            AvatarCacheManager.shared.cachedAsyncImage(
+                urlString: resolvedAvatarURL.isEmpty ? nil : resolvedAvatarURL,
+                placeholder: avatarPlaceholder,
+                fallback: avatarPlaceholder
+            )
+            .frame(width: 43, height: 43)
+            .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(resolvedName)

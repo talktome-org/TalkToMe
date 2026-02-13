@@ -180,11 +180,7 @@ final class DiaryService {
     private func uploadPhoto(path: String, data: Data) async throws {
         try await client.storage
             .from(bucketName)
-            .upload(
-                path: path,
-                file: data,
-                options: FileOptions(contentType: "image/jpeg")
-            )
+            .upload(path, data: data, options: FileOptions(contentType: "image/jpeg"))
     }
 
     func publicURL(for storagePath: String) -> URL? {
