@@ -22,21 +22,6 @@ struct ChatView: View {
         self.onBack = onBack
     }
 
-    private var hasSentPartnerMessageInThisChat: Bool {
-        viewModel.messages.contains(where: { msg in
-            msg.segments.contains(where: { seg in
-                if case .partnerMessage(_) = seg { return true }
-                return false
-            })
-        })
-    }
-
-    private var friendForProfilePictureDisplay: FriendSummary? {
-        guard hasSentPartnerMessageInThisChat else { return nil }
-        guard let friendId = viewModel.selectedFriendUserId else { return nil }
-        return friendsViewModel.friends.first(where: { $0.id == friendId })
-    }
-
     private var activeSessionIdForActions: UUID? {
         sessionsViewModel.activeSessionId ?? viewModel.sessionId
     }
@@ -55,7 +40,9 @@ struct ChatView: View {
                 isInputFocused: $isInputFocused
             )
             .task {
-                await viewModel.voiceController.preconnectDictationSTTIfNeeded()
+                async let dictationWarmup: Void = viewModel.voiceController.preconnectDictationSTTIfNeeded()
+                async let speakWarmup: Void = viewModel.voiceController.preconnectSpeakServicesIfNeeded()
+                _ = await (dictationWarmup, speakWarmup)
             }
             .toolbar {
                 if let onBack {
@@ -64,11 +51,8 @@ struct ChatView: View {
                             Haptics.impact(.light)
                             onBack()
                         } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "chevron.left")
-                                    .font(.system(size: 17, weight: .semibold))
-                                Text("Back")
-                            }
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 17, weight: .semibold))
                         }
                     }
                 }
@@ -85,18 +69,6 @@ struct ChatView: View {
                         onDeleteRequest: { sessionActions.requestDelete() },
                         onReportRequest: { sessionActions.requestReport() }
                     )
-                }
-
-                if #available(iOS 26.0, *) {
-                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
-                }
-
-                ToolbarItem(placement: .topBarTrailing) {
-                    if let friend = friendForProfilePictureDisplay {
-                        SidebarAvatarView(avatarURL: friend.avatarURL)
-                            .frame(width: 36, height: 36)
-                            .clipShape(Circle())
-                    }
                 }
             }
         }

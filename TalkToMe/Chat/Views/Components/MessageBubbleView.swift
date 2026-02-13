@@ -162,11 +162,42 @@ struct MessageBubbleView: View {
     let message: ChatMessage
 
     var onSendToPartner: ((String) -> Void)? = nil
+    var onRegenerate: (() -> Void)? = nil
 
     var sendAnimationNamespace: Namespace.ID? = nil
     var outgoingAnimatingMessageId: UUID? = nil
 
     @Environment(\.colorScheme) private var colorScheme
+    
+    /// Whether to show action buttons under assistant messages
+    private var shouldShowAssistantActions: Bool {
+        // Don't show for user messages
+        guard !message.isFromUser else { return false }
+        // Don't show for partner messages
+        guard !message.isFromPartnerUser else { return false }
+        // Don't show while message is still loading
+        guard !message.isToolLoading else { return false }
+        // Don't show for messages generated during voice mode
+        guard !message.isFromVoiceMode else { return false }
+        // Don't show while this message is still streaming (check if it's the last message and loading)
+        if chatViewModel.isLoading {
+            let lastAssistantMessage = chatViewModel.messages.last { !$0.isFromUser }
+            if lastAssistantMessage?.id == message.id {
+                return false
+            }
+        }
+        // Don't show for empty messages
+        let text = plainText(from: message.segments)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        // Check if this message only contains partner drafts/received
+        let hasRegularContent = message.segments.contains { segment in
+            if case .text(let t) = segment, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return true
+            }
+            return false
+        }
+        return hasRegularContent
+    }
 
     @MainActor
     var body: some View {
@@ -236,6 +267,15 @@ struct MessageBubbleView: View {
                                 Spacer(minLength: 0)
                             }
                             .padding(.top, 2)
+                        }
+                        
+                        // Action buttons for assistant messages
+                        if shouldShowAssistantActions {
+                            AssistantMessageActionsView(
+                                messageText: plainText(from: message.segments),
+                                onRegenerate: onRegenerate
+                            )
+                            .transition(.opacity.animation(.easeIn(duration: 0.2)))
                         }
                     }
                 }

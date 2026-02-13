@@ -43,3 +43,6 @@ __pycache__/
 # SweetPad
 buildServer.json
 .vscode/
+
+# Large video assets
+TalkToMe/Resources/*.mp4

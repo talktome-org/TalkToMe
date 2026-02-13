@@ -24,8 +24,7 @@ class VoiceAgentPromptLibrary:
         for name in ("volt", "luma", "pax", "mira", "hexley"):
             path = prompts_dir / f"{name}_prompt.txt"
             try:
-                with open(path, "r", encoding="utf-8") as f:
-                    text = f.read().strip()
+                text = path.read_text(encoding="utf-8").strip()
                 if text:
                     self._prompts[name.lower()] = text
             except FileNotFoundError:
@@ -42,6 +41,4 @@ class VoiceAgentPromptLibrary:
         The client is expected to always send a valid agent name.
         """
         key = (voice_agent or "").strip().lower()
-        if key and key in self._prompts:
-            return self._prompts[key]
-        return None
+        return self._prompts.get(key) if key else None

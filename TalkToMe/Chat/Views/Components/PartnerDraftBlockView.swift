@@ -33,17 +33,10 @@ struct PartnerDraftBlockView: View {
 
     var body: some View {
         VStack(alignment: .leading) {
-            HStack {
-                Text("Message")
-                    .font(.footnote)
-                    .foregroundColor(Color.secondary)
-                    .offset(y: -4)
-
-                Spacer()
-
-                MessageActionsView(text: text)
-                    .offset(y: -4)
-            }
+            Text("Message")
+                .font(.footnote)
+                .foregroundColor(Color.secondary)
+                .offset(y: -4)
 
             Divider()
                 .padding(.horizontal, -12)

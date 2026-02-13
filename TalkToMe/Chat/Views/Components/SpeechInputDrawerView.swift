@@ -22,6 +22,7 @@ struct SpeechInputDrawerView: View {
         }
         switch phase {
         case .idle: return "Ready"
+        case .connecting: return "Connecting..."
         case .listening: return "Listening..."
         case .processing: return "Processing..."
         case .answering: return "Speaking..."
@@ -34,6 +35,7 @@ struct SpeechInputDrawerView: View {
         }
         switch phase {
         case .idle: return .gray.opacity(0.5)
+        case .connecting: return .gray.opacity(0.6)
         case .listening: return .red.opacity(0.8)
         case .processing: return .orange.opacity(0.8)
         case .answering: return .blue.opacity(0.8)
@@ -84,7 +86,7 @@ struct SpeechInputDrawerView: View {
                         level: activeLevel,
                         color: barColor,
                         isAnimating: phase == .listening || phase == .answering,
-                        isPulsing: phase == .processing
+                        isPulsing: phase == .processing || phase == .connecting
                     )
 
                     Text(statusText)
@@ -142,7 +144,7 @@ struct SpeechInputDrawerView: View {
     }
 }
 
-private struct AnimatedBarsView: View {
+struct AnimatedBarsView: View {
     let level: CGFloat
     let color: Color
     let isAnimating: Bool

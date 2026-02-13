@@ -10,24 +10,24 @@ struct ChatScreenView: View {
     let isInputFocused: FocusState<Bool>.Binding
 
     private var inputAreaHeight: CGFloat {
-        chatViewModel.pendingAttachments.isEmpty ? 68 : 128
+        chatViewModel.pendingAttachments.isEmpty ? 68 : 220
     }
 
     var body: some View {
         MessagesListView(
             chatViewModel: chatViewModel,
             isInputFocused: isInputFocused.wrappedValue,
-            inputAreaHeight: inputAreaHeight
+            inputAreaHeight: inputAreaHeight,
+            onBackgroundTap: {
+                isInputFocused.wrappedValue = false
+            }
         )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            isInputFocused.wrappedValue = false
-        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             InputAreaView(
                 isVoiceRecording: chatViewModel.dictationSTTService.isRecording,
                 voiceModeEnabled: voiceModeEnabled,
                 isSpeakModeActive: chatViewModel.isSpeakModeActive,
+                isSpeakMicMuted: chatViewModel.voiceController.isSpeakMicMuted,
                 speakModePhase: chatViewModel.voiceController.speakModePhase,
                 speakerLevel: chatViewModel.voiceController.speakerLevel,
                 micLevel: chatViewModel.voiceController.micLevel,
@@ -37,6 +37,9 @@ struct ChatScreenView: View {
                     } else {
                         chatViewModel.voiceController.startSpeakMode()
                     }
+                },
+                onMicMuteToggle: {
+                    chatViewModel.voiceController.toggleSpeakMicMute()
                 },
                 inputText: $chatViewModel.inputText,
                 isLoading: $chatViewModel.isLoading,
@@ -57,6 +60,7 @@ struct ChatScreenView: View {
                 onVoiceModeStart: { chatViewModel.voiceController.startVoiceModePushToTalk() },
                 onVoiceModeStop: { chatViewModel.voiceController.stopVoiceModePushToTalk() }
             )
+            .frame(height: chatViewModel.pendingAttachments.isEmpty ? inputAreaHeight : nil, alignment: .bottom)
             .offset(y: 14)
             .padding(.bottom, isInputFocused.wrappedValue ? 23 : 0)
             .transition(.move(edge: .bottom).combined(with: .opacity))

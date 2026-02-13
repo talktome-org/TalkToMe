@@ -170,6 +170,10 @@ struct TalkToMeApp: App {
                     }
                 }
                 .task {
+                    // Keep decorative media from interrupting other app audio until voice mode is used.
+                    SharedAudioEngine.shared.ensureIdleAudioSession()
+                    // Pre-warm ghost video players so the media picker is instant.
+                    ElevenLabsVoiceSuggestionsView.preloadGhostVideos()
                     _ = NetworkMonitor.shared
                     ChatOutboxProcessor.shared.start()
                     // Telegram-like boot: show cached UI immediately while auth restores.
