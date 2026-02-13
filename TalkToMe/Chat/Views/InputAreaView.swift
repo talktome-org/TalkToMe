@@ -381,7 +381,7 @@ struct InputAreaView: View {
                     .frame(width: !shouldHideGhost ? nil : 0)
             }
             .padding(.vertical, 6)
-            .padding(.horizontal, isInputFocused.wrappedValue ? 16 : 40)
+            .padding(.horizontal, isInputFocused.wrappedValue ? 16 : 36)
             .background(
                 GeometryReader { geo in
                     Color.clear.onChange(of: geo.size.width, initial: true) { _, newWidth in
