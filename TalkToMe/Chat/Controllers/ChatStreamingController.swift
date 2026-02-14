@@ -407,6 +407,7 @@ final class ChatStreamingController {
             let chatHistory = chatHistoryForStream
 
             var accumulated = ""
+            var accumulatedThinking = ""
             var currentSegments: [MessageSegment] = []
             var streamSessionId: UUID? = requestSessionIdForStream ?? localSessionIdForSend
             let prevId: String? = {
@@ -533,6 +534,7 @@ final class ChatStreamingController {
                         }
                     }
                 case .thinking(let text):
+                    accumulatedThinking += text
                     Task { @MainActor in
                         if !self.receivedAnyAssistantOutput {
                             self.typingDelayTask?.cancel()
@@ -727,6 +729,14 @@ final class ChatStreamingController {
                                 }
                             }
 
+                            // Save thinking summary to the completed message (in-memory for immediate display)
+                            let thinkingSummary = accumulatedThinking.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !thinkingSummary.isEmpty,
+                               let msgId = self.currentAssistantMessageId,
+                               let idx = delegate.messages.firstIndex(where: { $0.id == msgId }) {
+                                delegate.messages[idx].thinkingSummary = thinkingSummary
+                            }
+
                             // If the assistant message is empty (no segments), clear the
                             // stored response ID so the next request doesn't chain from a
                             // broken/empty response, which can cause repeated empty replies.
@@ -765,12 +775,16 @@ final class ChatStreamingController {
                             if let sid = (streamSessionId ?? delegate.sessionId) {
                                 let tokenForSync = accessToken
                                 let capturedGhostName = self.ghostNameBySession[sid]
+                                let capturedThinkingSummary = accumulatedThinking.trimmingCharacters(in: .whitespacesAndNewlines)
                                 Task.detached {
                                     try? await Task.sleep(nanoseconds: 900_000_000)
                                     if let dtos = try? await BackendService.shared.fetchMessages(sessionId: sid, accessToken: tokenForSync) {
-                                        await ChatStore.shared.upsertMessages(dtos)
+                                        await ChatStore.shared.reconcileMessagesWithServer(dtos, sessionId: sid)
                                         if let ghostName = capturedGhostName {
                                             await ChatStore.shared.setGhostNameForPartnerDrafts(sessionId: sid, ghostName: ghostName)
+                                        }
+                                        if !capturedThinkingSummary.isEmpty {
+                                            await ChatStore.shared.setThinkingSummaryForLastAssistant(sessionId: sid, summary: capturedThinkingSummary)
                                         }
                                     }
                                 }

@@ -161,6 +161,12 @@ final class LocalDatabase {
             }
         }
 
+        migrator.registerMigration("messages_add_thinking_summary") { db in
+            try db.alter(table: "messages") { t in
+                t.add(column: "thinking_summary", .text)
+            }
+        }
+
         return migrator
     }
 }

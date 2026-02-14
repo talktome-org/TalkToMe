@@ -5,6 +5,8 @@ struct AssistantMessageActionsView: View {
     let regenerationCount: Int
     let onRegenerate: (() -> Void)?
     var onToast: ((String) -> Void)? = nil
+    var thinkingSummary: String? = nil
+    var onToggleThinking: (() -> Void)? = nil
 
     @State private var showCopyCheck: Bool = false
     @State private var feedbackGiven: FeedbackType? = nil
@@ -18,12 +20,16 @@ struct AssistantMessageActionsView: View {
         messageText: String,
         regenerationCount: Int = 0,
         onRegenerate: (() -> Void)? = nil,
-        onToast: ((String) -> Void)? = nil
+        onToast: ((String) -> Void)? = nil,
+        thinkingSummary: String? = nil,
+        onToggleThinking: (() -> Void)? = nil
     ) {
         self.messageText = messageText
         self.regenerationCount = regenerationCount
         self.onRegenerate = onRegenerate
         self.onToast = onToast
+        self.thinkingSummary = thinkingSummary
+        self.onToggleThinking = onToggleThinking
     }
 
     var body: some View {
@@ -36,6 +42,19 @@ struct AssistantMessageActionsView: View {
             }
             .buttonStyle(.plain)
             .animation(.easeInOut(duration: 0.15), value: showCopyCheck)
+
+            // Thinking summary button
+            if let summary = thinkingSummary, !summary.isEmpty, let onToggleThinking {
+                Button(action: {
+                    Haptics.impact(.light)
+                    onToggleThinking()
+                }) {
+                    Image(systemName: "lightbulb")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
 
             // Regenerate button
             if let onRegenerate {
@@ -66,14 +85,6 @@ struct AssistantMessageActionsView: View {
             }
             .buttonStyle(.plain)
 
-            // Thumbs down
-            Button(action: { giveFeedback(.negative) }) {
-                Image(systemName: feedbackGiven == .negative ? "hand.thumbsdown.fill" : "hand.thumbsdown")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-
             Spacer()
         }
         .padding(.top, 8)
@@ -85,7 +96,7 @@ struct AssistantMessageActionsView: View {
         UIPasteboard.general.string = messageText
         Haptics.impact(.light)
         showCopyCheck = true
-        onToast?("Response copied to clipboard.")
+        onToast?("Message copied to clipboard.")
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             showCopyCheck = false
         }
@@ -98,9 +109,7 @@ struct AssistantMessageActionsView: View {
                 feedbackGiven = nil
             } else {
                 feedbackGiven = type
-                onToast?(type == .positive
-                    ? "We're glad you liked the response. We'll make sure to provide responses of similar quality."
-                    : "We're sad to hear you didn't like the response. We'll work on providing better responses.")
+                onToast?("Thanks for your feedback!")
             }
         }
         // TODO: Send feedback to backend

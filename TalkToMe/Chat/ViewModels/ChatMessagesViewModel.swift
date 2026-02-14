@@ -112,9 +112,17 @@ final class ChatMessagesViewModel: ObservableObject {
                 return
             }
             let dtos = try await BackendService.shared.fetchMessages(sessionId: sid, accessToken: accessToken)
-            await ChatStore.shared.upsertMessages(dtos)
+            await ChatStore.shared.reconcileMessagesWithServer(dtos, sessionId: sid)
             guard let userId = resolvedCurrentUserId() else { self.isLoadingHistory = false; return }
             var mapped = dtos.map { ChatMessage(dto: $0, currentUserId: userId) }
+
+            // Merge local-only fields (thinking_summary) that aren't in server DTOs
+            let localMetadata = await ChatStore.shared.loadLocalMetadata(sessionId: sid)
+            for i in mapped.indices {
+                if let meta = localMetadata[mapped[i].id.uuidString] {
+                    mapped[i].thinkingSummary = meta.thinkingSummary
+                }
+            }
 
             if let optimistic = self.messages.last {
                 let optimisticPartnerReceivedText: String? = optimistic.segments.compactMap { seg in

@@ -19,6 +19,7 @@ struct ChatMessageRecord: Codable, FetchableRecord, PersistableRecord {
     var created_at: String
     var regeneration_count: Int
     var ghost_name: String?
+    var thinking_summary: String?
 }
 
 struct ChatAttachmentRecord: Codable, FetchableRecord, PersistableRecord {
@@ -304,6 +305,54 @@ final class ChatStore {
         removeCachedAttachmentFiles(relativePaths: attachmentRelpathsToDelete)
     }
 
+    struct MessageLocalMetadata {
+        let thinkingSummary: String?
+    }
+
+    /// Returns local-only metadata (thinking_summary) for all messages in a session, keyed by message ID.
+    func loadLocalMetadata(sessionId: UUID) async -> [String: MessageLocalMetadata] {
+        let sid = sessionId.uuidString
+        do {
+            return try await dbQueue.read { db in
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: "SELECT id, thinking_summary FROM messages WHERE session_id = ? AND thinking_summary IS NOT NULL AND thinking_summary != ''",
+                    arguments: [sid]
+                )
+                var result: [String: MessageLocalMetadata] = [:]
+                for row in rows {
+                    let id: String = row["id"]
+                    let ts: String? = row["thinking_summary"]
+                    result[id] = MessageLocalMetadata(thinkingSummary: ts)
+                }
+                return result
+            }
+        } catch {
+            return [:]
+        }
+    }
+
+    /// Sets thinking_summary on the last assistant message in a session.
+    func setThinkingSummaryForLastAssistant(sessionId: UUID, summary: String) async {
+        let sid = sessionId.uuidString
+        do {
+            try await dbQueue.write { db in
+                try db.execute(
+                    sql: """
+                    UPDATE messages SET thinking_summary = ?
+                    WHERE id = (
+                        SELECT id FROM messages
+                        WHERE session_id = ? AND role = 'assistant'
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    )
+                    """,
+                    arguments: [summary, sid]
+                )
+            }
+        } catch {}
+    }
+
     /// Updates the regeneration_count for a single message in the local DB.
     func updateRegenerationCount(messageId: UUID, count: Int) async {
         do {
@@ -383,6 +432,7 @@ final class ChatStore {
                 var msg = ChatMessage(dto: dto, currentUserId: currentUserId)
                 msg.regenerationCount = r.regeneration_count
                 if let gn = r.ghost_name { msg.ghostName = gn }
+                if let ts = r.thinking_summary, !ts.isEmpty { msg.thinkingSummary = ts }
                 return msg
             }
         } catch {
@@ -390,6 +440,61 @@ final class ChatStore {
         }
     }
 
+
+    /// Reconciles local messages for a session with the server's message list.
+    /// Upserts all server messages, then deletes local messages that are
+    /// missing from the server response (unless tied to pending outbox items).
+    func reconcileMessagesWithServer(_ dtos: [BackendService.ChatMessageDTO], sessionId: UUID) async {
+        let sid = sessionId.uuidString
+        let serverMessageIds = Set(dtos.map { $0.id.uuidString })
+
+        if !dtos.isEmpty {
+            await upsertMessages(dtos)
+        }
+
+        do {
+            let attachmentRelpathsToDelete = try await dbQueue.write { db -> [String] in
+                let localIds = try String.fetchAll(
+                    db,
+                    sql: "SELECT id FROM messages WHERE session_id = ?",
+                    arguments: [sid]
+                )
+                let orphanIds = localIds.filter { !serverMessageIds.contains($0) }
+                if orphanIds.isEmpty { return [] }
+
+                var collectedRelpaths: [String] = []
+                for mid in orphanIds {
+                    // Preserve messages with pending outbox items
+                    let pendingCount = try Int.fetchOne(
+                        db,
+                        sql: """
+                        SELECT COUNT(1) FROM outbox
+                        WHERE message_id = ?
+                          AND status IN ('pending', 'failed', 'sending')
+                        """,
+                        arguments: [mid]
+                    ) ?? 0
+                    if pendingCount > 0 { continue }
+
+                    let rels = try String.fetchAll(
+                        db,
+                        sql: """
+                        SELECT local_relpath FROM attachments
+                        WHERE message_id = ? AND local_relpath IS NOT NULL
+                        """,
+                        arguments: [mid]
+                    )
+                    collectedRelpaths.append(contentsOf: rels)
+
+                    try db.execute(sql: "DELETE FROM messages WHERE id = ?", arguments: [mid])
+                }
+
+                return collectedRelpaths
+            }
+
+            removeCachedAttachmentFiles(relativePaths: attachmentRelpathsToDelete)
+        } catch {}
+    }
 
     func upsertMessages(_ dtos: [BackendService.ChatMessageDTO]) async {
         if dtos.isEmpty { return }
@@ -422,7 +527,8 @@ final class ChatStore {
                         content: dto.content,
                         created_at: created,
                         regeneration_count: existing?.regeneration_count ?? 0,
-                        ghost_name: existing?.ghost_name
+                        ghost_name: existing?.ghost_name,
+                        thinking_summary: existing?.thinking_summary
                     )
                     try rec.save(db)
                 }
