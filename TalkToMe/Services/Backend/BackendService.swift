@@ -32,6 +32,8 @@ struct BackendService {
         case toolArgs(String)
         case toolDone
         case responseId(String)
+        case thinking(String)
+        case thinkingDone
         case done
         case error(String)
     }

@@ -36,7 +36,8 @@ extension BackendService {
         friendUserId: UUID? = nil,
         messageId: UUID? = nil,
         ephemeral: Bool = false,
-        voiceAgent: String? = nil
+        voiceAgent: String? = nil,
+        ghostName: String? = nil
     ) -> AsyncStream<StreamEvent> {
         var request = URLRequest(url: baseURL
             .appendingPathComponent("chat")
@@ -56,7 +57,8 @@ extension BackendService {
             attachments: attachments,
             friend_user_id: friendUserId,
             ephemeral: ephemeral ? true : nil,
-            voice_agent: (voiceAgent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : voiceAgent
+            voice_agent: (voiceAgent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : voiceAgent,
+            ghost_name: (ghostName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : ghostName
         )
         request.httpBody = try? jsonEncoder.encode(payload)
         return SSEService.shared.stream(request: request)
@@ -225,15 +227,18 @@ extension BackendService {
 
     /// Best-effort deletion of all messages in a session after a given message.
     /// Silently ignores 404 (backend may not support this endpoint yet).
-    func deleteMessagesAfter(messageId: UUID, sessionId: UUID, accessToken: String) async {
-        let url = baseURL
+    func deleteMessagesAfter(messageId: UUID, sessionId: UUID, accessToken: String, includeAnchor: Bool = false) async {
+        var components = URLComponents(url: baseURL
             .appendingPathComponent("chat")
             .appendingPathComponent("sessions")
             .appendingPathComponent(sessionId.uuidString)
             .appendingPathComponent("messages")
             .appendingPathComponent("after")
-            .appendingPathComponent(messageId.uuidString)
-        var request = URLRequest(url: url)
+            .appendingPathComponent(messageId.uuidString), resolvingAgainstBaseURL: false)!
+        if includeAnchor {
+            components.queryItems = [URLQueryItem(name: "include_anchor", value: "true")]
+        }
+        var request = URLRequest(url: components.url!)
         request.httpMethod = "DELETE"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = BackendService.coreRequestTimeoutSeconds
@@ -293,6 +298,7 @@ private struct ChatRequestBody: Codable {
     let friend_user_id: UUID?
     let ephemeral: Bool?
     let voice_agent: String?
+    let ghost_name: String?
 }
 
 private struct MessagesResponseBody: Codable {

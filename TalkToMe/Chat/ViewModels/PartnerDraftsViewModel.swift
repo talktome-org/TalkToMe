@@ -22,6 +22,18 @@ final class PartnerDraftsViewModel {
         return sentPartnerDrafts.contains(makeKey(sessionId: sessionId, messageContent: messageContent))
     }
 
+    func unmarkPartnerDraftAsSent(sessionId: UUID?, messageContent: String) {
+        guard let sessionId = sessionId else { return }
+        sentPartnerDrafts.remove(makeKey(sessionId: sessionId, messageContent: messageContent))
+        saveSentDrafts()
+    }
+
+    /// Returns true if the session still has at least one sent (not unsent) partner draft.
+    func hasAnySentDraft(for sessionId: UUID) -> Bool {
+        let prefix = sessionId.uuidString + "_"
+        return sentPartnerDrafts.contains(where: { $0.hasPrefix(prefix) })
+    }
+
     func rekeySentDrafts(oldSessionId: UUID, newSessionId: UUID) {
         guard oldSessionId != newSessionId else { return }
         let oldPrefix = oldSessionId.uuidString + "_"

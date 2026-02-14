@@ -236,7 +236,7 @@ struct MessageBubbleView: View {
                                 }
                             case .imageData(_), .imageURL(_), .fileData(_, _), .fileURL(_, _):
                                 EmptyView()
-                            case .partnerMessage(let text):
+                            case .partnerMessage(let text, let ghostName):
                                 if !text.isEmpty {
                                     let isSent = chatViewModel.partnerDrafts.isPartnerDraftSent(sessionId: chatViewModel.sessionId, messageContent: text)
                                     let isLinked = chatViewModel.isConnectedToFriendInThisChat
@@ -245,7 +245,7 @@ struct MessageBubbleView: View {
                                         isSent: isSent,
                                         isLinked: isLinked,
                                         recipientUserId: chatViewModel.selectedFriendUserId,
-                                        ghostName: message.ghostName
+                                        ghostName: ghostName ?? message.ghostName
                                     ) { action in
                                         switch action {
                                         case .send(let edited):

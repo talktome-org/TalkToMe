@@ -311,7 +311,7 @@ private struct HeaderCircleStyle: ViewModifier {
 
 // MARK: - Friends Sheet
 
-private struct FriendsSheetView: View {
+struct FriendsSheetView: View {
     @Binding var isPresented: Bool
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
 

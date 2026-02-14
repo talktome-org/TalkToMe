@@ -7,7 +7,7 @@ struct ToastOverlayView: View {
     var body: some View {
         HStack(spacing: 12) {
             Text(message)
-                .font(.system(size: 13, weight: .regular))
+                .font(.system(size: 15, weight: .medium))
                 .foregroundColor(.primary)
                 .lineLimit(2)
 
@@ -16,14 +16,16 @@ struct ToastOverlayView: View {
             if let onDismiss {
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.secondary)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
         .frame(maxWidth: .infinity)
         .background {
             if #available(iOS 26.0, *) {

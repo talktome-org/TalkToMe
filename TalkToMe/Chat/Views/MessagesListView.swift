@@ -76,8 +76,11 @@ struct MessagesListView: View {
                 }
                 if isAssistantTyping {
                     HStack(alignment: .top, spacing: 0) {
-                        TypingIndicatorView(showAfter: 0)
-                            .padding(.top, -10)
+                        ThinkingIndicatorView(
+                            thinkingText: chatViewModel.thinkingText,
+                            thinkingTextDone: chatViewModel.thinkingTextDone
+                        )
+                        .padding(.top, -10)
                         Spacer(minLength: 0)
                     }
                 }

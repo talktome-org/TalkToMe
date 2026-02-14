@@ -85,7 +85,7 @@ struct AssistantMessageActionsView: View {
         UIPasteboard.general.string = messageText
         Haptics.impact(.light)
         showCopyCheck = true
-        onToast?("Copied response to clipboard.")
+        onToast?("Response copied to clipboard.")
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             showCopyCheck = false
         }
