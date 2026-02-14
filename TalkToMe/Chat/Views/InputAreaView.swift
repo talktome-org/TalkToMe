@@ -24,6 +24,7 @@ struct InputAreaView: View {
 
     @State private var isMediaPanelVisible: Bool = false
     @State private var pendingPhotoSelections: [String: PendingAttachment] = [:]
+    @State private var pendingSelectionOrder: [String] = []
     @State private var attachmentIdToAssetId: [UUID: String] = [:]
     @State private var inputAreaWidth: CGFloat = 0
     @State private var showMicSlash: Bool = false
@@ -39,9 +40,9 @@ struct InputAreaView: View {
         !(trimmedInput.isEmpty && pendingAttachments.isEmpty)
     }
 
-    /// Hide the ghost when typing, voice recording, or attachments are present.
+    /// Hide the ghost when typing, voice recording, attachments are present, or loading a response.
     private var shouldHideGhost: Bool {
-        !trimmedInput.isEmpty || isVoiceRecording || !pendingAttachments.isEmpty
+        !trimmedInput.isEmpty || isVoiceRecording || !pendingAttachments.isEmpty || (isLoading && !isSpeakModeActive)
     }
 
     /// Approximate text width available inside the capsule when the ghost is visible (collapsed layout).
@@ -200,6 +201,7 @@ struct InputAreaView: View {
                                     withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
                                         if let assetId = attachmentIdToAssetId[att.id] {
                                             pendingPhotoSelections.removeValue(forKey: assetId)
+                                            pendingSelectionOrder.removeAll { $0 == assetId }
                                             attachmentIdToAssetId.removeValue(forKey: att.id)
                                         }
                                         pendingAttachments.removeAll { $0.id == att.id }
@@ -232,7 +234,7 @@ struct InputAreaView: View {
                 if !isVoiceRecording && !hideMicForStop && !isSpeakModeActive {
                     Image(systemName: "mic")
                         .font(.system(size: 19, weight: .semibold))
-                        .foregroundColor(.primary)
+                        .foregroundColor(.secondary)
                         .frame(width: 32, height: 32)
                         .contentShape(Rectangle())
                         .transition(.symbolEffect(.disappear))
@@ -246,7 +248,7 @@ struct InputAreaView: View {
                 if showMicSlash {
                     // Stop button: small square
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(Color.primary)
+                        .fill(Color.secondary)
                         .frame(width: 12, height: 12)
                         .frame(width: 32, height: 32)
                         .contentShape(Circle())
@@ -279,12 +281,12 @@ struct InputAreaView: View {
                         }
                     }) {
                         Image(systemName: (isLoading && !isSpeakModeActive) ? "stop.fill" : "arrow.up")
-                            .font(.system(size: 19, weight: .semibold))
-                            .foregroundColor((isLoading && !isSpeakModeActive) ? .red : .white)
+                            .font(.system(size: (isLoading && !isSpeakModeActive) ? 13 : 19, weight: .semibold))
+                            .foregroundColor((isLoading && !isSpeakModeActive) ? .primary : .white)
                             .frame(width: 32, height: 32)
                             .background(
                                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                    .fill((isLoading && !isSpeakModeActive) ? Color.clear : Color.accentColor)
+                                    .fill(Color.accentColor)
                             )
                     }
                     .buttonStyle(.plain)
@@ -381,7 +383,7 @@ struct InputAreaView: View {
                     .frame(width: !shouldHideGhost ? nil : 0)
             }
             .padding(.vertical, 6)
-            .padding(.horizontal, isInputFocused.wrappedValue ? 16 : 36)
+            .padding(.horizontal, (isInputFocused.wrappedValue || (isLoading && !isSpeakModeActive)) ? 16 : 36)
             .background(
                 GeometryReader { geo in
                     Color.clear.onChange(of: geo.size.width, initial: true) { _, newWidth in
@@ -404,6 +406,7 @@ struct InputAreaView: View {
                 MediaPickerPanelView(
                     attachments: $pendingAttachments,
                     pendingPhotoSelections: $pendingPhotoSelections,
+                    pendingSelectionOrder: $pendingSelectionOrder,
                     attachmentIdToAssetId: $attachmentIdToAssetId
                 )
                 .presentationDetents([.medium])

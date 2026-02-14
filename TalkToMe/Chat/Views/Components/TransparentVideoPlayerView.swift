@@ -51,7 +51,10 @@ final class TransparentPlayerUIView: UIView {
         recycleLock.lock()
         defer { recycleLock.unlock() }
         guard let view = recycledViews.removeValue(forKey: videoName) else { return nil }
-        // Resume playback — the player was paused when recycled.
+        // Restart observers and resume playback.
+        if let player = view.queuePlayer {
+            view.setupObservers(for: player)
+        }
         view.queuePlayer?.play()
         return view
     }
@@ -65,8 +68,9 @@ final class TransparentPlayerUIView: UIView {
         }
         // Detach from old superview but keep the player + layer alive.
         view.removeFromSuperview()
-        // Pause so the player doesn't hold audio session resources
-        // (prevents blocking audio session deactivation / music resumption).
+        // Stop the heartbeat timer and observers so the paused player doesn't get
+        // resumed in the background, draining resources.
+        view.suspendObservers()
         view.queuePlayer?.pause()
         recycleLock.lock()
         recycledViews[name] = view
@@ -305,6 +309,17 @@ final class TransparentPlayerUIView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         playerLayer?.frame = bounds
+    }
+
+    /// Pause monitoring without destroying the player, used when recycling.
+    func suspendObservers() {
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
+        statusObservation?.invalidate()
+        statusObservation = nil
+        rateObservation?.invalidate()
+        rateObservation = nil
+        NotificationCenter.default.removeObserver(self)
     }
 
     func cleanup() {
