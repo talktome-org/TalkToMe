@@ -72,6 +72,13 @@ final class SSEService {
                             continuation.yield(.toolArgs(dataString))
                         } else if event == "tool_done" {
                             continuation.yield(.toolDone)
+                        } else if event == "thinking" {
+                            let text = decodeTokenPayload(dataString)
+                            if !text.isEmpty {
+                                continuation.yield(.thinking(text))
+                            }
+                        } else if event == "thinking_done" {
+                            continuation.yield(.thinkingDone)
                         } else if event == "done" {
                             continuation.yield(.done)
                             continuation.finish()
@@ -107,6 +114,13 @@ final class SSEService {
                             if currentEvent == "token" {
                                 let token = decodeTokenPayload(value)
                                 continuation.yield(.token(token))
+                                currentEvent = nil
+                                dataLines.removeAll(keepingCapacity: false)
+                            } else if currentEvent == "thinking" {
+                                let text = decodeTokenPayload(value)
+                                if !text.isEmpty {
+                                    continuation.yield(.thinking(text))
+                                }
                                 currentEvent = nil
                                 dataLines.removeAll(keepingCapacity: false)
                             } else {

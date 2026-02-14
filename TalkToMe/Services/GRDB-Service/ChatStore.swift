@@ -239,8 +239,8 @@ final class ChatStore {
     }
 
     /// Deletes all messages in a session that come after the given message (by created_at).
-    /// The anchor message itself is preserved.
-    func deleteMessagesAfter(messageId: UUID, sessionId: UUID) async {
+    /// When `includeAnchor` is true the anchor message itself is also deleted.
+    func deleteMessagesAfter(messageId: UUID, sessionId: UUID, includeAnchor: Bool = false) async {
         let mid = messageId.uuidString
         let sid = sessionId.uuidString
 
@@ -254,29 +254,45 @@ final class ChatStore {
                     arguments: [mid]
                 ) else { return [] }
 
-                // Collect attachment files for messages to be deleted
-                let rels = try String.fetchAll(
-                    db,
-                    sql: """
-                    SELECT a.local_relpath
-                    FROM attachments a
-                    JOIN messages m ON m.id = a.message_id
-                    WHERE m.session_id = ?
-                      AND (m.created_at > ? OR (m.created_at = ? AND m.id != ?))
-                      AND a.local_relpath IS NOT NULL
-                    """,
-                    arguments: [sid, anchorCreatedAt, anchorCreatedAt, mid]
-                )
-
-                // Delete the messages (attachments cascade via FK)
-                try db.execute(
-                    sql: """
-                    DELETE FROM messages
-                    WHERE session_id = ?
-                      AND (created_at > ? OR (created_at = ? AND id != ?))
-                    """,
-                    arguments: [sid, anchorCreatedAt, anchorCreatedAt, mid]
-                )
+                let rels: [String]
+                if includeAnchor {
+                    rels = try String.fetchAll(
+                        db,
+                        sql: """
+                        SELECT a.local_relpath
+                        FROM attachments a
+                        JOIN messages m ON m.id = a.message_id
+                        WHERE m.session_id = ? AND m.created_at >= ?
+                          AND a.local_relpath IS NOT NULL
+                        """,
+                        arguments: [sid, anchorCreatedAt]
+                    )
+                    try db.execute(
+                        sql: "DELETE FROM messages WHERE session_id = ? AND created_at >= ?",
+                        arguments: [sid, anchorCreatedAt]
+                    )
+                } else {
+                    rels = try String.fetchAll(
+                        db,
+                        sql: """
+                        SELECT a.local_relpath
+                        FROM attachments a
+                        JOIN messages m ON m.id = a.message_id
+                        WHERE m.session_id = ?
+                          AND (m.created_at > ? OR (m.created_at = ? AND m.id != ?))
+                          AND a.local_relpath IS NOT NULL
+                        """,
+                        arguments: [sid, anchorCreatedAt, anchorCreatedAt, mid]
+                    )
+                    try db.execute(
+                        sql: """
+                        DELETE FROM messages
+                        WHERE session_id = ?
+                          AND (created_at > ? OR (created_at = ? AND id != ?))
+                        """,
+                        arguments: [sid, anchorCreatedAt, anchorCreatedAt, mid]
+                    )
+                }
 
                 return rels
             }

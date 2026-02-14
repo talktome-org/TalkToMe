@@ -10,6 +10,8 @@ protocol ChatStreamingDelegate: AnyObject {
     var selectedFriendUserId: UUID? { get }
     var isLoading: Bool { get set }
     var isAssistantTyping: Bool { get set }
+    var thinkingText: String { get set }
+    var thinkingTextDone: Bool { get set }
     var pendingOutgoingUserMessageId: UUID? { get set }
     var assistantScrollTargetId: UUID? { get set }
     var streamingScrollToken: Int { get set }
@@ -252,6 +254,8 @@ final class ChatStreamingController {
 
         delegate.isLoading = true
         delegate.isAssistantTyping = false
+        delegate.thinkingText = ""
+        delegate.thinkingTextDone = false
         receivedAnyAssistantOutput = false
         typingDelayTask?.cancel()
         typingDelayTask = Task { [weak self, weak delegate] in
@@ -506,6 +510,18 @@ final class ChatStreamingController {
                             delegate.setCachedMessages(newMessages, for: sid)
                         }
                     }
+                case .thinking(let text):
+                    Task { @MainActor in
+                        if !self.receivedAnyAssistantOutput {
+                            self.typingDelayTask?.cancel()
+                            delegate.isAssistantTyping = true
+                        }
+                        delegate.thinkingText += text
+                    }
+                case .thinkingDone:
+                    Task { @MainActor in
+                        delegate.thinkingTextDone = true
+                    }
                 case .session(let sid):
                     streamSessionId = sid
                     Task { @MainActor in
@@ -610,7 +626,8 @@ final class ChatStreamingController {
                             self.typingDelayTask?.cancel()
                             delegate.isAssistantTyping = false
                         }
-                        currentSegments.append(.partnerMessage(text))
+                        let currentGhostName = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName)
+                        currentSegments.append(.partnerMessage(text: text, ghostName: currentGhostName))
                         if sid == delegate.sessionId {
                             var newMessages = delegate.messages
                             let idx: Int = {
@@ -682,8 +699,29 @@ final class ChatStreamingController {
                                     await ChatStore.shared.updateRegenerationCount(messageId: msgId, count: count)
                                 }
                             }
+
+                            // If the assistant message is empty (no segments), clear the
+                            // stored response ID so the next request doesn't chain from a
+                            // broken/empty response, which can cause repeated empty replies.
+                            if let msgId = self.currentAssistantMessageId,
+                               let idx = delegate.messages.firstIndex(where: { $0.id == msgId }) {
+                                let msg = delegate.messages[idx]
+                                let hasContent = msg.segments.contains(where: { seg in
+                                    switch seg {
+                                    case .text(let t): return !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    case .partnerMessage: return true
+                                    default: return false
+                                    }
+                                })
+                                if !hasContent, let sid = delegate.sessionId {
+                                    self.responseIdBySession.removeValue(forKey: sid)
+                                }
+                            }
+
                             delegate.isLoading = false
                             delegate.isAssistantTyping = false
+                            delegate.thinkingText = ""
+                            delegate.thinkingTextDone = false
                             self.isStreaming = false
                             delegate.streamingDidFinish()
                         }
@@ -736,6 +774,8 @@ final class ChatStreamingController {
                             }
                             delegate.isLoading = false
                             delegate.isAssistantTyping = false
+                            delegate.thinkingText = ""
+                            delegate.thinkingTextDone = false
                             self.isStreaming = false
                             self.currentStreamingSessionId = nil
                             delegate.streamingDidFinish()
@@ -772,6 +812,8 @@ final class ChatStreamingController {
                 }
             }
 
+            let ghostNameToSend = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName)
+
             let task = Task.detached { [streamToken] in
                 let stream = BackendService.shared.streamChatMessage(
                     messageToSend,
@@ -783,7 +825,8 @@ final class ChatStreamingController {
                     friendUserId: friendToUse,
                     messageId: clientMessageId,
                     ephemeral: false,
-                    voiceAgent: voiceAgentToSend
+                    voiceAgent: voiceAgentToSend,
+                    ghostName: ghostNameToSend
                 )
                 for await event in stream {
                     onEvent(event)
@@ -810,6 +853,9 @@ final class ChatStreamingController {
     func stopGeneration() {
         cancelCurrentStream()
         delegate?.isLoading = false
+        delegate?.isAssistantTyping = false
+        delegate?.thinkingText = ""
+        delegate?.thinkingTextDone = false
         isStreaming = false
     }
 
@@ -853,25 +899,35 @@ final class ChatStreamingController {
         delegate.pendingAttachments = []
         onCacheUpdate?()
 
-        // Delete from local DB and server (best-effort, non-blocking)
-        if let anchorId = anchorMessageId, let sid = sessionId {
-            Task.detached {
-                await ChatStore.shared.deleteMessagesAfter(messageId: anchorId, sessionId: sid)
-            }
-            Task.detached {
-                guard let accessToken = await AuthService.shared.getAccessToken() else { return }
-                await BackendService.shared.deleteMessagesAfter(messageId: anchorId, sessionId: sid, accessToken: accessToken)
-            }
-        }
-
         // Store the regeneration count so we can apply it to the new message
         pendingRegenerationCount = previousCount + 1
 
-        // Re-send — sendMessage will create a new user message and stream a new response
-        sendMessage(overrideText: text)
+        // Clear stale response ID for this session so it isn't sent with the retry
+        if let sid = sessionId {
+            responseIdBySession.removeValue(forKey: sid)
+        }
 
-        // Restore input state
-        delegate.inputText = savedInput
-        delegate.pendingAttachments = savedAttachments
+        // Await deletes before re-sending to avoid a race where the delete
+        // removes the newly created message.
+        if let anchorId = anchorMessageId, let sid = sessionId {
+            Task { [weak self, weak delegate] in
+                await ChatStore.shared.deleteMessagesAfter(messageId: anchorId, sessionId: sid, includeAnchor: true)
+
+                if let accessToken = await AuthService.shared.getAccessToken() {
+                    await BackendService.shared.deleteMessagesAfter(messageId: anchorId, sessionId: sid, accessToken: accessToken, includeAnchor: true)
+                }
+
+                await MainActor.run { [weak self, weak delegate] in
+                    guard let self, let delegate else { return }
+                    self.sendMessage(overrideText: text)
+                    delegate.inputText = savedInput
+                    delegate.pendingAttachments = savedAttachments
+                }
+            }
+        } else {
+            sendMessage(overrideText: text)
+            delegate.inputText = savedInput
+            delegate.pendingAttachments = savedAttachments
+        }
     }
 }

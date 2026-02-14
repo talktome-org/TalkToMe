@@ -70,13 +70,13 @@ class ChatService:
             previous_response_id=previous_response_id,
         )
 
-    def stream_response(self, *, messages: List[dict], previous_response_id: Optional[str] = None):
+    def stream_response(self, *, messages: List[dict], previous_response_id: Optional[str] = None, reasoning_effort: str = "medium"):
         return self.client.responses.stream(
             model=self.vision_model if any(isinstance(m.get("content"), list) for m in messages) else self.model,
             input=messages,
             store=True,
             text={"verbosity": "medium"},
-            reasoning={"effort": "medium"},
+            reasoning={"effort": reasoning_effort, "summary": "auto"},
             previous_response_id=previous_response_id,
         )
 
@@ -263,4 +263,3 @@ class VoiceChatService:
                 yield GeminiStreamEvent(type="response.error", error=str(e))
 
         yield event_generator()
-

@@ -29,6 +29,7 @@ class ChatRequest(BaseModel):
     friend_user_id: Optional[UUID] = None
     ephemeral: bool = False
     voice_agent: Optional[str] = None
+    ghost_name: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

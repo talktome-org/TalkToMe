@@ -187,9 +187,10 @@ async def count_user_messages(*, session_id: uuid.UUID) -> int:
     return await run_in_threadpool(_count)
 
 
-async def delete_messages_after(*, user_id: uuid.UUID, session_id: uuid.UUID, after_message_id: uuid.UUID) -> int:
+async def delete_messages_after(*, user_id: uuid.UUID, session_id: uuid.UUID, after_message_id: uuid.UUID, include_anchor: bool = False) -> int:
     """Delete all messages in a session that were created after the given message.
-    The anchor message itself is preserved."""
+    When *include_anchor* is True the anchor message itself is also deleted
+    (useful for regeneration where the user message is re-created)."""
 
     def _delete():
         db = SessionLocal()
@@ -204,20 +205,91 @@ async def delete_messages_after(*, user_id: uuid.UUID, session_id: uuid.UUID, af
 
             from sqlalchemy import and_, or_
 
-            condition = and_(
-                UserChatMessage.session_id == session_id,
-                or_(
-                    UserChatMessage.created_at > anchor_ts,
-                    and_(
+            if include_anchor:
+                condition = and_(
+                    UserChatMessage.session_id == session_id,
+                    or_(
+                        UserChatMessage.created_at > anchor_ts,
                         UserChatMessage.created_at == anchor_ts,
-                        UserChatMessage.id != after_message_id,
                     ),
-                ),
-            )
+                )
+            else:
+                condition = and_(
+                    UserChatMessage.session_id == session_id,
+                    or_(
+                        UserChatMessage.created_at > anchor_ts,
+                        and_(
+                            UserChatMessage.created_at == anchor_ts,
+                            UserChatMessage.id != after_message_id,
+                        ),
+                    ),
+                )
             count = len(db.execute(select(UserChatMessage.id).where(condition)).all())
             db.execute(delete(UserChatMessage).where(condition))
             db.commit()
             return count
+        finally:
+            db.close()
+
+    return await run_in_threadpool(_delete)
+
+
+async def delete_partner_message(
+    *,
+    sender_user_id: uuid.UUID,
+    sender_session_id: uuid.UUID,
+    message_text: str,
+) -> bool:
+    """Delete a partner message from the recipient's linked session.
+    Identifies the message by matching the JSON payload content."""
+    import json
+
+    def _delete():
+        db = SessionLocal()
+        try:
+            sender_session = (
+                db.execute(
+                    select(UserChatSession).where(
+                        UserChatSession.id == sender_session_id,
+                        UserChatSession.user_id == sender_user_id,
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if not sender_session or not sender_session.linked_session_id:
+                return False
+
+            recipient_session_id = sender_session.linked_session_id
+            expected_payload = json.dumps(
+                {
+                    "_talktome": {
+                        "type": "partner_received",
+                        "text": message_text,
+                        "sender_user_id": str(sender_user_id),
+                    }
+                }
+            )
+
+            msg = (
+                db.execute(
+                    select(UserChatMessage).where(
+                        UserChatMessage.session_id == recipient_session_id,
+                        UserChatMessage.role == "assistant",
+                        UserChatMessage.content == expected_payload,
+                    )
+                    .order_by(UserChatMessage.created_at.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            if not msg:
+                return False
+
+            db.delete(msg)
+            db.commit()
+            return True
         finally:
             db.close()
 

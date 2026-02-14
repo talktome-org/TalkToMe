@@ -23,6 +23,8 @@ class ChatViewModel: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var isLoadingHistory: Bool = false
     @Published var isAssistantTyping: Bool = false
+    @Published var thinkingText: String = ""
+    @Published var thinkingTextDone: Bool = false
     @Published var initialJumpToken: Int = 0
     @Published var regenerationCounts: [String: Int] = [:]
 
@@ -214,6 +216,33 @@ class ChatViewModel: ObservableObject {
         } catch { }
     }
 
+    func unsendPartnerDraft(_ text: String) async -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        guard let sid = sessionId else { return false }
+        guard let accessToken = await authService.getAccessToken() else { return false }
+
+        do {
+            try await backend.unsendPartnerMessage(
+                sessionId: sid,
+                messageText: trimmed,
+                accessToken: accessToken
+            )
+            partnerDrafts.unmarkPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
+
+            // If no other sent drafts remain for this session, clear the friend linkage
+            // so the chat doesn't auto-assume future drafts are for the same person.
+            if !partnerDrafts.hasAnySentDraft(for: sid) {
+                selectedFriendUserId = nil
+                UserDefaults.standard.removeObject(forKey: Self.friendKey(for: sid))
+            }
+
+            return true
+        } catch {
+            return false
+        }
+    }
+
     func sendPartnerDraftViaSession(_ text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -283,6 +312,8 @@ class ChatViewModel: ObservableObject {
             self.streamingController.handleSessionPresented(id)
             self.isLoading = self.streamingController.isCurrentlyStreaming(sessionId: id)
             self.isAssistantTyping = false
+            self.thinkingText = ""
+            self.thinkingTextDone = false
             self.pendingInitialJump = true
         }
 
