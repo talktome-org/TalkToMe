@@ -307,23 +307,32 @@ final class ChatStore {
 
     struct MessageLocalMetadata {
         let thinkingSummary: String?
+        let regenerationCount: Int
     }
 
-    /// Returns local-only metadata (thinking_summary) for all messages in a session, keyed by message ID.
+    /// Returns local-only metadata (thinking_summary, regeneration_count) for all messages in a session, keyed by message ID.
     func loadLocalMetadata(sessionId: UUID) async -> [String: MessageLocalMetadata] {
         let sid = sessionId.uuidString
         do {
             return try await dbQueue.read { db in
                 let rows = try Row.fetchAll(
                     db,
-                    sql: "SELECT id, thinking_summary FROM messages WHERE session_id = ? AND thinking_summary IS NOT NULL AND thinking_summary != ''",
+                    sql: """
+                    SELECT id, thinking_summary, regeneration_count FROM messages
+                    WHERE session_id = ?
+                      AND (
+                        (thinking_summary IS NOT NULL AND thinking_summary != '')
+                        OR regeneration_count > 0
+                      )
+                    """,
                     arguments: [sid]
                 )
                 var result: [String: MessageLocalMetadata] = [:]
                 for row in rows {
                     let id: String = row["id"]
                     let ts: String? = row["thinking_summary"]
-                    result[id] = MessageLocalMetadata(thinkingSummary: ts)
+                    let rc: Int = row["regeneration_count"] ?? 0
+                    result[id] = MessageLocalMetadata(thinkingSummary: ts, regenerationCount: rc)
                 }
                 return result
             }
@@ -348,6 +357,27 @@ final class ChatStore {
                     )
                     """,
                     arguments: [summary, sid]
+                )
+            }
+        } catch {}
+    }
+
+    /// Sets regeneration_count on the last assistant message in a session.
+    func setRegenerationCountForLastAssistant(sessionId: UUID, count: Int) async {
+        let sid = sessionId.uuidString
+        do {
+            try await dbQueue.write { db in
+                try db.execute(
+                    sql: """
+                    UPDATE messages SET regeneration_count = ?
+                    WHERE id = (
+                        SELECT id FROM messages
+                        WHERE session_id = ? AND role = 'assistant'
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    )
+                    """,
+                    arguments: [count, sid]
                 )
             }
         } catch {}

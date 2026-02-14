@@ -368,9 +368,17 @@ struct MessageBubbleView: View {
                 }
             }) {
                 HStack(spacing: 6) {
-                    Text("Thinking")
-                        .font(.body)
-                        .foregroundColor(.secondary)
+                    if alwaysExpanded {
+                        ShimmeringStatusText(
+                            text: "Thinking",
+                            font: .body,
+                            color: .secondary
+                        )
+                    } else {
+                        Text("Thinking")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                    }
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.secondary)
@@ -403,7 +411,7 @@ struct MessageBubbleView: View {
             }
         }
         .padding(.horizontal, 4)
-        .padding(.bottom, 6)
+        .padding(.vertical, 4)
     }
 
     private func isAttachmentSegment(_ seg: MessageSegment) -> Bool {

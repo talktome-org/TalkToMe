@@ -715,6 +715,7 @@ final class ChatStreamingController {
                             if self.currentStreamingSessionId == sid { self.currentStreamingSessionId = nil }
                         }
                     } else {
+                        let capturedRegenCount = self.pendingRegenerationCount
                         Task { @MainActor in
                             // Apply regeneration count to the completed message
                             if self.pendingRegenerationCount > 0,
@@ -723,10 +724,6 @@ final class ChatStreamingController {
                                 let count = self.pendingRegenerationCount
                                 delegate.messages[idx].regenerationCount = count
                                 self.pendingRegenerationCount = 0
-                                // Persist to local DB
-                                Task.detached {
-                                    await ChatStore.shared.updateRegenerationCount(messageId: msgId, count: count)
-                                }
                             }
 
                             // Save thinking summary to the completed message (in-memory for immediate display)
@@ -785,6 +782,9 @@ final class ChatStreamingController {
                                         }
                                         if !capturedThinkingSummary.isEmpty {
                                             await ChatStore.shared.setThinkingSummaryForLastAssistant(sessionId: sid, summary: capturedThinkingSummary)
+                                        }
+                                        if capturedRegenCount > 0 {
+                                            await ChatStore.shared.setRegenerationCountForLastAssistant(sessionId: sid, count: capturedRegenCount)
                                         }
                                     }
                                 }
