@@ -32,178 +32,195 @@ struct SidebarView: View {
 
     @State private var activeSheet: ActiveSheet? = nil
 
+    // MARK: - Body
+
     @MainActor
     var body: some View {
         GeometryReader { geometry in
-                let pinnedHeaderBar = HStack {
-                    Button(action: {
-                        Haptics.impact(.light)
-                        Task { @MainActor in
-                            await sessionsViewModel.ensureProfilePictureCached()
-                            navigationViewModel.showSettingsSheet = true
+            let pinnedHeaderBar = headerBar
+
+            ScrollView {
+                let availableWidth = geometry.size.width
+
+                VStack(spacing: 10) {
+                    LazyVStack(spacing: 6) {
+                        ForEach(filteredSessions, id: \.id) { session in
+                            sessionRow(session, availableWidth: availableWidth)
                         }
-                    }) {
-                        SidebarAvatarView(avatarURL: sessionsViewModel.myAvatarURL)
-                            .frame(width: 36, height: 36)
-                            .clipShape(Circle())
                     }
-                    .frame(width: 44, height: 44)
-                    .buttonStyle(.plain)
-                    .modifier(HeaderCircleStyle())
-
-                    Button(action: {
-                        Haptics.impact(.light)
-                        presentSheet(.friends)
-                    }) {
-                        Image(systemName: "person.2")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Friends")
-                    .contentShape(Circle())
-                    .modifier(HeaderCircleStyle())
-
-                    Spacer()
-                    ConnectionStatusPillView()
-                    Spacer()
-
-                    Button(action: {
-                        Haptics.impact(.light)
-                        onStartNewChat()
-                    }) {
-                        Image(systemName: "plus.bubble.fill")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("New Chat")
-                    .contentShape(Circle())
-                    .modifier(HeaderCircleStyle())
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 6)
-
-                ScrollView {
-                    let availableWidth = geometry.size.width
-
-                    VStack(spacing: 10) {
-                        LazyVStack(spacing: 6) {
-                            ForEach(filteredSessions, id: \.id) { session in
-                                Button(action: {
-                                    onOpenChat(session.id)
-                                }) {
-                                    let title = session.title
-                                    let dateText = sessionsViewModel.formatLastUsed(session.lastUsedISO8601)
-                                    let previewText = previewText(for: session, availableWidth: availableWidth)
-
-                                    VStack(alignment: .leading, spacing: 12) {
-                                        HStack {
-                                            Text(title)
-                                                .font(.system(size: 18, weight: .regular))
-                                                .foregroundColor(.primary)
-                                            Spacer()
-                                            Text(dateText)
-                                                .font(.system(size: 12))
-                                                .foregroundColor(.secondary)
-                                        }
-
-                                        HStack(spacing: 6) {
-                                            Text(previewText)
-                                                .font(.system(size: 14))
-                                                .foregroundColor(.secondary)
-                                                .lineLimit(1)
-                                                .truncationMode(.tail)
-                                            Spacer()
-                                        }
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 2)
-                                    .padding(.vertical, 12)
-                                }
-                                .buttonStyle(.plain)
-                                .contextMenu {
-                                    Button("Rename", systemImage: "pencil") {
-                                        renameTargetId = session.id
-                                        renameText = (session.title == ChatSession.defaultTitle) ? "" : session.title
-                                        presentSheet(.renameConversation)
-                                    }
-                                    Button(role: .destructive) {
-                                        Task { await sessionsViewModel.deleteSession(session.id) }
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 20)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .refreshable { await sessionsViewModel.refreshSessions() }
-                .safeAreaInset(edge: .top) {
-                    if !hideHeader {
-                        pinnedHeaderBar
-                    }
+                    .padding(.horizontal, 20)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(.systemBackground))
-            .onAppear {
-                Task {
-                    await sessionsViewModel.ensureProfilePictureCached()
-                    // Prefetch the friend code so it's ready before the user opens the sheet.
-                    await friendsViewModel.refreshMyCode()
-                    // Prefetch friends + avatars so the Friends list sheet is instant.
-                    try? await friendsViewModel.loadFriends()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .refreshable { await sessionsViewModel.refreshSessions() }
+            .safeAreaInset(edge: .top) {
+                if !hideHeader {
+                    pinnedHeaderBar
                 }
             }
-            .sheet(item: $activeSheet) { sheet in
-                switch sheet {
-                case .renameConversation:
-                    VStack(spacing: 16) {
-                        Text("Rename Conversation")
-                            .font(.system(size: 20, weight: .semibold))
-
-                        TextField("Title", text: $renameText)
-                            .textInputAutocapitalization(.sentences)
-                            .disableAutocorrection(true)
-                            .padding(12)
-                            .background(Color(.secondarySystemBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                        HStack {
-                            Button("Cancel") { activeSheet = nil }
-                            Spacer()
-                            Button("Save") {
-                                let text = renameText
-                                activeSheet = nil
-                                if let id = renameTargetId {
-                                    Task { await sessionsViewModel.renameSession(id, to: text) }
-                                }
-                            }
-                            .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                        .padding(.top, 6)
-                    }
-                    .padding(20)
-                    .presentationDetents([.medium])
-
-                case .friends:
-                    FriendsSheetView(isPresented: sheetPresentedBinding(for: .friends))
-                        .environmentObject(friendsViewModel)
-                        .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
-                }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground))
+        .onAppear {
+            Task {
+                await sessionsViewModel.ensureProfilePictureCached()
+                await friendsViewModel.refreshMyCode()
+                try? await friendsViewModel.loadFriends()
             }
+        }
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .renameConversation:
+                renameSheet
+            case .friends:
+                FriendsSheetView(isPresented: sheetPresentedBinding(for: .friends))
+                    .environmentObject(friendsViewModel)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+        }
     }
+
+    // MARK: - Header Bar
+
+    private var headerBar: some View {
+        HStack {
+            Button(action: {
+                Haptics.impact(.light)
+                Task { @MainActor in
+                    await sessionsViewModel.ensureProfilePictureCached()
+                    navigationViewModel.showSettingsSheet = true
+                }
+            }) {
+                SidebarAvatarView(avatarURL: sessionsViewModel.myAvatarURL)
+                    .frame(width: 36, height: 36)
+                    .clipShape(Circle())
+            }
+            .frame(width: 44, height: 44)
+            .buttonStyle(.plain)
+            .modifier(HeaderCircleStyle())
+
+            Button(action: {
+                Haptics.impact(.light)
+                presentSheet(.friends)
+            }) {
+                Image(systemName: "person.2")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Friends")
+            .contentShape(Circle())
+            .modifier(HeaderCircleStyle())
+
+            Spacer()
+            ConnectionStatusPillView()
+            Spacer()
+
+            Button(action: {
+                Haptics.impact(.light)
+                onStartNewChat()
+            }) {
+                Image(systemName: "plus.bubble.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("New Chat")
+            .contentShape(Circle())
+            .modifier(HeaderCircleStyle())
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 6)
+    }
+
+    // MARK: - Session Row
+
+    private func sessionRow(_ session: ChatSession, availableWidth: CGFloat) -> some View {
+        let title = session.title
+        let dateText = sessionsViewModel.formatLastUsed(session.lastUsedISO8601)
+        let previewText = previewText(for: session, availableWidth: availableWidth)
+
+        return Button(action: {
+            onOpenChat(session.id)
+        }) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text(title)
+                        .font(.system(size: 18, weight: .regular))
+                        .foregroundColor(.primary)
+                    Spacer()
+                    Text(dateText)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+
+                HStack(spacing: 6) {
+                    Text(previewText)
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 2)
+            .padding(.vertical, 12)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Rename", systemImage: "pencil") {
+                renameTargetId = session.id
+                renameText = (session.title == ChatSession.defaultTitle) ? "" : session.title
+                presentSheet(.renameConversation)
+            }
+            Button(role: .destructive) {
+                Task { await sessionsViewModel.deleteSession(session.id) }
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+
+    // MARK: - Rename Sheet
+
+    private var renameSheet: some View {
+        VStack(spacing: 16) {
+            Text("Rename Conversation")
+                .font(.system(size: 20, weight: .semibold))
+
+            TextField("Title", text: $renameText)
+                .textInputAutocapitalization(.sentences)
+                .disableAutocorrection(true)
+                .padding(12)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            HStack {
+                Button("Cancel") { activeSheet = nil }
+                Spacer()
+                Button("Save") {
+                    let text = renameText
+                    activeSheet = nil
+                    if let id = renameTargetId {
+                        Task { await sessionsViewModel.renameSession(id, to: text) }
+                    }
+                }
+                .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(.top, 6)
+        }
+        .padding(20)
+        .presentationDetents([.medium])
+    }
+
+    // MARK: - Helpers
 
     @MainActor
     private func presentSheet(_ sheet: ActiveSheet) {
-        // SwiftUI can drop/ignore sheet presentations if multiple updates happen in one run loop,
-        // or if the same sheet is requested while it's already presented.
         if activeSheet == sheet {
             activeSheet = nil
             DispatchQueue.main.async {
@@ -231,7 +248,7 @@ struct SidebarView: View {
         let previewTargetWidth = availableWidth * 0.88
         let rawPreview = shouldShowLastMessage(session.lastMessageContent) ? (session.lastMessageContent ?? "") : "No messages yet"
         let clipped = wordBoundaryTruncated(rawPreview, previewTargetWidth)
-        return clipped + (clipped.count < rawPreview.count ? "…" : "")
+        return clipped + (clipped.count < rawPreview.count ? "..." : "")
     }
 
     private func shouldShowLastMessage(_ content: String?) -> Bool {
@@ -261,7 +278,10 @@ struct SidebarView: View {
         }
         return result
     }
+
 }
+
+// MARK: - Header Styles
 
 private struct HeaderPillStyle: ViewModifier {
     func body(content: Content) -> some View {
@@ -289,6 +309,8 @@ private struct HeaderCircleStyle: ViewModifier {
     }
 }
 
+// MARK: - Friends Sheet
+
 private struct FriendsSheetView: View {
     @Binding var isPresented: Bool
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
@@ -303,88 +325,53 @@ private struct FriendsSheetView: View {
     }
     private var isCodeComplete: Bool { cleanedCodeToAdd.count == 4 }
 
-    private let avatarSize: CGFloat = 64
-
     var body: some View {
-        VStack(spacing: 0) {
-            // Friends list section
-            VStack(alignment: .leading, spacing: 16) {
-                if friendsViewModel.isLoadingFriends && friendsViewModel.friends.isEmpty {
-                    HStack {
-                        Spacer()
-                        VStack(spacing: 8) {
-                            ProgressView()
-                            Text("Loading…")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
-                    .padding(.vertical, 20)
-                } else if friendsViewModel.friends.isEmpty {
-                    HStack {
-                        Spacer()
-                        Text("No friends yet")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                    .padding(.vertical, 20)
-                } else {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 16) {
-                            ForEach(friendsViewModel.friends) { friend in
-                                VStack(spacing: 6) {
-                                    SidebarAvatarView(avatarURL: friend.avatarURL)
-                                        .frame(width: avatarSize, height: avatarSize)
-                                        .clipShape(Circle())
+        ScrollView {
+            VStack(spacing: 0) {
+                // Title
+                Text("Friends")
+                    .font(.system(size: 20, weight: .bold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
+                    .padding(.bottom, 16)
 
-                                    Text(friend.fullName.components(separatedBy: " ").first ?? friend.fullName)
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(1)
-                                }
-                                .frame(width: avatarSize + 8)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                    }
-                }
-            }
-            .padding(.top, 24)
-            .padding(.bottom, 16)
-
-            Divider()
-                .padding(.horizontal, 16)
-
-            // Your code & Add friend section
-            VStack(spacing: 16) {
-                HStack(spacing: 24) {
-                    VStack(spacing: 4) {
-                        Text("Your code")
+                // Your code + Add friend cards
+                HStack(spacing: 12) {
+                    // Your code card
+                    VStack(spacing: 8) {
+                        Text("Your Code")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+                            .tracking(0.5)
+
                         Text(friendsViewModel.myCode ?? "----")
-                            .font(.system(size: 24, weight: .bold, design: .rounded))
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
                             .monospacedDigit()
+                            .foregroundStyle(.primary)
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+                    .background(Color(.secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
-                    VStack(spacing: 4) {
-                        Text("Add a friend")
+                    // Add friend card
+                    VStack(spacing: 8) {
+                        Text("Add Friend")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+                            .tracking(0.5)
 
                         HStack(spacing: 8) {
                             TextField("Code", text: $codeToAdd)
                                 .keyboardType(.numberPad)
                                 .textContentType(.oneTimeCode)
                                 .multilineTextAlignment(.center)
-                                .font(.system(size: 18, weight: .semibold, design: .monospaced))
-                                .frame(width: 80)
-                                .padding(.vertical, 8)
-                                .padding(.horizontal, 8)
-                                .background(Color(.secondarySystemBackground))
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .font(.system(size: 20, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                                .frame(maxWidth: .infinity)
                                 .onChange(of: codeToAdd, initial: false) { _, newValue in
                                     let filtered = newValue.filter { $0.isNumber }
                                     let clipped = String(filtered.prefix(4))
@@ -400,57 +387,112 @@ private struct FriendsSheetView: View {
                                     ProgressView()
                                         .controlSize(.small)
                                 } else {
-                                    Image(systemName: "plus.circle.fill")
-                                        .font(.system(size: 28))
+                                    Image(systemName: "arrow.right.circle.fill")
+                                        .font(.system(size: 26))
+                                        .foregroundStyle(isCodeComplete ? Color.blue : Color(.tertiaryLabel))
                                 }
                             }
                             .disabled(!isCodeComplete || friendsViewModel.isAddingFriend)
                         }
+                        .padding(.horizontal, 8)
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+                    .background(Color(.secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
+                .padding(.horizontal, 20)
 
+                // Action message
                 if let msg = friendsViewModel.lastActionMessage, !msg.isEmpty {
                     Text(msg)
-                        .font(.system(size: 12))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                        .padding(.top, 10)
+                        .padding(.horizontal, 20)
                 }
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 16)
 
-            Divider()
-                .padding(.horizontal, 16)
+                // Friends list
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Your Buddies")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                        .tracking(0.5)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 24)
+                        .padding(.bottom, 12)
 
-            // Contacts section
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Invite from Contacts")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-
-                InviteContactsInlineListView(
-                    onInvite: { phone in
-                        let cleaned = phone.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !cleaned.isEmpty else {
-                            inviteErrorMessage = "That contact doesn't have a phone number."
-                            return
+                    if friendsViewModel.isLoadingFriends && friendsViewModel.friends.isEmpty {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Loading...")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.secondary)
                         }
-                        guard InviteMessageComposerView.canSendText else {
-                            inviteErrorMessage = "This device can't send texts."
-                            return
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                    } else if friendsViewModel.friends.isEmpty {
+                        VStack(spacing: 10) {
+                            Image(systemName: "person.2.slash")
+                                .font(.system(size: 28, weight: .light))
+                                .foregroundStyle(.tertiary)
+                            Text("No buddies yet")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            Text("Share your code or enter a friend's code above")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.tertiary)
+                                .multilineTextAlignment(.center)
                         }
-                        inviteRecipients = [cleaned]
-                        showInviteMessageComposer = true
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                        .padding(.horizontal, 20)
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(friendsViewModel.friends) { friend in
+                                friendRow(friend)
+                                if friend.id != friendsViewModel.friends.last?.id {
+                                    Divider()
+                                        .padding(.leading, 72)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 20)
                     }
-                )
-                .padding(.horizontal, 16)
-            }
-            .padding(.top, 14)
-            .padding(.bottom, 16)
+                }
 
-            Spacer(minLength: 0)
+                // Invite from contacts
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Invite")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                        .tracking(0.5)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 24)
+                        .padding(.bottom, 12)
+
+                    InviteContactsInlineListView(
+                        onInvite: { phone in
+                            let cleaned = phone.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !cleaned.isEmpty else {
+                                inviteErrorMessage = "That contact doesn't have a phone number."
+                                return
+                            }
+                            guard InviteMessageComposerView.canSendText else {
+                                inviteErrorMessage = "This device can't send texts."
+                                return
+                            }
+                            inviteRecipients = [cleaned]
+                            showInviteMessageComposer = true
+                        }
+                    )
+                    .padding(.horizontal, 20)
+                }
+                .padding(.bottom, 24)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task {
@@ -474,7 +516,36 @@ private struct FriendsSheetView: View {
             Text(inviteErrorMessage ?? "")
         }
     }
+
+    // MARK: - Friend Row
+
+    private func friendRow(_ friend: FriendSummary) -> some View {
+        HStack(spacing: 14) {
+            SidebarAvatarView(avatarURL: friend.avatarURL)
+                .frame(width: 44, height: 44)
+                .clipShape(Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(friend.fullName)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                if let voice = friend.voiceName, !voice.isEmpty {
+                    Text(voice)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 10)
+    }
 }
+
+// MARK: - Connection Status Pill
 
 private struct ConnectionStatusPillView: View {
     @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
@@ -561,16 +632,16 @@ private struct ConnectionStatusPillView: View {
             case .waitingForNetwork:
                 Image(systemName: "wifi.slash")
                     .font(.system(size: 11, weight: .regular))
-                Text("Waiting for network…")
+                Text("Waiting for network...")
                     .font(.system(size: 12, weight: .regular))
             case .connecting:
                 ProgressView()
                     .controlSize(.mini)
-                Text("Connecting…")
+                Text("Connecting...")
                     .font(.system(size: 12, weight: .regular))
             case .updating:
                 ProgressView()
-                Text("Updating…")
+                Text("Updating...")
                     .font(.system(size: 12, weight: .regular))
             }
         }
