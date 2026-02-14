@@ -13,8 +13,15 @@ struct ThinkingIndicatorView: View {
         thinkingText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var plainSummaryText: String {
+        if let parsed = try? AttributedString(markdown: summaryText) {
+            return String(parsed.characters)
+        }
+        return summaryText
+    }
+
     private var statusFont: Font {
-        .system(size: 17, weight: .regular)
+        .body
     }
 
     var body: some View {
@@ -26,11 +33,11 @@ struct ThinkingIndicatorView: View {
                         font: statusFont,
                         color: .secondary
                     )
-                        .padding(.vertical, 6)
+                        .padding(.bottom, 4)
 
-                    Text(summaryText)
+                    Text(plainSummaryText)
                         .font(.system(size: 14))
-                        .foregroundColor(.secondary.opacity(0.82))
+                        .foregroundStyle(.secondary)
                         .lineSpacing(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -44,7 +51,7 @@ struct ThinkingIndicatorView: View {
                     )
                 }
                 .padding(.horizontal, 4)
-                .padding(.vertical, 6)
+                .padding(.bottom, 4)
             }
         }
     }
@@ -58,43 +65,46 @@ private struct ShimmeringStatusText: View {
     @State private var phase: CGFloat = -1.0
 
     var body: some View {
-        Text(text)
-            .font(font)
-            .foregroundColor(color)
-            .overlay(
-                GeometryReader { geo in
-                    let width = max(geo.size.width, 1)
-                    LinearGradient(
-                        stops: [
-                            .init(color: .white.opacity(0.0), location: 0.0),
-                            .init(color: .white.opacity(0.08), location: 0.30),
-                            .init(color: .white.opacity(0.28), location: 0.50),
-                            .init(color: .white.opacity(0.08), location: 0.70),
-                            .init(color: .white.opacity(0.0), location: 1.0),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(width: width * 0.95)
-                    .blur(radius: 0.6)
-                    .offset(x: phase * width * 2.2)
-                    .blendMode(.screen)
-                }
+        ZStack(alignment: .leading) {
+            // Base text in secondary color
+            Text(text)
+                .font(font)
+                .foregroundColor(color)
+
+            // Bright sweep layer masked to the text shape
+            Text(text)
+                .font(font)
+                .foregroundColor(.primary)
                 .mask(
-                    Text(text)
-                        .font(font)
+                    GeometryReader { geo in
+                        let width = max(geo.size.width, 1)
+                        LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: 0.0),
+                                .init(color: .white.opacity(0.45), location: 0.20),
+                                .init(color: .white.opacity(0.75), location: 0.50),
+                                .init(color: .white.opacity(0.45), location: 0.80),
+                                .init(color: .clear, location: 1.0),
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: width * 1.6)
+                        .blur(radius: 2)
+                        .offset(x: phase * width * 2.2)
+                    }
                 )
                 .allowsHitTesting(false)
-            )
-            .onAppear {
-                phase = -1.0
-                withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
-                    phase = 1.0
-                }
+        }
+        .onAppear {
+            phase = -1.0
+            withAnimation(.linear(duration: 1.3).repeatForever(autoreverses: false)) {
+                phase = 1.0
             }
-            .onDisappear {
-                phase = -1.0
-            }
+        }
+        .onDisappear {
+            phase = -1.0
+        }
     }
 }
 
