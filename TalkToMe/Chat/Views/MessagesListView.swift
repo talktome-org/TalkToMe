@@ -59,6 +59,9 @@ struct MessagesListView: View {
                         onSendToPartner: { text in
                             NotificationCenter.default.post(name: .sendPartnerMessageFromBubble, object: nil, userInfo: ["content": text])
                         },
+                        onRegenerate: { messageId in
+                            chatViewModel.regenerateResponse(for: messageId)
+                        },
                         sendAnimationNamespace: sendAnimationNamespace,
                         outgoingAnimatingMessageId: outgoingAnimatingMessageId
                     )

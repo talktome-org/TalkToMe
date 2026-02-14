@@ -5,6 +5,7 @@ struct PartnerDraftBlockView: View {
     enum Action { case send(String) }
 
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
+    @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var buddyName: String = ""
 
     @State private var text: String
     @State private var isConfirmingNormalSend: Bool = false
@@ -31,33 +32,75 @@ struct PartnerDraftBlockView: View {
         self.onAction = onAction
     }
 
+    private var resolvedBuddyName: String {
+        let name = buddyName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "Your buddy" : name
+    }
+
+    private var buddyImage: UIImage? {
+        ElevenLabsVoiceSuggestionsView.ghostUIImage(for: buddyName)
+    }
+
+    private var recipientFirstName: String {
+        guard let recipientUserId else { return "Friend" }
+        let friend = friendsViewModel.friends.first(where: { $0.id == recipientUserId })
+        let fullName = (friend?.fullName ?? "Friend").trimmingCharacters(in: .whitespacesAndNewlines)
+        return fullName.split(separator: " ").first.map(String.init) ?? "Friend"
+    }
+
+    private var alreadySent: Bool {
+        isLinked && (isSent || showSentLocally)
+    }
+
     var body: some View {
-        VStack(alignment: .leading) {
-            Text("Message")
-                .font(.footnote)
-                .foregroundColor(Color.secondary)
-                .offset(y: -4)
+        VStack(alignment: .leading, spacing: 12) {
+            // Buddy header
+            HStack(spacing: 8) {
+                if let uiImage = buddyImage {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 28, height: 28)
+                        .clipShape(Circle())
+                } else {
+                    Circle()
+                        .fill(Color(.systemGray5))
+                        .frame(width: 28, height: 28)
+                        .overlay(
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.secondary)
+                        )
+                }
 
-            Divider()
-                .padding(.horizontal, -12)
-                .offset(y: -4)
+                HStack(spacing: 4) {
+                    Text(resolvedBuddyName)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.primary)
 
-            // NOTE:
-            // We used to measure the content height via GeometryReader + PreferenceKey and then
-            // drive a TextEditor frame from that measurement. That pattern can create SwiftUI
-            // AttributeGraph cycles (layout -> preference -> state write -> layout ...).
-            //
-            // This is a read-only block, so a plain Text view (with selection enabled) is simpler,
-            // faster, and avoids any layout feedback loops.
+                    Text("drafted this")
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                Image(systemName: "sparkles")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.secondary.opacity(0.6))
+            }
+
+            // Message body
             Text(text.isEmpty ? " " : text)
                 .font(.callout)
                 .foregroundColor(.primary)
                 .multilineTextAlignment(.leading)
+                .lineSpacing(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
-                .padding(.vertical, 8)
                 .padding(.horizontal, 4)
 
+            // Send button
             HStack {
                 if isConfirmingNormalSend {
                     Button(action: {
@@ -67,8 +110,8 @@ struct PartnerDraftBlockView: View {
                         }
                     }) {
                         Text("Cancel")
-                            .font(.subheadline)
-                            .foregroundColor(Color.secondary)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
                     .transition(.scale.combined(with: .opacity))
@@ -76,79 +119,17 @@ struct PartnerDraftBlockView: View {
 
                 Spacer()
 
-                HStack(spacing: 8) {
-                    Button(action: {
-                        guard !(isLinked && (isSent || showSentLocally)) else { return }
-                        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else { return }
-
-                        Haptics.impact(.light)
-
-                        if isConfirmingNormalSend {
-                            if isLinked {
-                                withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                                    showSentLocally = true
-                                    isConfirmingNormalSend = false
-                                }
-                                onAction(.send(trimmed))
-                            } else {
-                                withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                                    isConfirmingNormalSend = false
-                                }
-                                onAction(.send(trimmed))
-                            }
-                        } else {
-                            withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                                isConfirmingNormalSend = true
-                            }
-                        }
-                    }) {
-                        ZStack {
-                            if isLinked && (isSent || showSentLocally) {
-                                HStack(spacing: 6) {
-                                    let resolvedFriend: FriendSummary? = {
-                                        guard let recipientUserId else { return nil }
-                                        return friendsViewModel.friends.first(where: { $0.id == recipientUserId })
-                                    }()
-                                    let fullName = (resolvedFriend?.fullName ?? "Friend").trimmingCharacters(in: .whitespacesAndNewlines)
-                                    let firstName = fullName.split(separator: " ").first.map(String.init) ?? "Friend"
-                                    Text("Sent to \(firstName)")
-                                        .font(.subheadline)
-                                        .foregroundColor(Color.secondary)
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(Color.green)
-                                }
-                                .transition(.scale.combined(with: .opacity))
-                            } else if isConfirmingNormalSend {
-                                Text("Confirm sending")
-                                    .font(.subheadline)
-                                    .foregroundColor(Color.accentColor)
-                                    .transition(.scale.combined(with: .opacity))
-                            } else {
-                                HStack(spacing: 6) {
-                                    Text("Send now")
-                                        .font(.subheadline)
-                                        .foregroundColor(Color.accentColor)
-                                    Image(systemName: "arrow.turn.up.right")
-                                        .foregroundColor(Color.accentColor)
-                                }
-                                .transition(.scale.combined(with: .opacity))
-                            }
-                        }
-                    }
-                    .disabled(isLinked && (isSent || showSentLocally))
+                Button(action: handleSendTap) {
+                    sendButtonContent
                 }
+                .buttonStyle(.plain)
+                .disabled(alreadySent)
             }
         }
-        .padding(12)
+        .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(Color(.separator), lineWidth: 1)
-                .background(
-                    RoundedRectangle(cornerRadius: 16).fill(Color(.systemBackground))
-                )
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.ultraThinMaterial)
         )
         .onAppear {
             isConfirmingNormalSend = false
@@ -164,6 +145,80 @@ struct PartnerDraftBlockView: View {
             if isSent { showSentLocally = false }
         }
     }
+
+    @ViewBuilder
+    private var sendButtonContent: some View {
+        ZStack {
+            if alreadySent {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Sent")
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.green)
+                )
+                .transition(.scale.combined(with: .opacity))
+            } else if isConfirmingNormalSend {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Confirm")
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.accentColor.opacity(0.85))
+                )
+                .transition(.scale.combined(with: .opacity))
+            } else {
+                HStack(spacing: 6) {
+                    Text("Send to \(recipientFirstName)")
+                        .font(.system(size: 14, weight: .semibold))
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.accentColor)
+                )
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+    }
+
+    private func handleSendTap() {
+        guard !alreadySent else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        Haptics.impact(.light)
+
+        if isConfirmingNormalSend {
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+                if isLinked {
+                    showSentLocally = true
+                }
+                isConfirmingNormalSend = false
+            }
+            onAction(.send(trimmed))
+        } else {
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+                isConfirmingNormalSend = true
+            }
+        }
+    }
 }
 
 #Preview {
@@ -174,4 +229,3 @@ struct PartnerDraftBlockView: View {
     ) { _ in }
         .padding()
 }
-

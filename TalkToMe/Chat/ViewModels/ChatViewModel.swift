@@ -24,6 +24,7 @@ class ChatViewModel: ObservableObject {
     @Published var isLoadingHistory: Bool = false
     @Published var isAssistantTyping: Bool = false
     @Published var initialJumpToken: Int = 0
+    @Published var regenerationCounts: [String: Int] = [:]
 
     let voiceController = ChatVoiceModeController()
     let streamingController = ChatStreamingController()
@@ -229,6 +230,50 @@ class ChatViewModel: ObservableObject {
             )
             partnerDrafts.markPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
         } catch { }
+    }
+
+    func regenerateResponse(for assistantMessageId: UUID) {
+        guard !streamingController.isStreaming else { return }
+
+        guard let assistantIndex = messages.firstIndex(where: { $0.id == assistantMessageId }) else { return }
+
+        // Find the preceding user message
+        var userMessageText = ""
+        var userMessageIndex: Int? = nil
+        for i in stride(from: assistantIndex - 1, through: 0, by: -1) {
+            if messages[i].isFromUser {
+                userMessageText = messages[i].segments.compactMap { seg -> String? in
+                    if case .text(let t) = seg { return t }
+                    return nil
+                }.joined()
+                userMessageIndex = i
+                break
+            }
+        }
+
+        let trimmed = userMessageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let userIdx = userMessageIndex else { return }
+
+        Haptics.impact(.medium)
+
+        // Increment regeneration count keyed by user message text
+        regenerationCounts[trimmed, default: 0] += 1
+
+        // Truncate: remove user message and everything after it
+        messages = Array(messages[..<userIdx])
+        chatMessagesVM.updateCacheForCurrentSession(currentMessages: messages)
+
+        // Clear stale response ID so backend doesn't reference deleted context
+        if let sid = sessionId {
+            streamingController.clearResponseId(for: sid)
+        }
+
+        // Re-send the user message (sendMessage recreates it + streams new response)
+        streamingController.sendMessage(overrideText: trimmed)
+    }
+
+    func regenerationCount(forUserMessageText text: String) -> Int {
+        regenerationCounts[text.trimmingCharacters(in: .whitespacesAndNewlines)] ?? 0
     }
 
     func presentSession(_ id: UUID) async {
