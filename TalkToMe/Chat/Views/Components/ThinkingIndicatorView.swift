@@ -51,13 +51,12 @@ struct ThinkingIndicatorView: View {
                     )
                 }
                 .padding(.horizontal, 4)
-                .padding(.bottom, 4)
             }
         }
     }
 }
 
-private struct ShimmeringStatusText: View {
+struct ShimmeringStatusText: View {
     let text: String
     let font: Font
     let color: Color
