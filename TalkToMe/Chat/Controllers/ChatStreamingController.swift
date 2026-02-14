@@ -35,6 +35,7 @@ final class ChatStreamingController {
     private var responseIdBySession: [UUID: String] = [:]
     private var assistantMessageIdBySession: [UUID: UUID] = [:]
     private var currentStreamingSessionId: UUID?
+    private var pendingRegenerationCount: Int = 0
 
     private weak var delegate: ChatStreamingDelegate?
     private var onCacheUpdate: (() -> Void)?
@@ -669,6 +670,18 @@ final class ChatStreamingController {
                         }
                     } else {
                         Task { @MainActor in
+                            // Apply regeneration count to the completed message
+                            if self.pendingRegenerationCount > 0,
+                               let msgId = self.currentAssistantMessageId,
+                               let idx = delegate.messages.firstIndex(where: { $0.id == msgId }) {
+                                let count = self.pendingRegenerationCount
+                                delegate.messages[idx].regenerationCount = count
+                                self.pendingRegenerationCount = 0
+                                // Persist to local DB
+                                Task.detached {
+                                    await ChatStore.shared.updateRegenerationCount(messageId: msgId, count: count)
+                                }
+                            }
                             delegate.isLoading = false
                             delegate.isAssistantTyping = false
                             self.isStreaming = false
@@ -798,5 +811,67 @@ final class ChatStreamingController {
         cancelCurrentStream()
         delegate?.isLoading = false
         isStreaming = false
+    }
+
+    func regenerateResponse(forAssistantMessageId assistantMessageId: UUID) {
+        guard let delegate else { return }
+        guard !isStreaming else { return }
+
+        // Find the assistant message
+        guard let assistantIndex = delegate.messages.firstIndex(where: { $0.id == assistantMessageId }) else { return }
+
+        // Track regeneration count from the original message
+        let previousCount = delegate.messages[assistantIndex].regenerationCount
+
+        // Find the preceding user message text and index
+        var userText: String?
+        var userIndex: Int?
+        var userMessageId: UUID?
+        for i in stride(from: assistantIndex - 1, through: 0, by: -1) {
+            if delegate.messages[i].isFromUser {
+                userIndex = i
+                userMessageId = delegate.messages[i].id
+                userText = delegate.messages[i].segments.compactMap { seg -> String? in
+                    if case .text(let t) = seg { return t }
+                    return nil
+                }.joined()
+                break
+            }
+        }
+
+        guard let text = userText, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard let removeFrom = userIndex else { return }
+        let anchorMessageId = userMessageId
+        let sessionId = delegate.sessionId
+
+        // Save current input state
+        let savedInput = delegate.inputText
+        let savedAttachments = delegate.pendingAttachments
+
+        // Remove the user message and everything after it (assistant message + any subsequent messages)
+        delegate.messages.removeSubrange(removeFrom...)
+        delegate.pendingAttachments = []
+        onCacheUpdate?()
+
+        // Delete from local DB and server (best-effort, non-blocking)
+        if let anchorId = anchorMessageId, let sid = sessionId {
+            Task.detached {
+                await ChatStore.shared.deleteMessagesAfter(messageId: anchorId, sessionId: sid)
+            }
+            Task.detached {
+                guard let accessToken = await AuthService.shared.getAccessToken() else { return }
+                await BackendService.shared.deleteMessagesAfter(messageId: anchorId, sessionId: sid, accessToken: accessToken)
+            }
+        }
+
+        // Store the regeneration count so we can apply it to the new message
+        pendingRegenerationCount = previousCount + 1
+
+        // Re-send — sendMessage will create a new user message and stream a new response
+        sendMessage(overrideText: text)
+
+        // Restore input state
+        delegate.inputText = savedInput
+        delegate.pendingAttachments = savedAttachments
     }
 }

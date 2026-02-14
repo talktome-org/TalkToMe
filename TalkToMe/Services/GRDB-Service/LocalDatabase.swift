@@ -149,6 +149,12 @@ final class LocalDatabase {
             )
         }
 
+        migrator.registerMigration("messages_add_regeneration_count") { db in
+            try db.alter(table: "messages") { t in
+                t.add(column: "regeneration_count", .integer).defaults(to: 0)
+            }
+        }
+
         return migrator
     }
 }

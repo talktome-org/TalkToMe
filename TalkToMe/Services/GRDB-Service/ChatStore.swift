@@ -17,6 +17,7 @@ struct ChatMessageRecord: Codable, FetchableRecord, PersistableRecord {
     var role: String
     var content: String
     var created_at: String
+    var regeneration_count: Int
 }
 
 struct ChatAttachmentRecord: Codable, FetchableRecord, PersistableRecord {
@@ -237,6 +238,66 @@ final class ChatStore {
         removeCachedAttachmentFiles(relativePaths: attachmentRelpathsToDelete)
     }
 
+    /// Deletes all messages in a session that come after the given message (by created_at).
+    /// The anchor message itself is preserved.
+    func deleteMessagesAfter(messageId: UUID, sessionId: UUID) async {
+        let mid = messageId.uuidString
+        let sid = sessionId.uuidString
+
+        let attachmentRelpathsToDelete: [String]
+        do {
+            attachmentRelpathsToDelete = try await dbQueue.write { db -> [String] in
+                // Find the anchor message's timestamp
+                guard let anchorCreatedAt = try String.fetchOne(
+                    db,
+                    sql: "SELECT created_at FROM messages WHERE id = ?",
+                    arguments: [mid]
+                ) else { return [] }
+
+                // Collect attachment files for messages to be deleted
+                let rels = try String.fetchAll(
+                    db,
+                    sql: """
+                    SELECT a.local_relpath
+                    FROM attachments a
+                    JOIN messages m ON m.id = a.message_id
+                    WHERE m.session_id = ?
+                      AND (m.created_at > ? OR (m.created_at = ? AND m.id != ?))
+                      AND a.local_relpath IS NOT NULL
+                    """,
+                    arguments: [sid, anchorCreatedAt, anchorCreatedAt, mid]
+                )
+
+                // Delete the messages (attachments cascade via FK)
+                try db.execute(
+                    sql: """
+                    DELETE FROM messages
+                    WHERE session_id = ?
+                      AND (created_at > ? OR (created_at = ? AND id != ?))
+                    """,
+                    arguments: [sid, anchorCreatedAt, anchorCreatedAt, mid]
+                )
+
+                return rels
+            }
+        } catch {
+            return
+        }
+
+        removeCachedAttachmentFiles(relativePaths: attachmentRelpathsToDelete)
+    }
+
+    /// Updates the regeneration_count for a single message in the local DB.
+    func updateRegenerationCount(messageId: UUID, count: Int) async {
+        do {
+            try await dbQueue.write { db in
+                try db.execute(
+                    sql: "UPDATE messages SET regeneration_count = ? WHERE id = ?",
+                    arguments: [count, messageId.uuidString]
+                )
+            }
+        } catch {}
+    }
 
     func loadMessages(sessionId: UUID, currentUserId: UUID) async -> [ChatMessage] {
         let sid = sessionId.uuidString
@@ -289,7 +350,9 @@ final class ChatStore {
                     content: content,
                     created_at: r.created_at
                 )
-                return ChatMessage(dto: dto, currentUserId: currentUserId)
+                var msg = ChatMessage(dto: dto, currentUserId: currentUserId)
+                msg.regenerationCount = r.regeneration_count
+                return msg
             }
         } catch {
             return []
@@ -318,13 +381,16 @@ final class ChatStore {
                 let nowISO = isoFormatter.string(from: Date())
                 for dto in dtos {
                     let created = dto.created_at ?? nowISO
+                    // Preserve existing regeneration_count when upserting server messages
+                    let existing = try ChatMessageRecord.fetchOne(db, key: dto.id.uuidString)
                     let rec = ChatMessageRecord(
                         id: dto.id.uuidString,
                         session_id: dto.session_id.uuidString,
                         user_id: dto.user_id.uuidString,
                         role: dto.role,
                         content: dto.content,
-                        created_at: created
+                        created_at: created,
+                        regeneration_count: existing?.regeneration_count ?? 0
                     )
                     try rec.save(db)
                 }
