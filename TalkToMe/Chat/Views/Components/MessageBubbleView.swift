@@ -162,7 +162,7 @@ struct MessageBubbleView: View {
     let message: ChatMessage
 
     var onSendToPartner: ((String) -> Void)? = nil
-    var onRegenerate: (() -> Void)? = nil
+    var onRegenerate: ((UUID) -> Void)? = nil
 
     var sendAnimationNamespace: Namespace.ID? = nil
     var outgoingAnimatingMessageId: UUID? = nil
@@ -271,9 +271,22 @@ struct MessageBubbleView: View {
                         
                         // Action buttons for assistant messages
                         if shouldShowAssistantActions {
+                            let precedingUserText: String = {
+                                guard let idx = chatViewModel.messages.firstIndex(where: { $0.id == message.id }) else { return "" }
+                                for i in stride(from: idx - 1, through: 0, by: -1) {
+                                    if chatViewModel.messages[i].isFromUser {
+                                        return chatViewModel.messages[i].segments.compactMap { seg -> String? in
+                                            if case .text(let t) = seg { return t }
+                                            return nil
+                                        }.joined()
+                                    }
+                                }
+                                return ""
+                            }()
                             AssistantMessageActionsView(
                                 messageText: plainText(from: message.segments),
-                                onRegenerate: onRegenerate
+                                regenerationCount: chatViewModel.regenerationCount(forUserMessageText: precedingUserText),
+                                onRegenerate: onRegenerate != nil ? { onRegenerate?(message.id) } : nil
                             )
                             .transition(.opacity.animation(.easeIn(duration: 0.2)))
                         }

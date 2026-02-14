@@ -88,6 +88,10 @@ final class ChatStreamingController {
         currentStreamingSessionId == sessionId
     }
 
+    func clearResponseId(for sessionId: UUID) {
+        responseIdBySession.removeValue(forKey: sessionId)
+    }
+
     func handleSessionPresented(_ id: UUID) {
         if let placeholderId = assistantMessageIdBySession[id] {
             currentAssistantMessageId = placeholderId
