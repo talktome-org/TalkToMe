@@ -42,17 +42,13 @@ struct SidebarView: View {
             ScrollView {
                 let availableWidth = geometry.size.width
 
-                if filteredSessions.isEmpty && !sessionsViewModel.isLoadingSessions {
-                    emptyStateView
-                        .padding(.top, 80)
-                } else {
-                    LazyVStack(spacing: 10) {
+                VStack(spacing: 10) {
+                    LazyVStack(spacing: 6) {
                         ForEach(filteredSessions, id: \.id) { session in
                             sessionRow(session, availableWidth: availableWidth)
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
+                    .padding(.horizontal, 20)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -142,42 +138,37 @@ struct SidebarView: View {
 
     // MARK: - Session Row
 
-    @Environment(\.colorScheme) private var colorScheme
-
     private func sessionRow(_ session: ChatSession, availableWidth: CGFloat) -> some View {
         let title = session.title
-        let dateText = relativeDate(session.lastUsedISO8601)
+        let dateText = sessionsViewModel.formatLastUsed(session.lastUsedISO8601)
         let previewText = previewText(for: session, availableWidth: availableWidth)
 
         return Button(action: {
-            Haptics.impact(.light)
             onOpenChat(session.id)
         }) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
                     Text(title)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
+                        .font(.system(size: 18, weight: .regular))
+                        .foregroundColor(.primary)
                     Spacer()
                     Text(dateText)
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
                 }
 
-                Text(previewText)
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
+                HStack(spacing: 6) {
+                    Text(previewText)
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer()
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 14)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 2)
+            .padding(.vertical, 12)
         }
         .buttonStyle(.plain)
         .contextMenu {
@@ -194,45 +185,23 @@ struct SidebarView: View {
         }
     }
 
-    // MARK: - Empty State
-
-    private var emptyStateView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 40, weight: .light))
-                .foregroundStyle(.tertiary)
-            Text("No conversations yet")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(.secondary)
-            Text("Start chatting with your buddy!")
-                .font(.system(size: 14))
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
     // MARK: - Rename Sheet
 
     private var renameSheet: some View {
-        VStack(spacing: 20) {
-            Text("Rename")
-                .font(.system(size: 18, weight: .semibold))
+        VStack(spacing: 16) {
+            Text("Rename Conversation")
+                .font(.system(size: 20, weight: .semibold))
 
-            TextField("Conversation name", text: $renameText)
+            TextField("Title", text: $renameText)
                 .textInputAutocapitalization(.sentences)
                 .disableAutocorrection(true)
-                .padding(14)
+                .padding(12)
                 .background(Color(.secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-            HStack(spacing: 12) {
+            HStack {
                 Button("Cancel") { activeSheet = nil }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color(.secondarySystemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .foregroundStyle(.primary)
-
+                Spacer()
                 Button("Save") {
                     let text = renameText
                     activeSheet = nil
@@ -240,24 +209,9 @@ struct SidebarView: View {
                         Task { await sessionsViewModel.renameSession(id, to: text) }
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.35, green: 0.55, blue: 1.0),
-                            Color(red: 0.55, green: 0.35, blue: 0.95)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .foregroundStyle(.white)
-                .fontWeight(.semibold)
                 .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .opacity(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1)
             }
+            .padding(.top, 6)
         }
         .padding(20)
         .presentationDetents([.medium])
@@ -325,40 +279,6 @@ struct SidebarView: View {
         return result
     }
 
-    /// Converts an ISO 8601 date string to a relative label like "Just now", "5m", "2h", "Yesterday", or "Feb 10".
-    private func relativeDate(_ iso: String?) -> String {
-        guard let raw = iso?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return "" }
-
-        let iso1 = ISO8601DateFormatter()
-        iso1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let iso2 = ISO8601DateFormatter()
-        iso2.formatOptions = [.withInternetDateTime]
-
-        guard let date = iso1.date(from: raw) ?? iso2.date(from: raw) else { return "" }
-
-        let now = Date()
-        let seconds = now.timeIntervalSince(date)
-
-        if seconds < 60 { return "Just now" }
-        if seconds < 3600 { return "\(Int(seconds / 60))m" }
-        if seconds < 86400 {
-            let hours = Int(seconds / 3600)
-            return "\(hours)h"
-        }
-
-        let cal = Calendar.current
-        if cal.isDateInYesterday(date) { return "Yesterday" }
-
-        if cal.isDate(date, equalTo: now, toGranularity: .year) {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MMM d"
-            return formatter.string(from: date)
-        }
-
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MM/dd/yy"
-        return formatter.string(from: date)
-    }
 }
 
 // MARK: - Header Styles
