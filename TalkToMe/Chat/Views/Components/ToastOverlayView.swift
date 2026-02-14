@@ -5,7 +5,7 @@ struct ToastOverlayView: View {
     var onDismiss: (() -> Void)? = nil
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Text(message)
                 .font(.system(size: 15, weight: .medium))
                 .foregroundColor(.primary)
@@ -16,28 +16,26 @@ struct ToastOverlayView: View {
             if let onDismiss {
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.secondary)
-                        .frame(width: 32, height: 32)
-                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
         .background {
             if #available(iOS 26.0, *) {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(.clear)
-                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             } else {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(.thinMaterial)
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 16)
         .transition(
             .move(edge: .top)
             .combined(with: .opacity)

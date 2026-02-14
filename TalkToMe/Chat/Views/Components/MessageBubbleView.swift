@@ -169,7 +169,8 @@ struct MessageBubbleView: View {
     var outgoingAnimatingMessageId: UUID? = nil
 
     @Environment(\.colorScheme) private var colorScheme
-    
+    @State private var isThinkingExpanded: Bool = false
+
     /// True for the streaming placeholder row where generation starts.
     private var shouldShowThinkingIndicator: Bool {
         guard !message.isFromUser else { return false }
@@ -177,6 +178,21 @@ struct MessageBubbleView: View {
         guard chatViewModel.isAssistantTyping else { return false }
         guard chatViewModel.messages.last?.id == message.id else { return false }
         return !hasRenderableAssistantContent
+    }
+
+    /// Live thinking text from the current streaming message, if any.
+    private var activeStreamingThinkingText: String? {
+        guard !message.isFromUser, !message.isFromPartnerUser else { return nil }
+        guard chatViewModel.messages.last?.id == message.id else { return nil }
+        let text = chatViewModel.thinkingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        return text
+    }
+
+    /// The thinking text to display: persisted summary, or live streaming text.
+    private var effectiveThinkingText: String? {
+        if let ts = message.thinkingSummary, !ts.isEmpty { return ts }
+        return activeStreamingThinkingText
     }
 
     private var hasRenderableAssistantContent: Bool {
@@ -239,17 +255,27 @@ struct MessageBubbleView: View {
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     if shouldShowThinkingIndicator {
-                        ThinkingIndicatorView(
-                            thinkingText: chatViewModel.thinkingText,
-                            thinkingTextDone: chatViewModel.thinkingTextDone
-                        )
-                        .padding(.vertical, 4)
+                        if let thinkingText = activeStreamingThinkingText {
+                            // Show "Thinking" header with live text (always expanded during streaming)
+                            thinkingSectionView(text: thinkingText, alwaysExpanded: true)
+                        } else {
+                            ThinkingIndicatorView(
+                                thinkingText: chatViewModel.thinkingText,
+                                thinkingTextDone: chatViewModel.thinkingTextDone
+                            )
+                            .padding(.vertical, 4)
+                        }
                     } else if message.isFromPartnerUser {
                         PartnerMessageBlockView(
                             text: plainText(from: message.segments),
                             senderUserId: message.senderUserId
                         )
                     } else if !message.segments.isEmpty {
+                        // Collapsible thinking section
+                        if let summary = effectiveThinkingText {
+                            thinkingSectionView(text: summary, alwaysExpanded: false)
+                        }
+
                         let attachmentSegments = message.segments.filter { isAttachmentSegment($0) }
                         if !attachmentSegments.isEmpty {
                             attachmentsView(segments: attachmentSegments, alignment: .leading)
@@ -307,7 +333,13 @@ struct MessageBubbleView: View {
                                 messageText: plainText(from: message.segments),
                                 regenerationCount: message.regenerationCount,
                                 onRegenerate: onRegenerate,
-                                onToast: onToast
+                                onToast: onToast,
+                                thinkingSummary: message.thinkingSummary,
+                                onToggleThinking: {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        isThinkingExpanded.toggle()
+                                    }
+                                }
                             )
                             .transition(.opacity.animation(.easeIn(duration: 0.2)))
                         }
@@ -323,6 +355,55 @@ struct MessageBubbleView: View {
             if case .text(let text) = segment { return text }
             return nil
         }.joined()
+    }
+
+    @ViewBuilder
+    private func thinkingSectionView(text: String, alwaysExpanded: Bool) -> some View {
+        let expanded = alwaysExpanded || isThinkingExpanded
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: {
+                guard !alwaysExpanded else { return }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isThinkingExpanded.toggle()
+                }
+            }) {
+                HStack(spacing: 6) {
+                    Text("Thinking")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                let paragraphs: [String] = {
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.components(separatedBy: "\n\n").map { block in
+                        let stripped = block.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if let parsed = try? AttributedString(markdown: stripped) {
+                            return String(parsed.characters)
+                        }
+                        return stripped
+                    }.filter { !$0.isEmpty }
+                }()
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
+                        Text(paragraph)
+                            .font(.system(size: 14))
+                            .foregroundStyle(.secondary)
+                            .lineSpacing(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.horizontal, 4)
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.bottom, 6)
     }
 
     private func isAttachmentSegment(_ seg: MessageSegment) -> Bool {
