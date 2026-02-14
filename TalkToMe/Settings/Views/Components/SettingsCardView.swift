@@ -27,20 +27,22 @@ struct SettingsCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(section.title)
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundColor(.secondary)
-                    .textCase(.uppercase)
+            if !section.title.isEmpty {
+                HStack {
+                    Text(section.title)
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundColor(.secondary)
+                        .textCase(.uppercase)
 
-                Spacer()
+                    Spacer()
 
-                if let headerAccessory {
-                    headerAccessory
+                    if let headerAccessory {
+                        headerAccessory
+                    }
                 }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 2)
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 2)
 
             VStack(spacing: 0) {
                 ForEach(Array(section.settings.enumerated()), id: \.offset) { index, setting in
@@ -50,15 +52,12 @@ struct SettingsCardView: View {
                             FriendCodeInlineRow()
 
                         case .picker(let options):
-                            HStack(spacing: 12) {
+                            HStack(spacing: 14) {
                                 iconView(for: setting)
 
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(setting.title)
-                                        .font(.system(size: 16, weight: .regular))
-                                        .foregroundColor(.primary)
-                                        .multilineTextAlignment(.leading)
-                                }
+                                Text(setting.title)
+                                    .font(.system(size: 17, weight: .regular))
+                                    .foregroundColor(.primary)
 
                                 Spacer()
 
@@ -78,27 +77,25 @@ struct SettingsCardView: View {
                                 .labelsHidden()
                             }
                             .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(Color(.systemBackground))
+                            .frame(minHeight: 44)
 
                         case .toggle:
-                            HStack(spacing: 12) {
+                            HStack(spacing: 14) {
                                 iconView(for: setting)
 
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(setting.title)
-                                        .font(.system(size: 16, weight: .regular))
+                                        .font(.system(size: 17, weight: .regular))
                                         .foregroundColor(.primary)
-                                        .multilineTextAlignment(.leading)
                                     if let subtitle = setting.subtitle {
                                         Text(subtitle)
                                             .font(.system(size: 13, weight: .regular))
                                             .foregroundColor(.secondary)
-                                            .multilineTextAlignment(.leading)
                                     }
                                 }
 
                                 Spacer()
+
                                 Toggle("", isOn: Binding(
                                     get: {
                                         if case .toggle(let isOn) = setting.type { return isOn }
@@ -111,61 +108,47 @@ struct SettingsCardView: View {
                                 .allowsHitTesting(true)
                             }
                             .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(Color(.systemBackground))
+                            .frame(minHeight: 44)
 
                         case .navigation:
                             NavigationLink(destination: viewForTitle(setting.title)) {
-                                HStack(spacing: 12) {
+                                HStack(spacing: 14) {
                                     iconView(for: setting)
 
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(setting.title)
-                                            .font(.system(size: 16, weight: .regular))
-                                            .foregroundColor(.primary)
-                                            .multilineTextAlignment(.leading)
-                                    }
+                                    Text(setting.title)
+                                        .font(.system(size: 17, weight: .regular))
+                                        .foregroundColor(.primary)
 
                                     Spacer()
+
                                     Image(systemName: "chevron.right")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundColor(.secondary)
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(Color(.tertiaryLabel))
                                 }
                                 .padding(.horizontal, 16)
-                                .padding(.vertical, 10)
-                                .background(Color(.systemBackground))
+                                .frame(minHeight: 44)
                             }
 
                         case .action:
                             Button(action: { onAction(index) }) {
-                                HStack(spacing: 12) {
+                                HStack(spacing: 14) {
                                     iconView(for: setting)
 
                                     VStack(alignment: .leading, spacing: 2) {
-                                        if setting.title == "Sign Out" {
-                                            Text(setting.title)
-                                                .font(.system(size: 16, weight: .regular))
-                                                .foregroundColor(.red)
-                                                .multilineTextAlignment(.leading)
-                                        } else {
-                                            Text(setting.title)
-                                                .font(.system(size: 16, weight: .regular))
-                                                .foregroundColor(.primary)
-                                                .multilineTextAlignment(.leading)
-                                            if let subtitle = setting.subtitle {
-                                                Text(subtitle)
-                                                    .font(.system(size: 13, weight: .regular))
-                                                    .foregroundColor(.secondary)
-                                                    .multilineTextAlignment(.leading)
-                                            }
+                                        Text(setting.title)
+                                            .font(.system(size: 17, weight: .regular))
+                                            .foregroundColor(setting.title == "Sign Out" ? .red : .primary)
+                                        if let subtitle = setting.subtitle, setting.title != "Sign Out" {
+                                            Text(subtitle)
+                                                .font(.system(size: 13, weight: .regular))
+                                                .foregroundColor(.secondary)
                                         }
                                     }
 
                                     Spacer()
                                 }
                                 .padding(.horizontal, 16)
-                                .padding(.vertical, 10)
-                                .background(Color(.systemBackground))
+                                .frame(minHeight: 44)
                             }
                             .buttonStyle(PlainButtonStyle())
                         }
@@ -173,14 +156,14 @@ struct SettingsCardView: View {
 
                     if index < section.settings.count - 1 {
                         Divider()
-                            .padding(.leading, 56)
+                            .padding(.leading, 60)
                     }
                 }
             }
-            .background(Color(.systemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(.vertical, 6)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
 
-            // Section Footer (if needed)
             if shouldShowFooter() {
                 HStack {
                     Text(getFooterText())
@@ -196,41 +179,19 @@ struct SettingsCardView: View {
         }
     }
 
-    // MARK: - Colored Icon
+    // MARK: - Icon
 
     @ViewBuilder
     private func iconView(for setting: SettingItem) -> some View {
-        let color = iconColor(for: setting.icon)
         Image(systemName: setting.icon)
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundColor(.white)
-            .frame(width: 28, height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(color)
-            )
-    }
-
-    private func iconColor(for icon: String) -> Color {
-        switch icon {
-        case "bell": return .red
-        case "circle.lefthalf.filled": return .blue
-        case "waveform": return .orange
-        case "iphone.radiowaves.left.and.right": return .purple
-        case "envelope": return .green
-        case "hand.raised": return .blue
-        case "rectangle.portrait.and.arrow.right": return .red
-        case "number": return .blue
-        default:
-            return section.gradient.first ?? .gray
-        }
+            .font(.system(size: 18))
+            .foregroundColor(.secondary)
+            .frame(width: 30, height: 30)
     }
 
     private func shouldShowFooter() -> Bool {
         switch section.title {
-        case "Privacy & Data":
-            return true
-        case "About":
+        case "Privacy & Data", "About":
             return true
         default:
             return false
@@ -255,19 +216,15 @@ private struct FriendCodeInlineRow: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            HStack(spacing: 12) {
+            HStack(spacing: 14) {
                 Image(systemName: "number")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(width: 28, height: 28)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(Color.blue)
-                    )
+                    .font(.system(size: 18))
+                    .foregroundColor(.secondary)
+                    .frame(width: 30, height: 30)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Your code")
-                        .font(.system(size: 16, weight: .regular))
+                        .font(.system(size: 17, weight: .regular))
                         .foregroundColor(.primary)
                     Text(friendsVM.myCode ?? "— — — —")
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
@@ -308,7 +265,6 @@ private struct FriendCodeInlineRow: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Color(.systemBackground))
         .task { await friendsVM.refreshMyCode() }
     }
 }
@@ -320,6 +276,13 @@ private func viewForTitle(_ title: String) -> some View {
         ContactSupportView()
     case "Privacy Policy":
         PrivacyPolicyView()
+    case "Wallpapers":
+        Text("Coming soon")
+            .font(.system(size: 16))
+            .foregroundColor(.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("Wallpapers")
     default:
         EmptyView()
     }
