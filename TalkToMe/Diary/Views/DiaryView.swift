@@ -1436,7 +1436,7 @@ private struct DiaryBlockListView: View {
         }
         .onChange(of: imagesToInsert.count) { _, _ in
             guard !imagesToInsert.isEmpty else { return }
-            var insertIndex: Int = {
+            let insertIndex: Int = {
                 if let id = insertImageAfterBlockId, let idx = blocks.firstIndex(where: { $0.id == id }) {
                     return idx + 1
                 }
