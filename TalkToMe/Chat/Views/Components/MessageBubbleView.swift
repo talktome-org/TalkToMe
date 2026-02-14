@@ -170,6 +170,31 @@ struct MessageBubbleView: View {
 
     @Environment(\.colorScheme) private var colorScheme
     
+    /// True for the streaming placeholder row where generation starts.
+    private var shouldShowThinkingIndicator: Bool {
+        guard !message.isFromUser else { return false }
+        guard !message.isFromPartnerUser else { return false }
+        guard chatViewModel.isAssistantTyping else { return false }
+        guard chatViewModel.messages.last?.id == message.id else { return false }
+        return !hasRenderableAssistantContent
+    }
+
+    private var hasRenderableAssistantContent: Bool {
+        if message.isToolLoading { return true }
+        return message.segments.contains { segment in
+            switch segment {
+            case .text(let text):
+                return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .partnerMessage(let text, _):
+                return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .partnerReceived(let text):
+                return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .imageData(_), .imageURL(_), .fileData(_, _), .fileURL(_, _):
+                return true
+            }
+        }
+    }
+
     /// Whether to show action buttons under assistant messages
     private var shouldShowAssistantActions: Bool {
         // Don't show for user messages
@@ -213,13 +238,18 @@ struct MessageBubbleView: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    if message.isFromPartnerUser {
+                    if shouldShowThinkingIndicator {
+                        ThinkingIndicatorView(
+                            thinkingText: chatViewModel.thinkingText,
+                            thinkingTextDone: chatViewModel.thinkingTextDone
+                        )
+                        .padding(.vertical, 4)
+                    } else if message.isFromPartnerUser {
                         PartnerMessageBlockView(
                             text: plainText(from: message.segments),
                             senderUserId: message.senderUserId
                         )
-                    } else
-                    if !message.segments.isEmpty {
+                    } else if !message.segments.isEmpty {
                         let attachmentSegments = message.segments.filter { isAttachmentSegment($0) }
                         if !attachmentSegments.isEmpty {
                             attachmentsView(segments: attachmentSegments, alignment: .leading)

@@ -21,7 +21,6 @@ struct MessagesListView: View {
     @State private var toastWorkItem: DispatchWorkItem? = nil
 
     private var messages: [ChatMessage] { chatViewModel.messages }
-    private var isAssistantTyping: Bool { chatViewModel.isAssistantTyping }
     private var initialJumpToken: Int { chatViewModel.initialJumpToken }
 
     private let nearBottomThreshold: CGFloat = 20
@@ -73,16 +72,6 @@ struct MessagesListView: View {
                     .opacity(message.id == outgoingSourceMessageId ? 0 : 1)
                     .animation(nil, value: outgoingSourceMessageId)
                     .padding(.top, index > 0 && (messages[index - 1].isFromUser != message.isFromUser) ? 4 : 0)
-                }
-                if isAssistantTyping {
-                    HStack(alignment: .top, spacing: 0) {
-                        ThinkingIndicatorView(
-                            thinkingText: chatViewModel.thinkingText,
-                            thinkingTextDone: chatViewModel.thinkingTextDone
-                        )
-                        .padding(.top, -10)
-                        Spacer(minLength: 0)
-                    }
                 }
             }
             .padding(.top, 24)

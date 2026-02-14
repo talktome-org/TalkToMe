@@ -104,7 +104,7 @@ final class ChatStreamingController {
         }
     }
 
-    func sendMessage(overrideText: String? = nil) {
+    func sendMessage(overrideText: String? = nil, isRegeneration: Bool = false, reuseMessageId: UUID? = nil) {
         guard let delegate else { return }
 
         let trimmedMessage = (overrideText ?? delegate.inputText).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -201,39 +201,60 @@ final class ChatStreamingController {
             }
         }
 
-        let persistedContent: String = {
-            guard !attachmentsToSend.isEmpty else { return messageToSend }
-            let obj: [String: Any] = ["_talktome": ["type": "segments", "segments": segs]]
-            let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
-            return String(data: data, encoding: .utf8) ?? messageToSend
-        }()
+        let clientMessageId: UUID
 
-        let dto = BackendService.ChatMessageDTO(
-            id: UUID(),
-            user_id: userId,
-            session_id: sid,
-            role: "user",
-            content: persistedContent,
-            created_at: ISO8601DateFormatter().string(from: Date())
-        )
-        let clientMessageId = dto.id
+        if !isRegeneration {
+            let persistedContent: String = {
+                guard !attachmentsToSend.isEmpty else { return messageToSend }
+                let obj: [String: Any] = ["_talktome": ["type": "segments", "segments": segs]]
+                let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
+                return String(data: data, encoding: .utf8) ?? messageToSend
+            }()
 
-        let localMessage = ChatMessage(dto: dto, currentUserId: userId)
-        delegate.messages.append(localMessage)
-        delegate.pendingOutgoingUserMessageId = clientMessageId
-        onCacheUpdate?()
-        Task.detached {
-            await ChatStore.shared.upsertMessages([dto])
+            let dto = BackendService.ChatMessageDTO(
+                id: UUID(),
+                user_id: userId,
+                session_id: sid,
+                role: "user",
+                content: persistedContent,
+                created_at: ISO8601DateFormatter().string(from: Date())
+            )
+            clientMessageId = dto.id
+
+            let localMessage = ChatMessage(dto: dto, currentUserId: userId)
+            delegate.messages.append(localMessage)
+            delegate.pendingOutgoingUserMessageId = clientMessageId
+            onCacheUpdate?()
+            Task.detached {
+                await ChatStore.shared.upsertMessages([dto])
+            }
+
+            NotificationCenter.default.post(name: .chatMessageSent, object: nil, userInfo: [
+                "sessionId": sid,
+                "messageContent": previewToSend
+            ])
+            NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
+
+            delegate.inputText = ""
+            delegate.pendingAttachments = []
+        } else {
+            // Regeneration: persist the user message to local DB (the old one
+            // was deleted) but don't add it to the messages array — the original
+            // row is still visible in the UI for a seamless experience.
+            // Reuse the original message ID so the UI and DB stay in sync on reload.
+            let dto = BackendService.ChatMessageDTO(
+                id: reuseMessageId ?? UUID(),
+                user_id: userId,
+                session_id: sid,
+                role: "user",
+                content: messageToSend,
+                created_at: ISO8601DateFormatter().string(from: Date())
+            )
+            clientMessageId = dto.id
+            Task.detached {
+                await ChatStore.shared.upsertMessages([dto])
+            }
         }
-
-        NotificationCenter.default.post(name: .chatMessageSent, object: nil, userInfo: [
-            "sessionId": sid,
-            "messageContent": previewToSend
-        ])
-        NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
-
-        delegate.inputText = ""
-        delegate.pendingAttachments = []
 
         if NetworkMonitor.shared.isOnline == false {
             Task.detached {
@@ -908,8 +929,11 @@ final class ChatStreamingController {
         let savedInput = delegate.inputText
         let savedAttachments = delegate.pendingAttachments
 
-        // Remove the user message and everything after it (assistant message + any subsequent messages)
-        delegate.messages.removeSubrange(removeFrom...)
+        // Keep the user message in place; only remove the assistant message and everything after it
+        let removeAfterUser = removeFrom + 1
+        if removeAfterUser < delegate.messages.count {
+            delegate.messages.removeSubrange(removeAfterUser...)
+        }
         delegate.pendingAttachments = []
         onCacheUpdate?()
 
@@ -925,6 +949,7 @@ final class ChatStreamingController {
         // removes the newly created message.
         if let anchorId = anchorMessageId, let sid = sessionId {
             Task { [weak self, weak delegate] in
+                // Delete the user message + everything after from DB (sendMessage will re-persist it)
                 await ChatStore.shared.deleteMessagesAfter(messageId: anchorId, sessionId: sid, includeAnchor: true)
 
                 if let accessToken = await AuthService.shared.getAccessToken() {
@@ -933,13 +958,13 @@ final class ChatStreamingController {
 
                 await MainActor.run { [weak self, weak delegate] in
                     guard let self, let delegate else { return }
-                    self.sendMessage(overrideText: text)
+                    self.sendMessage(overrideText: text, isRegeneration: true, reuseMessageId: anchorId)
                     delegate.inputText = savedInput
                     delegate.pendingAttachments = savedAttachments
                 }
             }
         } else {
-            sendMessage(overrideText: text)
+            sendMessage(overrideText: text, isRegeneration: true, reuseMessageId: anchorMessageId)
             delegate.inputText = savedInput
             delegate.pendingAttachments = savedAttachments
         }
