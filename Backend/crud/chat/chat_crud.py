@@ -187,6 +187,43 @@ async def count_user_messages(*, session_id: uuid.UUID) -> int:
     return await run_in_threadpool(_count)
 
 
+async def delete_messages_after(*, user_id: uuid.UUID, session_id: uuid.UUID, after_message_id: uuid.UUID) -> int:
+    """Delete all messages in a session that were created after the given message.
+    The anchor message itself is preserved."""
+
+    def _delete():
+        db = SessionLocal()
+        try:
+            anchor = db.get(UserChatMessage, after_message_id)
+            if anchor is None:
+                return 0
+            if anchor.session_id != session_id:
+                return 0
+
+            anchor_ts = anchor.created_at
+
+            from sqlalchemy import and_, or_
+
+            condition = and_(
+                UserChatMessage.session_id == session_id,
+                or_(
+                    UserChatMessage.created_at > anchor_ts,
+                    and_(
+                        UserChatMessage.created_at == anchor_ts,
+                        UserChatMessage.id != after_message_id,
+                    ),
+                ),
+            )
+            count = len(db.execute(select(UserChatMessage.id).where(condition)).all())
+            db.execute(delete(UserChatMessage).where(condition))
+            db.commit()
+            return count
+        finally:
+            db.close()
+
+    return await run_in_threadpool(_delete)
+
+
 async def get_recent_user_messages(*, session_id: uuid.UUID, limit: int = 2) -> List[str]:
     def _select():
         db = SessionLocal()

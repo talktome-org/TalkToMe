@@ -20,6 +20,7 @@ from sqlalchemy import select, text
 from Backend.auth import get_current_user
 from Backend.crud.chat.chat_crud import (
     count_user_messages,
+    delete_messages_after,
     get_recent_user_messages,
     list_messages_for_session,
     save_message,
@@ -801,6 +802,23 @@ async def delete_session_route(session_id: uuid.UUID, current_user: dict = Depen
         await assert_session_owned_by_user(user_id=user_uuid, session_id=session_id)
         await delete_session(user_id=user_uuid, session_id=session_id)
         return {"success": True}
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Forbidden: invalid session")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/sessions/{session_id}/messages/after/{message_id}")
+async def delete_messages_after_route(session_id: uuid.UUID, message_id: uuid.UUID, current_user: dict = Depends(get_current_user)):
+    try:
+        user_uuid = uuid.UUID(current_user.get("sub"))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid user ID in token")
+
+    try:
+        await assert_session_owned_by_user(user_id=user_uuid, session_id=session_id)
+        deleted = await delete_messages_after(user_id=user_uuid, session_id=session_id, after_message_id=message_id)
+        return {"success": True, "deleted_count": deleted}
     except PermissionError:
         raise HTTPException(status_code=403, detail="Forbidden: invalid session")
     except Exception as e:

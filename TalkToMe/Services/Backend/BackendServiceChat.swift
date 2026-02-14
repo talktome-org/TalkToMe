@@ -223,6 +223,33 @@ extension BackendService {
         }
     }
 
+    /// Best-effort deletion of all messages in a session after a given message.
+    /// Silently ignores 404 (backend may not support this endpoint yet).
+    func deleteMessagesAfter(messageId: UUID, sessionId: UUID, accessToken: String) async {
+        let url = baseURL
+            .appendingPathComponent("chat")
+            .appendingPathComponent("sessions")
+            .appendingPathComponent(sessionId.uuidString)
+            .appendingPathComponent("messages")
+            .appendingPathComponent("after")
+            .appendingPathComponent(messageId.uuidString)
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = BackendService.coreRequestTimeoutSeconds
+
+        do {
+            let (_, response) = try await urlSession.data(for: request)
+            if let http = response as? HTTPURLResponse, http.statusCode == 404 {
+                // Try POST variant
+                request.httpMethod = "POST"
+                _ = try? await urlSession.data(for: request)
+            }
+        } catch {
+            // Best-effort — don't propagate errors
+        }
+    }
+
     // Chat attachments
     func uploadChatAttachment(fileData: Data, filename: String, contentType: String, accessToken: String) async throws -> (path: String, url: String?) {
         let url = baseURL

@@ -4,7 +4,9 @@ struct AssistantMessageActionsView: View {
     let messageText: String
     let regenerationCount: Int
     let onRegenerate: (() -> Void)?
+    var onToast: ((String) -> Void)? = nil
 
+    @State private var showCopyCheck: Bool = false
     @State private var feedbackGiven: FeedbackType? = nil
 
     private enum FeedbackType {
@@ -15,15 +17,26 @@ struct AssistantMessageActionsView: View {
     init(
         messageText: String,
         regenerationCount: Int = 0,
-        onRegenerate: (() -> Void)? = nil
+        onRegenerate: (() -> Void)? = nil,
+        onToast: ((String) -> Void)? = nil
     ) {
         self.messageText = messageText
         self.regenerationCount = regenerationCount
         self.onRegenerate = onRegenerate
+        self.onToast = onToast
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
+            // Copy button
+            Button(action: copyToClipboard) {
+                Image(systemName: showCopyCheck ? "checkmark" : "square.on.square")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(showCopyCheck ? .primary : .secondary)
+            }
+            .buttonStyle(.plain)
+            .animation(.easeInOut(duration: 0.15), value: showCopyCheck)
+
             // Regenerate button
             if let onRegenerate {
                 Button(action: {
@@ -33,7 +46,6 @@ struct AssistantMessageActionsView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.secondary)
 
                         if regenerationCount > 0 {
                             Text("x\(regenerationCount)")
@@ -41,6 +53,7 @@ struct AssistantMessageActionsView: View {
                                 .foregroundColor(.secondary)
                         }
                     }
+                    .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
             }
@@ -49,19 +62,17 @@ struct AssistantMessageActionsView: View {
             Button(action: { giveFeedback(.positive) }) {
                 Image(systemName: feedbackGiven == .positive ? "hand.thumbsup.fill" : "hand.thumbsup")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(feedbackGiven == .positive ? .green : .secondary)
+                    .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
-            .disabled(feedbackGiven != nil)
 
             // Thumbs down
             Button(action: { giveFeedback(.negative) }) {
                 Image(systemName: feedbackGiven == .negative ? "hand.thumbsdown.fill" : "hand.thumbsdown")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(feedbackGiven == .negative ? .red : .secondary)
+                    .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
-            .disabled(feedbackGiven != nil)
 
             Spacer()
         }
@@ -69,10 +80,28 @@ struct AssistantMessageActionsView: View {
         .padding(.leading, 4)
     }
 
+    private func copyToClipboard() {
+        guard !showCopyCheck else { return }
+        UIPasteboard.general.string = messageText
+        Haptics.impact(.light)
+        showCopyCheck = true
+        onToast?("Copied response to clipboard.")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            showCopyCheck = false
+        }
+    }
+
     private func giveFeedback(_ type: FeedbackType) {
         Haptics.impact(.light)
         withAnimation(.easeInOut(duration: 0.2)) {
-            feedbackGiven = type
+            if feedbackGiven == type {
+                feedbackGiven = nil
+            } else {
+                feedbackGiven = type
+                onToast?(type == .positive
+                    ? "We're glad you liked the response. We'll make sure to provide responses of similar quality."
+                    : "We're sad to hear you didn't like the response. We'll work on providing better responses.")
+            }
         }
         // TODO: Send feedback to backend
     }

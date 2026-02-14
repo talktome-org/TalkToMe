@@ -17,6 +17,8 @@ struct MessagesListView: View {
     @State private var scrollToBottomToken: Int = 0
     @State private var underlyingScrollView: UIScrollView? = nil
     @State private var scrollAnimator: UIViewPropertyAnimator? = nil
+    @State private var toastMessage: String? = nil
+    @State private var toastWorkItem: DispatchWorkItem? = nil
 
     private var messages: [ChatMessage] { chatViewModel.messages }
     private var isAssistantTyping: Bool { chatViewModel.isAssistantTyping }
@@ -59,8 +61,11 @@ struct MessagesListView: View {
                         onSendToPartner: { text in
                             NotificationCenter.default.post(name: .sendPartnerMessageFromBubble, object: nil, userInfo: ["content": text])
                         },
-                        onRegenerate: { messageId in
-                            chatViewModel.regenerateResponse(for: messageId)
+                        onRegenerate: {
+                            chatViewModel.streamingController.regenerateResponse(forAssistantMessageId: message.id)
+                        },
+                        onToast: { text in
+                            showToast(text)
                         },
                         sendAnimationNamespace: sendAnimationNamespace,
                         outgoingAnimatingMessageId: outgoingAnimatingMessageId
@@ -112,6 +117,15 @@ struct MessagesListView: View {
         .overlay(alignment: .bottomTrailing) {
             scrollToBottomButton
         }
+        .overlay(alignment: .top) {
+            if let toastMessage {
+                ToastOverlayView(message: toastMessage, onDismiss: {
+                    dismissToast()
+                })
+                .padding(.top, 8)
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
         .onChange(of: scrollToBottomToken, initial: false) { _, _ in
             guard let sv = underlyingScrollView else { return }
             sv.layoutIfNeeded()
@@ -171,7 +185,7 @@ struct MessagesListView: View {
         }
         .frame(width: scrollButtonSize, height: scrollButtonSize)
         .padding(.bottom, bottomPadding)
-        .padding(.trailing, 20)
+        .padding(.trailing, 23)
         .allowsHitTesting(shouldShowScrollButton)
         .animation(.spring(response: 0.30, dampingFraction: 0.86), value: shouldShowScrollButton)
     }
@@ -179,6 +193,27 @@ struct MessagesListView: View {
     private func scrollToBottom() {
         followBottom = true
         scrollToBottomToken &+= 1
+    }
+
+    private func showToast(_ message: String) {
+        toastWorkItem?.cancel()
+        withAnimation {
+            toastMessage = message
+        }
+        let work = DispatchWorkItem {
+            withAnimation {
+                toastMessage = nil
+            }
+        }
+        toastWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: work)
+    }
+
+    private func dismissToast() {
+        toastWorkItem?.cancel()
+        withAnimation {
+            toastMessage = nil
+        }
     }
 }
 
