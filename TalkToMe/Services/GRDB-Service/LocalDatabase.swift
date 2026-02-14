@@ -155,6 +155,12 @@ final class LocalDatabase {
             }
         }
 
+        migrator.registerMigration("messages_add_ghost_name") { db in
+            try db.alter(table: "messages") { t in
+                t.add(column: "ghost_name", .text)
+            }
+        }
+
         return migrator
     }
 }

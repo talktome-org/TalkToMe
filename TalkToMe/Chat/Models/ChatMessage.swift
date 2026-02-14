@@ -20,6 +20,7 @@ struct ChatMessage: Identifiable {
     let isToolLoading: Bool
     let isFromVoiceMode: Bool
     var regenerationCount: Int
+    var ghostName: String?
 
     static func text(_ text: String, isFromUser: Bool, timestamp: Date = Date(), isFromVoiceMode: Bool = false) -> ChatMessage {
         return ChatMessage(
@@ -42,7 +43,8 @@ struct ChatMessage: Identifiable {
         timestamp: Date = Date(),
         isToolLoading: Bool = false,
         isFromVoiceMode: Bool = false,
-        regenerationCount: Int = 0
+        regenerationCount: Int = 0,
+        ghostName: String? = nil
     ) {
         self.id = id
         self.senderUserId = senderUserId
@@ -53,6 +55,7 @@ struct ChatMessage: Identifiable {
         self.isToolLoading = isToolLoading
         self.isFromVoiceMode = isFromVoiceMode
         self.regenerationCount = regenerationCount
+        self.ghostName = ghostName
     }
 
     static func partnerReceived(_ text: String) -> ChatMessage {
@@ -75,6 +78,7 @@ struct ChatMessage: Identifiable {
         let isFromPartnerUser = (dto.user_id != currentUserId) && dto.role == "user"
 
         var segments: [MessageSegment] = dto.content.isEmpty ? [] : [.text(dto.content)]
+        var parsedGhostName: String? = nil
 
         if let obj = ChatMessage.tryDecodeJSONDictionary(from: dto.content) {
             let talktome = (obj["_talktome"] as? [String: Any]) ?? [:]
@@ -101,6 +105,9 @@ struct ChatMessage: Identifiable {
                     case "partner_draft":
                         if let txt = dict["text"] as? String, !txt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             segs.append(.partnerMessage(txt))
+                            if parsedGhostName == nil, let gn = dict["ghost_name"] as? String, !gn.isEmpty {
+                                parsedGhostName = gn
+                            }
                         }
                     case "partner_received":
                         if let txt = dict["text"] as? String, !txt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -134,6 +141,7 @@ struct ChatMessage: Identifiable {
         self.isToolLoading = false
         self.isFromVoiceMode = false
         self.regenerationCount = 0
+        self.ghostName = parsedGhostName
     }
 
     private static func parseISO8601(_ iso: String?) -> Date? {

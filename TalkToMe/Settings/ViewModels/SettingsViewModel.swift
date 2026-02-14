@@ -61,34 +61,40 @@ class SettingsViewModel: ObservableObject {
     private func setupSettingsSections() {
         settingsSections = [
             SettingsSection(
-                title: "App Settings",
-                icon: "gear",
-                gradient: [Color.blue, Color.purple],
+                title: "",
+                icon: "",
+                gradient: [],
                 settings: [
                     SettingItem(title: "Appearance", subtitle: nil, type: .picker(["Light", "Dark", "System"]), icon: "circle.lefthalf.filled"),
-                    SettingItem(title: "Notifications", subtitle: nil, type: .toggle(APNSService.shared.isPushEnabled), icon: "bell"),
-                    SettingItem(title: "Voice Mode", subtitle: "Talk instead of type", type: .toggle(settingsData.voiceModeEnabled), icon: "waveform"),
-                    SettingItem(title: "Haptics", subtitle: nil, type: .toggle(settingsData.hapticFeedbackEnabled), icon: "iphone.radiowaves.left.and.right")
+                    SettingItem(title: "Wallpapers", subtitle: nil, type: .navigation, icon: "photo")
                 ]
             ),
             SettingsSection(
-                title: "Help & Support",
-                icon: "questionmark.circle",
-                gradient: [Color.green, Color.blue],
+                title: "",
+                icon: "",
+                gradient: [],
+                settings: [
+                    SettingItem(title: "Notifications", subtitle: nil, type: .toggle(APNSService.shared.isPushEnabled), icon: "bell"),
+                    SettingItem(title: "Haptics", subtitle: nil, type: .toggle(settingsData.hapticFeedbackEnabled), icon: "iphone.radiowaves.left.and.right"),
+                    SettingItem(title: "Voice Mode", subtitle: nil, type: .toggle(settingsData.voiceModeEnabled), icon: "waveform")
+                ]
+            ),
+            SettingsSection(
+                title: "",
+                icon: "",
+                gradient: [],
                 settings: [
                     SettingItem(title: "Contact Support", subtitle: nil, type: .navigation, icon: "envelope"),
                     SettingItem(title: "Privacy Policy", subtitle: nil, type: .navigation, icon: "hand.raised")
                 ]
             ),
             SettingsSection(
-                title: "Account",
-                icon: "person.circle",
-                gradient: [Color.red, Color.orange],
-                settings: {
-                    var items: [SettingItem] = []
-                    items.append(SettingItem(title: "Sign Out", subtitle: nil, type: .action, icon: "rectangle.portrait.and.arrow.right"))
-                    return items
-                }()
+                title: "",
+                icon: "",
+                gradient: [],
+                settings: [
+                    SettingItem(title: "Sign Out", subtitle: nil, type: .action, icon: "rectangle.portrait.and.arrow.right")
+                ]
             )
         ]
     }

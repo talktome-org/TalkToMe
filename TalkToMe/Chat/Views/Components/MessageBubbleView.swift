@@ -244,7 +244,8 @@ struct MessageBubbleView: View {
                                         initialText: text,
                                         isSent: isSent,
                                         isLinked: isLinked,
-                                        recipientUserId: chatViewModel.selectedFriendUserId
+                                        recipientUserId: chatViewModel.selectedFriendUserId,
+                                        ghostName: message.ghostName
                                     ) { action in
                                         switch action {
                                         case .send(let edited):

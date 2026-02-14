@@ -5,7 +5,7 @@ struct PartnerDraftBlockView: View {
     enum Action { case send(String) }
 
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
-    @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var buddyName: String = ""
+    @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var currentBuddyName: String = ""
 
     @State private var text: String
     @State private var isConfirmingNormalSend: Bool = false
@@ -15,6 +15,7 @@ struct PartnerDraftBlockView: View {
     let isSent: Bool
     let isLinked: Bool
     let recipientUserId: UUID?
+    let ghostName: String?
     let onAction: (Action) -> Void
 
     init(
@@ -22,23 +23,33 @@ struct PartnerDraftBlockView: View {
         isSent: Bool = false,
         isLinked: Bool = true,
         recipientUserId: UUID?,
+        ghostName: String? = nil,
         onAction: @escaping (Action) -> Void
     ) {
         self.initialText = initialText
         self.isSent = isSent
         self.isLinked = isLinked
         self.recipientUserId = recipientUserId
+        self.ghostName = ghostName
         self._text = State(initialValue: initialText)
         self.onAction = onAction
     }
 
+    /// Use the persisted ghost name if available, otherwise fall back to the currently selected buddy.
+    private var effectiveBuddyName: String {
+        if let gn = ghostName, !gn.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return gn
+        }
+        return currentBuddyName
+    }
+
     private var resolvedBuddyName: String {
-        let name = buddyName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = effectiveBuddyName.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? "Your buddy" : name
     }
 
     private var buddyImage: UIImage? {
-        ElevenLabsVoiceSuggestionsView.ghostUIImage(for: buddyName)
+        ElevenLabsVoiceSuggestionsView.ghostUIImage(for: effectiveBuddyName)
     }
 
     private var recipientFirstName: String {

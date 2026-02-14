@@ -18,6 +18,7 @@ struct ChatMessageRecord: Codable, FetchableRecord, PersistableRecord {
     var content: String
     var created_at: String
     var regeneration_count: Int
+    var ghost_name: String?
 }
 
 struct ChatAttachmentRecord: Codable, FetchableRecord, PersistableRecord {
@@ -299,6 +300,19 @@ final class ChatStore {
         } catch {}
     }
 
+    /// Sets ghost_name on all messages in a session that contain partner_draft content and don't yet have a ghost_name.
+    func setGhostNameForPartnerDrafts(sessionId: UUID, ghostName: String) async {
+        let sid = sessionId.uuidString
+        do {
+            try await dbQueue.write { db in
+                try db.execute(
+                    sql: "UPDATE messages SET ghost_name = ? WHERE session_id = ? AND ghost_name IS NULL AND content LIKE '%partner_draft%'",
+                    arguments: [ghostName, sid]
+                )
+            }
+        } catch {}
+    }
+
     func loadMessages(sessionId: UUID, currentUserId: UUID) async -> [ChatMessage] {
         let sid = sessionId.uuidString
         do {
@@ -352,6 +366,7 @@ final class ChatStore {
                 )
                 var msg = ChatMessage(dto: dto, currentUserId: currentUserId)
                 msg.regenerationCount = r.regeneration_count
+                if let gn = r.ghost_name { msg.ghostName = gn }
                 return msg
             }
         } catch {
@@ -390,7 +405,8 @@ final class ChatStore {
                         role: dto.role,
                         content: dto.content,
                         created_at: created,
-                        regeneration_count: existing?.regeneration_count ?? 0
+                        regeneration_count: existing?.regeneration_count ?? 0,
+                        ghost_name: existing?.ghost_name
                     )
                     try rec.save(db)
                 }
