@@ -168,7 +168,7 @@ struct MessagesListView: View {
         }
         .frame(width: scrollButtonSize, height: scrollButtonSize)
         .padding(.bottom, bottomPadding)
-        .padding(.trailing, 16)
+        .padding(.trailing, 20)
         .allowsHitTesting(shouldShowScrollButton)
         .animation(.spring(response: 0.30, dampingFraction: 0.86), value: shouldShowScrollButton)
     }

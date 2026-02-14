@@ -40,11 +40,12 @@ struct MainTabView: View {
     }
 
     private func dismissChat() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         withAnimation(.easeOut(duration: 0.25)) {
-            showChat = false
+            chatDragOffset = UIScreen.main.bounds.width
         }
-        // Reset offset after animation completes
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            showChat = false
             chatDragOffset = 0
         }
     }

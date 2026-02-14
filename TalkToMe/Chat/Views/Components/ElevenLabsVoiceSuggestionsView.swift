@@ -226,7 +226,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Buddies")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
 
             voiceGrid

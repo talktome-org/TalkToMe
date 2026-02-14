@@ -48,7 +48,6 @@ struct ChatView: View {
                 if let onBack {
                     ToolbarItem(placement: .topBarLeading) {
                         Button {
-                            Haptics.impact(.light)
                             onBack()
                         } label: {
                             Image(systemName: "chevron.left")
@@ -58,14 +57,11 @@ struct ChatView: View {
                 }
 
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("New chat", systemImage: "square.and.pencil") {
-                        sessionsViewModel.startNewChat()
-                    }
-
                     ChatSessionActionsMenu(
                         sessionId: activeSessionIdForActions,
                         currentTitle: activeSessionTitleForActions,
                         onRenameRequest: { sessionActions.requestRename(currentTitle: activeSessionTitleForActions) },
+                        onArchiveRequest: { sessionActions.requestArchive() },
                         onDeleteRequest: { sessionActions.requestDelete() },
                         onReportRequest: { sessionActions.requestReport() }
                     )
