@@ -81,7 +81,20 @@ struct SettingsView: View {
                     .foregroundColor(Color(.label).opacity(0.5))
             }
         }
-        .padding(.bottom, 32)
+        .padding(.bottom, 8)
+    }
+
+    private var editProfileButton: some View {
+        Button {
+            Haptics.impact(.light)
+            viewModel.showPersonalizationEdit = true
+        } label: {
+            Text("Edit Profile")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(.blue)
+        }
+        .buttonStyle(.plain)
+        .padding(.bottom, 24)
     }
 
     @ViewBuilder
@@ -117,6 +130,7 @@ struct SettingsView: View {
                     VStack(spacing: 0) {
                         avatarView
                         headerInfoView
+                        editProfileButton
 
                         if showCards {
                             sectionsListView
@@ -128,32 +142,6 @@ struct SettingsView: View {
                 .scrollIndicators(.hidden)
                 .background(Color.clear)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
-                .navigationTitle("Settings")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Edit") {
-                            Haptics.impact(.light)
-                            viewModel.showPersonalizationEdit = true
-                        }
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(Color(red: 0.4, green: 0.2, blue: 0.6))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 8)
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(action: {
-                            Haptics.impact(.light)
-                            isPresented = false
-                        }) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(Color(red: 0.4, green: 0.2, blue: 0.6))
-                                .frame(width: 32, height: 32)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
             }
             .sheet(isPresented: $viewModel.showPersonalizationEdit) {
                 PersonalizationEditView(

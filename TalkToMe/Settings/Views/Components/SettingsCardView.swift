@@ -51,10 +51,7 @@ struct SettingsCardView: View {
 
                         case .picker(let options):
                             HStack(spacing: 12) {
-                                Image(systemName: setting.icon)
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundColor(.primary)
-                                    .frame(width: 24, height: 24)
+                                iconView(for: setting)
 
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(setting.title)
@@ -65,7 +62,6 @@ struct SettingsCardView: View {
 
                                 Spacer()
 
-                                // Segmented control for appearance selection
                                 Picker("", selection: Binding(
                                     get: { appearance },
                                     set: { newValue in
@@ -87,10 +83,7 @@ struct SettingsCardView: View {
 
                         case .toggle:
                             HStack(spacing: 12) {
-                                Image(systemName: setting.icon)
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundColor(.primary)
-                                    .frame(width: 24, height: 24)
+                                iconView(for: setting)
 
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(setting.title)
@@ -124,10 +117,7 @@ struct SettingsCardView: View {
                         case .navigation:
                             NavigationLink(destination: viewForTitle(setting.title)) {
                                 HStack(spacing: 12) {
-                                    Image(systemName: setting.icon)
-                                        .font(.system(size: 16, weight: .medium))
-                                        .foregroundColor(.primary)
-                                        .frame(width: 24, height: 24)
+                                    iconView(for: setting)
 
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(setting.title)
@@ -149,10 +139,7 @@ struct SettingsCardView: View {
                         case .action:
                             Button(action: { onAction(index) }) {
                                 HStack(spacing: 12) {
-                                    Image(systemName: setting.icon)
-                                        .font(.system(size: 16, weight: .medium))
-                                        .foregroundColor(.primary)
-                                        .frame(width: 24, height: 24)
+                                    iconView(for: setting)
 
                                     VStack(alignment: .leading, spacing: 2) {
                                         if setting.title == "Sign Out" {
@@ -183,6 +170,11 @@ struct SettingsCardView: View {
                             .buttonStyle(PlainButtonStyle())
                         }
                     }
+
+                    if index < section.settings.count - 1 {
+                        Divider()
+                            .padding(.leading, 56)
+                    }
                 }
             }
             .background(Color(.systemBackground))
@@ -201,6 +193,36 @@ struct SettingsCardView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 6)
             }
+        }
+    }
+
+    // MARK: - Colored Icon
+
+    @ViewBuilder
+    private func iconView(for setting: SettingItem) -> some View {
+        let color = iconColor(for: setting.icon)
+        Image(systemName: setting.icon)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(.white)
+            .frame(width: 28, height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(color)
+            )
+    }
+
+    private func iconColor(for icon: String) -> Color {
+        switch icon {
+        case "bell": return .red
+        case "circle.lefthalf.filled": return .blue
+        case "waveform": return .orange
+        case "iphone.radiowaves.left.and.right": return .purple
+        case "envelope": return .green
+        case "hand.raised": return .blue
+        case "rectangle.portrait.and.arrow.right": return .red
+        case "number": return .blue
+        default:
+            return section.gradient.first ?? .gray
         }
     }
 
@@ -235,9 +257,13 @@ private struct FriendCodeInlineRow: View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
                 Image(systemName: "number")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.primary)
-                    .frame(width: 24, height: 24)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Color.blue)
+                    )
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Your code")
