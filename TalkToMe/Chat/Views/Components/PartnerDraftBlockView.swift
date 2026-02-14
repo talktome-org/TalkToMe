@@ -5,7 +5,7 @@ struct PartnerDraftBlockView: View {
     enum Action { case send(String) }
 
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
-    @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var currentGlobalBuddyName: String = ""
+    @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var currentBuddyName: String = ""
 
     @State private var text: String
     @State private var isConfirmingNormalSend: Bool = false
@@ -38,11 +38,12 @@ struct PartnerDraftBlockView: View {
         self.onAction = onAction
     }
 
-    /// Use the persisted ghost name if available, otherwise fall back to the current global setting.
+    /// Use the persisted ghost name if available, otherwise fall back to the currently selected buddy.
     private var effectiveBuddyName: String {
-        let persisted = ghostName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !persisted.isEmpty { return persisted }
-        return currentGlobalBuddyName
+        if let gn = ghostName, !gn.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return gn
+        }
+        return currentBuddyName
     }
 
     private var resolvedBuddyName: String {

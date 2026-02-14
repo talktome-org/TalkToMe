@@ -38,6 +38,7 @@ final class ChatStreamingController {
     private var assistantMessageIdBySession: [UUID: UUID] = [:]
     private var currentStreamingSessionId: UUID?
     private var pendingRegenerationCount: Int = 0
+    private var ghostNameBySession: [UUID: String] = [:]
 
     private weak var delegate: ChatStreamingDelegate?
     private var onCacheUpdate: (() -> Void)?
@@ -527,6 +528,9 @@ final class ChatStreamingController {
                     Task { @MainActor in
                         if let local = createdLocalSessionIdForSend, delegate.sessionId == local, sid != local {
                             await ChatStore.shared.rekeySession(oldId: local, newId: sid)
+                            if let ghostName = self.ghostNameBySession[local] {
+                                self.ghostNameBySession[sid] = ghostName
+                            }
                             NotificationCenter.default.post(name: .chatSessionRekeyed, object: nil, userInfo: [
                                 "oldSessionId": local,
                                 "newSessionId": sid
@@ -640,7 +644,7 @@ final class ChatStreamingController {
                                 return newMessages.count - 1
                             }()
                             let last = newMessages[idx]
-                            let updated = ChatMessage(
+                            var updated = ChatMessage(
                                 id: last.id,
                                 segments: currentSegments,
                                 isFromUser: false,
@@ -648,6 +652,7 @@ final class ChatStreamingController {
                                 isToolLoading: false,
                                 isFromVoiceMode: last.isFromVoiceMode
                             )
+                            updated.ghostName = self.ghostNameBySession[sid]
                             newMessages[idx] = updated
                             delegate.messages = newMessages
                             if let id = self.currentAssistantMessageId { delegate.assistantScrollTargetId = id }
@@ -663,7 +668,7 @@ final class ChatStreamingController {
                                 return newMessages.count - 1
                             }()
                             let last = newMessages[idx]
-                            let updated = ChatMessage(
+                            var updated = ChatMessage(
                                 id: last.id,
                                 segments: currentSegments,
                                 isFromUser: false,
@@ -671,6 +676,7 @@ final class ChatStreamingController {
                                 isToolLoading: false,
                                 isFromVoiceMode: last.isFromVoiceMode
                             )
+                            updated.ghostName = self.ghostNameBySession[sid]
                             newMessages[idx] = updated
                             delegate.setCachedMessages(newMessages, for: sid)
                         }
@@ -737,10 +743,14 @@ final class ChatStreamingController {
                         if NetworkMonitor.shared.isOnline {
                             if let sid = (streamSessionId ?? delegate.sessionId) {
                                 let tokenForSync = accessToken
+                                let capturedGhostName = self.ghostNameBySession[sid]
                                 Task.detached {
                                     try? await Task.sleep(nanoseconds: 900_000_000)
                                     if let dtos = try? await BackendService.shared.fetchMessages(sessionId: sid, accessToken: tokenForSync) {
                                         await ChatStore.shared.upsertMessages(dtos)
+                                        if let ghostName = capturedGhostName {
+                                            await ChatStore.shared.setGhostNameForPartnerDrafts(sessionId: sid, ghostName: ghostName)
+                                        }
                                     }
                                 }
                             }
@@ -813,6 +823,10 @@ final class ChatStreamingController {
             }
 
             let ghostNameToSend = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName)
+            let cleanedGhostName = ghostNameToSend?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !cleanedGhostName.isEmpty {
+                self.ghostNameBySession[localSessionIdForSend] = cleanedGhostName
+            }
 
             let task = Task.detached { [streamToken] in
                 let stream = BackendService.shared.streamChatMessage(
