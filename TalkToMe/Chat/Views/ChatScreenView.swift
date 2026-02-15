@@ -74,11 +74,6 @@ struct ChatScreenView: View {
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
         .background(Color(.systemBackground))
-        .onChange(of: chatViewModel.pendingOutgoingUserMessageId, initial: false) { _, newId in
-            if newId != nil {
-                chatViewModel.pendingOutgoingUserMessageId = nil
-            }
-        }
     }
 }
 
