@@ -377,10 +377,12 @@ extension ChatViewModel: ChatStreamingDelegate {
 
         let voiceId = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let voiceName = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !voiceId.isEmpty else { return }
 
         Task { @MainActor in
-            await elevenLabsStreamingTTS.start(voiceId: voiceId)
+            await elevenLabsStreamingTTS.start(voiceId: voiceId, voiceName: voiceName)
         }
     }
 

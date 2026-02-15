@@ -195,6 +195,14 @@ struct MessageBubbleView: View {
         return activeStreamingThinkingText
     }
 
+    private var isActivelyStreamingMessage: Bool {
+        guard !message.isFromUser else { return false }
+        guard !message.isFromPartnerUser else { return false }
+        guard chatViewModel.isLoading else { return false }
+        guard chatViewModel.messages.last?.id == message.id else { return false }
+        return true
+    }
+
     private var hasRenderableAssistantContent: Bool {
         if message.isToolLoading { return true }
         return message.segments.contains { segment in
@@ -285,7 +293,7 @@ struct MessageBubbleView: View {
                             case .text(let text):
                                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                                 if !trimmed.isEmpty {
-                                    MarkdownRendererView(markdown: text)
+                                    MarkdownRendererView(markdown: text, isStreaming: isActivelyStreamingMessage)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .padding(.horizontal, 4)
                                         .padding(.vertical, 4)

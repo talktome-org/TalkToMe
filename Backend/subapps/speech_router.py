@@ -114,11 +114,12 @@ class AppVoicesResponse(BaseModel):
 
 # Voice metadata (descriptions are not sensitive, keep in code)
 _VOICE_METADATA: dict[str, dict[str, str]] = {
-    "Luma": {"description": "Warm, compassionate. Soft, airy timbre with gentle breathiness and a reassuring smile."},
-    "Volt": {"description": "Confident heroic tone, friendly and encouraging. Upbeat cadence, clear articulation."},
-    "Hexley": {"description": "Bright, playful, magical energy with a light airy tone. Expressive inflection."},
     "Mira": {"description": "Cheerful, affectionate with light, bubbly warmth. Soft breathiness, smiling delivery."},
     "Pax": {"description": "Clear, articulate warmth with a patient teacher vibe. Steady cadence, gentle humor."},
+    "Luma": {"description": "Warm, compassionate. Soft, airy timbre with gentle breathiness and a reassuring smile."},
+    "Snow": {"description": "Regal, poised, and grand. Elegant diction with a calm, stately presence."},
+    "Jay": {"description": "Bold, quick, and driven. Confident energy with sharp, upbeat cadence."},
+    "Hex": {"description": "Bright, playful, magical energy with a light airy tone. Expressive inflection."},
 }
 
 
@@ -126,8 +127,8 @@ def _load_app_voices() -> tuple[list[AppVoice], str]:
     """Load voice IDs from environment variables."""
     voices: list[AppVoice] = []
 
-    # Expected env vars: VOICE_ID_LUMA, VOICE_ID_VOLT, etc.
-    voice_names = ["Luma", "Volt", "Hexley", "Mira", "Pax"]
+    # Expected env vars: VOICE_ID_MIRA, VOICE_ID_PAX, etc.
+    voice_names = ["Mira", "Pax", "Luma", "Snow", "Jay", "Hex"]
     for name in voice_names:
         env_key = f"VOICE_ID_{name.upper()}"
         voice_id = os.getenv(env_key, "").strip()
@@ -151,7 +152,7 @@ async def get_app_voices(current_user: dict = Depends(get_current_user)):
     """
     Returns the curated list of TalkToMe app voices.
     Voice IDs are loaded from environment variables:
-    - VOICE_ID_LUMA, VOICE_ID_VOLT, VOICE_ID_HEXLEY, VOICE_ID_MIRA, VOICE_ID_PAX
+    - VOICE_ID_MIRA, VOICE_ID_PAX, VOICE_ID_LUMA, VOICE_ID_SNOW, VOICE_ID_JAY, VOICE_ID_HEX
     - VOICE_ID_DEFAULT (optional, defaults to first voice)
     """
     _ = current_user  # auth validated
@@ -331,9 +332,17 @@ async def elevenlabs_tts_stream(websocket: WebSocket):
         return
 
     voice_id = (websocket.query_params.get("voice_id") or "").strip()
-    if not voice_id:
+    voice_name = (websocket.query_params.get("voice_name") or "").strip()
+    if not voice_id and not voice_name:
         await websocket.close(code=1008, reason="Missing voice_id")
         return
+
+    # Resolve voice_id by name if available (name is stable, voice_id can go stale)
+    configured_voices, _ = _load_app_voices()
+    voices_by_name = {v.name.lower(): v.voice_id for v in configured_voices}
+
+    if voice_name and voice_name.lower() in voices_by_name:
+        voice_id = voices_by_name[voice_name.lower()]
 
     # eleven_v3 doesn't support WebSocket stream-input (HTTP 403)
     # eleven_flash_v2_5 is the best low-latency streaming model

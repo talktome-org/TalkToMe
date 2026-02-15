@@ -20,6 +20,7 @@ struct ChatMessageRecord: Codable, FetchableRecord, PersistableRecord {
     var regeneration_count: Int
     var ghost_name: String?
     var thinking_summary: String?
+    var is_voice_mode: Bool
 }
 
 struct ChatAttachmentRecord: Codable, FetchableRecord, PersistableRecord {
@@ -308,9 +309,10 @@ final class ChatStore {
     struct MessageLocalMetadata {
         let thinkingSummary: String?
         let regenerationCount: Int
+        let isVoiceMode: Bool
     }
 
-    /// Returns local-only metadata (thinking_summary, regeneration_count) for all messages in a session, keyed by message ID.
+    /// Returns local-only metadata (thinking_summary, regeneration_count, is_voice_mode) for all messages in a session, keyed by message ID.
     func loadLocalMetadata(sessionId: UUID) async -> [String: MessageLocalMetadata] {
         let sid = sessionId.uuidString
         do {
@@ -318,11 +320,12 @@ final class ChatStore {
                 let rows = try Row.fetchAll(
                     db,
                     sql: """
-                    SELECT id, thinking_summary, regeneration_count FROM messages
+                    SELECT id, thinking_summary, regeneration_count, is_voice_mode FROM messages
                     WHERE session_id = ?
                       AND (
                         (thinking_summary IS NOT NULL AND thinking_summary != '')
                         OR regeneration_count > 0
+                        OR is_voice_mode = 1
                       )
                     """,
                     arguments: [sid]
@@ -332,7 +335,8 @@ final class ChatStore {
                     let id: String = row["id"]
                     let ts: String? = row["thinking_summary"]
                     let rc: Int = row["regeneration_count"] ?? 0
-                    result[id] = MessageLocalMetadata(thinkingSummary: ts, regenerationCount: rc)
+                    let vm: Bool = row["is_voice_mode"] ?? false
+                    result[id] = MessageLocalMetadata(thinkingSummary: ts, regenerationCount: rc, isVoiceMode: vm)
                 }
                 return result
             }
@@ -357,6 +361,27 @@ final class ChatStore {
                     )
                     """,
                     arguments: [summary, sid]
+                )
+            }
+        } catch {}
+    }
+
+    /// Sets is_voice_mode on the last assistant message in a session.
+    func setVoiceModeForLastAssistant(sessionId: UUID) async {
+        let sid = sessionId.uuidString
+        do {
+            try await dbQueue.write { db in
+                try db.execute(
+                    sql: """
+                    UPDATE messages SET is_voice_mode = 1
+                    WHERE id = (
+                        SELECT id FROM messages
+                        WHERE session_id = ? AND role = 'assistant'
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    )
+                    """,
+                    arguments: [sid]
                 )
             }
         } catch {}
@@ -463,6 +488,7 @@ final class ChatStore {
                 msg.regenerationCount = r.regeneration_count
                 if let gn = r.ghost_name { msg.ghostName = gn }
                 if let ts = r.thinking_summary, !ts.isEmpty { msg.thinkingSummary = ts }
+                if r.is_voice_mode { msg.isFromVoiceMode = true }
                 return msg
             }
         } catch {
@@ -558,7 +584,8 @@ final class ChatStore {
                         created_at: created,
                         regeneration_count: existing?.regeneration_count ?? 0,
                         ghost_name: existing?.ghost_name,
-                        thinking_summary: existing?.thinking_summary
+                        thinking_summary: existing?.thinking_summary,
+                        is_voice_mode: existing?.is_voice_mode ?? false
                     )
                     try rec.save(db)
                 }

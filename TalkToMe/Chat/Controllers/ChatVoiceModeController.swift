@@ -233,10 +233,15 @@ final class ChatVoiceModeController: ObservableObject {
             )
         }
 
-        let storedVoiceId = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
+        var storedVoiceId = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let storedVoiceName = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let resolved = VoicesCache.shared.resolvedVoiceId(storedId: storedVoiceId, storedName: storedVoiceName) {
+            storedVoiceId = resolved
+        }
         guard !storedVoiceId.isEmpty else { return }
-        await elevenLabsStreamingTTS.preconnect(voiceId: storedVoiceId)
+        await elevenLabsStreamingTTS.preconnect(voiceId: storedVoiceId, voiceName: storedVoiceName)
     }
 
     func startVoiceModePushToTalk() {
@@ -286,8 +291,16 @@ final class ChatVoiceModeController: ObservableObject {
     }
 
     func startSpeakMode() {
-        let storedVoiceId = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
+        var storedVoiceId = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let storedVoiceName = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Validate / refresh stale voice ID against cached voice list
+        if let resolved = VoicesCache.shared.resolvedVoiceId(storedId: storedVoiceId, storedName: storedVoiceName) {
+            storedVoiceId = resolved
+        }
+
         guard !storedVoiceId.isEmpty else {
             let msg = "Voice mode is not available. Please select an ElevenLabs voice in Settings."
             elevenLabsStreamingTTS.lastError = msg
@@ -297,8 +310,7 @@ final class ChatVoiceModeController: ObservableObject {
             return
         }
 
-        var name = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var name = storedVoiceName
         if name.isEmpty, let cached = VoicesCache.shared.cachedVoices {
             name = (cached.first(where: { $0.voice_id == storedVoiceId })?.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -331,6 +343,8 @@ final class ChatVoiceModeController: ObservableObject {
             self.updatePhase(.listening)
 
             // Connect STT and preconnect TTS in parallel
+            let voiceIdForTTS = storedVoiceId
+            let voiceNameForTTS = name
             async let sttConnect: Void = {
                 if self.speakSTTService.isConnected == false {
                     await self.speakSTTService.connect(
@@ -338,7 +352,7 @@ final class ChatVoiceModeController: ObservableObject {
                     )
                 }
             }()
-            async let ttsPreconnect: Void = self.elevenLabsStreamingTTS.preconnect(voiceId: storedVoiceId)
+            async let ttsPreconnect: Void = self.elevenLabsStreamingTTS.preconnect(voiceId: voiceIdForTTS, voiceName: voiceNameForTTS)
 
             _ = await (sttConnect, ttsPreconnect)
 

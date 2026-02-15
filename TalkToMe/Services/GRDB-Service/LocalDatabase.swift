@@ -167,6 +167,12 @@ final class LocalDatabase {
             }
         }
 
+        migrator.registerMigration("messages_add_is_voice_mode") { db in
+            try db.alter(table: "messages") { t in
+                t.add(column: "is_voice_mode", .boolean).defaults(to: false)
+            }
+        }
+
         return migrator
     }
 }

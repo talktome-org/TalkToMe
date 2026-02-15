@@ -773,19 +773,27 @@ final class ChatStreamingController {
                                 let tokenForSync = accessToken
                                 let capturedGhostName = self.ghostNameBySession[sid]
                                 let capturedThinkingSummary = accumulatedThinking.trimmingCharacters(in: .whitespacesAndNewlines)
+                                let skipReconciliation = isRegeneration
                                 Task.detached {
                                     try? await Task.sleep(nanoseconds: 900_000_000)
-                                    if let dtos = try? await BackendService.shared.fetchMessages(sessionId: sid, accessToken: tokenForSync) {
+                                    // Skip server reconciliation after regeneration: the local
+                                    // DB already has the correct messages and reconciling risks
+                                    // restoring old messages that failed to delete on the server.
+                                    if !skipReconciliation,
+                                       let dtos = try? await BackendService.shared.fetchMessages(sessionId: sid, accessToken: tokenForSync) {
                                         await ChatStore.shared.reconcileMessagesWithServer(dtos, sessionId: sid)
-                                        if let ghostName = capturedGhostName {
-                                            await ChatStore.shared.setGhostNameForPartnerDrafts(sessionId: sid, ghostName: ghostName)
-                                        }
-                                        if !capturedThinkingSummary.isEmpty {
-                                            await ChatStore.shared.setThinkingSummaryForLastAssistant(sessionId: sid, summary: capturedThinkingSummary)
-                                        }
-                                        if capturedRegenCount > 0 {
-                                            await ChatStore.shared.setRegenerationCountForLastAssistant(sessionId: sid, count: capturedRegenCount)
-                                        }
+                                    }
+                                    if let ghostName = capturedGhostName {
+                                        await ChatStore.shared.setGhostNameForPartnerDrafts(sessionId: sid, ghostName: ghostName)
+                                    }
+                                    if !capturedThinkingSummary.isEmpty {
+                                        await ChatStore.shared.setThinkingSummaryForLastAssistant(sessionId: sid, summary: capturedThinkingSummary)
+                                    }
+                                    if capturedRegenCount > 0 {
+                                        await ChatStore.shared.setRegenerationCountForLastAssistant(sessionId: sid, count: capturedRegenCount)
+                                    }
+                                    if isVoiceModeMessage {
+                                        await ChatStore.shared.setVoiceModeForLastAssistant(sessionId: sid)
                                     }
                                 }
                             }
@@ -863,6 +871,7 @@ final class ChatStreamingController {
                 self.ghostNameBySession[localSessionIdForSend] = cleanedGhostName
             }
 
+            let deleteBeforeId: UUID? = isRegeneration ? reuseMessageId : nil
             let task = Task.detached { [streamToken] in
                 let stream = BackendService.shared.streamChatMessage(
                     messageToSend,
@@ -875,7 +884,8 @@ final class ChatStreamingController {
                     messageId: clientMessageId,
                     ephemeral: false,
                     voiceAgent: voiceAgentToSend,
-                    ghostName: ghostNameToSend
+                    ghostName: ghostNameToSend,
+                    deleteBefore: deleteBeforeId
                 )
                 for await event in stream {
                     onEvent(event)

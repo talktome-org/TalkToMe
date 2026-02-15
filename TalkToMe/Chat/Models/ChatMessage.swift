@@ -18,7 +18,7 @@ struct ChatMessage: Identifiable {
     let isFromPartnerUser: Bool
     let timestamp: Date
     let isToolLoading: Bool
-    let isFromVoiceMode: Bool
+    var isFromVoiceMode: Bool
     var regenerationCount: Int
     var ghostName: String?
     var thinkingSummary: String?

@@ -30,6 +30,7 @@ class ChatRequest(BaseModel):
     ephemeral: bool = False
     voice_agent: Optional[str] = None
     ghost_name: Optional[str] = None
+    delete_before: Optional[UUID] = None
 
 
 class ChatResponse(BaseModel):

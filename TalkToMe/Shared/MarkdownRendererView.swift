@@ -21,10 +21,12 @@ struct MarkdownRendererView: View {
 
     private let blocks: [Block]
     private let firstHeadingIndex: Int?
+    private let isStreaming: Bool
 
-    init(markdown: String) {
+    init(markdown: String, isStreaming: Bool = false) {
         let parsed = Self.parseBlocks(markdown)
         self.blocks = parsed
+        self.isStreaming = isStreaming
         self.firstHeadingIndex = parsed.firstIndex { block in
             if case .heading = block { return true }
             return false
@@ -38,64 +40,67 @@ struct MarkdownRendererView: View {
                 let previous: Block? = index > 0 ? blocks[index - 1] : nil
                 let top = topPadding(previous: previous, current: block, index: index)
 
-                switch block {
-                case .heading(let text):
-                    let showDivider = shouldInsertDivider(beforeHeadingAt: index, previous: previous)
-                    VStack(alignment: .leading, spacing: 0) {
-                        if showDivider {
-                            dividerView()
-                                .padding(.top, Layout.dividerPadding)
-                        }
-                        headingText(text)
-                            .padding(.top, showDivider ? Layout.dividerPadding : top)
-                    }
-
-                case .unorderedList(let items):
-                    VStack(alignment: .leading, spacing: 16) {
-                        ForEach(items.indices, id: \.self) { i in
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text("•")
-                                    .font(.body.weight(.bold))
-                                    .baselineOffset(2)
-                                inlineText(items[i])
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                Group {
+                    switch block {
+                    case .heading(let text):
+                        let showDivider = shouldInsertDivider(beforeHeadingAt: index, previous: previous)
+                        VStack(alignment: .leading, spacing: 0) {
+                            if showDivider {
+                                dividerView()
+                                    .padding(.top, Layout.dividerPadding)
                             }
+                            headingText(text)
+                                .padding(.top, showDivider ? Layout.dividerPadding : top)
                         }
-                        .padding(.horizontal, 6)
-                    }
-                    .padding(.top, top)
 
-                case .orderedList(let items):
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(items.indices, id: \.self) { i in
-                            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                                Text("\(i + 1).")
-                                    .font(.body.weight(.semibold))
-                                inlineText(items[i])
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                    case .unorderedList(let items):
+                        VStack(alignment: .leading, spacing: 16) {
+                            ForEach(items.indices, id: \.self) { i in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text("•")
+                                        .font(.body.weight(.bold))
+                                        .baselineOffset(2)
+                                    inlineText(items[i])
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
                             }
+                            .padding(.horizontal, 6)
                         }
-                    }
-                    .padding(.top, top)
-
-                case .paragraph(let text):
-                    inlineText(text)
                         .padding(.top, top)
 
-                case .quote(let text):
-                    HStack(alignment: .top, spacing: 10) {
-                        Rectangle()
-                            .fill(Color.secondary.opacity(0.35))
-                            .frame(width: 3)
-                            .cornerRadius(1.5)
+                    case .orderedList(let items):
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(items.indices, id: \.self) { i in
+                                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                    Text("\(i + 1).")
+                                        .font(.body.weight(.semibold))
+                                    inlineText(items[i])
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                        .padding(.top, top)
+
+                    case .paragraph(let text):
                         inlineText(text)
-                    }
-                    .padding(.top, top)
+                            .padding(.top, top)
 
-                case .rule:
-                    dividerView()
+                    case .quote(let text):
+                        HStack(alignment: .top, spacing: 10) {
+                            Rectangle()
+                                .fill(Color.secondary.opacity(0.35))
+                                .frame(width: 3)
+                                .cornerRadius(1.5)
+                            inlineText(text)
+                        }
                         .padding(.top, top)
+
+                    case .rule:
+                        dividerView()
+                            .padding(.top, top)
+                    }
                 }
+                .modifier(BlockFadeIn(animate: isStreaming))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -341,5 +346,22 @@ struct MarkdownRendererView: View {
 
         flushAll()
         return blocks
+    }
+
+    private struct BlockFadeIn: ViewModifier {
+        @State private var appeared: Bool
+
+        init(animate: Bool) {
+            _appeared = State(initialValue: !animate)
+        }
+
+        func body(content: Content) -> some View {
+            content
+                .opacity(appeared ? 1.0 : 0.0)
+                .animation(.easeIn(duration: 0.25), value: appeared)
+                .onAppear {
+                    appeared = true
+                }
+        }
     }
 }
