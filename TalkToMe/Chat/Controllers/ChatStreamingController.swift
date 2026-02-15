@@ -882,7 +882,6 @@ final class ChatStreamingController {
                     previousResponseId: prevId,
                     friendUserId: friendToUse,
                     messageId: clientMessageId,
-                    ephemeral: false,
                     voiceAgent: voiceAgentToSend,
                     ghostName: ghostNameToSend,
                     deleteBefore: deleteBeforeId

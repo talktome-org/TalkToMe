@@ -9,7 +9,7 @@ def _backend_root() -> Path:
 
 class VoiceAgentPromptLibrary:
     """
-    Loads per-voice-agent system prompts for voice-first (ephemeral) chat.
+    Loads per-voice-agent system prompts for voice-first chat.
 
     Prompts live under:
       Backend/resources/elevenlabs_prompts/<agent>_prompt.txt
