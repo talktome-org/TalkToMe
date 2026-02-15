@@ -306,6 +306,22 @@ private final class DiaryViewModel: ObservableObject {
         guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else { return }
         let tz = TimeZone.current.abbreviation() ?? "UTC"
         let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : draft.title
+
+        // If the entry was already saved to Supabase (e.g. with image blocks), insert locally only.
+        if let existingId = draft.entryId {
+            let entry = JournalEntry(
+                id: existingId,
+                date: draft.date,
+                title: title,
+                body: draft.body,
+                createdAt: Date(),
+                timezoneAbbreviation: tz
+            )
+            entries.insert(entry, at: 0)
+            return
+        }
+
+        // Text-only fallback path.
         let payload: [DiaryBlockPayload] = [.text(id: UUID(), content: draft.body)]
         Task {
             do {
@@ -1151,6 +1167,8 @@ private struct NewJournalEntryDraft: Hashable {
     var date: Date
     var title: String
     var body: String
+    /// If set, entry is already persisted remotely and should not be re-saved as text-only.
+    var entryId: UUID? = nil
 }
 
 // Replaced with a full-page editor style sheet (`NewDiaryNoteSheet`).
@@ -1339,15 +1357,15 @@ private struct DiaryBlock: Identifiable {
 
     enum Content {
         case text(String)
-        case image(UIImage)
+        case image(UIImage?, storagePath: String?)
     }
 
     static func text(_ string: String) -> DiaryBlock {
         DiaryBlock(id: UUID(), content: .text(string))
     }
 
-    static func image(_ image: UIImage) -> DiaryBlock {
-        DiaryBlock(id: UUID(), content: .image(image))
+    static func image(_ image: UIImage, storagePath: String? = nil) -> DiaryBlock {
+        DiaryBlock(id: UUID(), content: .image(image, storagePath: storagePath))
     }
 }
 
@@ -1412,12 +1430,14 @@ private struct DiaryBlockListView: View {
                     )
                     .id(block.id)
 
-                case .image(let image):
+                case .image(let image, _):
                     ImageBlockRow(
                         image: image,
                         onTap: {
-                            imageForViewer = image
-                            blockIdForViewer = block.id
+                            if let image {
+                                imageForViewer = image
+                                blockIdForViewer = block.id
+                            }
                         }
                     )
                 }
@@ -1444,7 +1464,7 @@ private struct DiaryBlockListView: View {
             }()
             for image in imagesToInsert.reversed() {
                 blocks.insert(.text(""), at: min(insertIndex + 1, blocks.count))
-                blocks.insert(.image(image), at: min(insertIndex, blocks.count))
+                blocks.insert(.image(image, storagePath: nil), at: min(insertIndex, blocks.count))
             }
             onImagesInserted()
             onBodyChanged?()
@@ -1507,16 +1527,35 @@ private struct TextBlockRow: View {
 }
 
 private struct ImageBlockRow: View {
-    let image: UIImage
+    let image: UIImage?
     var onTap: () -> Void
 
     var body: some View {
-        Image(uiImage: image)
-            .resizable()
-            .scaledToFit()
-            .frame(maxWidth: .infinity)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .onTapGesture { onTap() }
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(.secondarySystemBackground))
+                    VStack(spacing: 8) {
+                        Image(systemName: "photo")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text("Image unavailable")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 28)
+                }
+                .frame(maxWidth: .infinity, minHeight: 160)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onTapGesture { onTap() }
     }
 }
 
@@ -1573,6 +1612,8 @@ private struct DiaryNoteEditorView: View {
     @State private var photoLibrarySelection: [PhotosPickerItem] = []
     @State private var showCamera: Bool = false
     @State private var showFileImporter: Bool = false
+    @State private var isSavingEntry: Bool = false
+    @State private var saveErrorMessage: String?
     @State private var imagesToInsert: [UIImage] = []
     @State private var attachedFileURLs: [URL] = []
     @State private var imageForViewer: UIImage?
@@ -1735,17 +1776,23 @@ private struct DiaryNoteEditorView: View {
                         .font(.system(size: 18, weight: .semibold))
                 }
                 .accessibilityLabel("More")
-                .disabled(isVoiceRecording)
+                .disabled(isVoiceRecording || isSavingEntry)
 
                 Button("Done") {
                     Haptics.impact(.light)
                     Task {
-                        await saveEntryToSupabase()
-                        await MainActor.run { dismiss() }
+                        await MainActor.run { isSavingEntry = true }
+                        let didSave = await saveEntryToSupabase()
+                        await MainActor.run {
+                            isSavingEntry = false
+                            if didSave {
+                                dismiss()
+                            }
+                        }
                     }
                 }
                 .fontWeight(.semibold)
-                .disabled(isVoiceRecording)
+                .disabled(isVoiceRecording || isSavingEntry)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -1800,6 +1847,14 @@ private struct DiaryNoteEditorView: View {
         } message: {
             if let msg = voiceErrorMessage { Text(msg) }
         }
+        .alert("Couldn't save note", isPresented: Binding(
+            get: { saveErrorMessage != nil },
+            set: { if !$0 { saveErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { saveErrorMessage = nil }
+        } message: {
+            if let msg = saveErrorMessage { Text(msg) }
+        }
         .onAppear {
             if blocks.isEmpty, !didLoadBlocksFromApi {
                 didLoadBlocksFromApi = true
@@ -1817,9 +1872,8 @@ private struct DiaryNoteEditorView: View {
                         case .text(let s):
                             loaded.append(DiaryBlock(id: d.id, content: .text(s)))
                         case .imageStoragePath(let path):
-                            if let img = await DiaryService.shared.loadImage(storagePath: path) {
-                                loaded.append(DiaryBlock(id: d.id, content: .image(img)))
-                            }
+                            let img = await DiaryService.shared.loadImage(storagePath: path)
+                            loaded.append(DiaryBlock(id: d.id, content: .image(img, storagePath: path)))
                         }
                     }
                     if !loaded.isEmpty {
@@ -1833,12 +1887,31 @@ private struct DiaryNoteEditorView: View {
         }
     }
 
-    private func saveEntryToSupabase() async {
-        guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else { return }
-        let payload: [DiaryBlockPayload] = blocks.map { block in
+    private func saveEntryToSupabase() async -> Bool {
+        let pendingSelection = await MainActor.run { photoLibrarySelection }
+        if !pendingSelection.isEmpty {
+            let images = await loadImagesFromPickerItems(pendingSelection)
+            await MainActor.run {
+                imagesToInsert.append(contentsOf: images)
+                photoLibrarySelection = []
+            }
+        }
+        await MainActor.run { flushPendingImagesIntoBlocksEditor() }
+
+        guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else {
+            await MainActor.run { saveErrorMessage = "Sign in to save this note." }
+            return false
+        }
+        let payload: [DiaryBlockPayload] = blocks.compactMap { block in
             switch block.content {
-            case .text(let s): return .text(id: block.id, content: s)
-            case .image(let img): return .imageLocal(id: block.id, image: img)
+            case .text(let s):
+                return .text(id: block.id, content: s)
+            case .image(_, let path?) where path.isEmpty == false:
+                return .imageRemote(id: block.id, storagePath: path)
+            case .image(let img?, _):
+                return .imageLocal(id: block.id, image: img)
+            case .image(nil, _):
+                return nil
             }
         }
         let tz = TimeZone.current.abbreviation() ?? "UTC"
@@ -1851,8 +1924,15 @@ private struct DiaryNoteEditorView: View {
                 bodyBlocks: payload,
                 timezoneAbbreviation: tz
             )
-            await MainActor.run { entry.body = blocks.textContent }
-        } catch {}
+            await MainActor.run {
+                entry.body = blocks.textContent
+                saveErrorMessage = nil
+            }
+            return true
+        } catch {
+            await MainActor.run { saveErrorMessage = DiaryService.userFacingMessage(from: error) }
+            return false
+        }
     }
 
     private func loadImagesFromPickerItems(_ items: [PhotosPickerItem]) async -> [UIImage] {
@@ -1865,6 +1945,20 @@ private struct DiaryNoteEditorView: View {
             } catch {}
         }
         return result
+    }
+
+    private func flushPendingImagesIntoBlocksEditor() {
+        guard !imagesToInsert.isEmpty else { return }
+        var insertIndex = blocks.count
+        if let id = focusedBlockId, let idx = blocks.firstIndex(where: { $0.id == id }) {
+            insertIndex = idx + 1
+        }
+        for image in imagesToInsert.reversed() {
+            blocks.insert(.text(""), at: min(insertIndex + 1, blocks.count))
+            blocks.insert(.image(image, storagePath: nil), at: min(insertIndex, blocks.count))
+        }
+        imagesToInsert = []
+        entry.body = blocks.textContent
     }
 
     private func startVoiceRecording() {
@@ -1942,6 +2036,8 @@ private struct NewDiaryNoteSheet: View {
     @State private var photoLibrarySelection: [PhotosPickerItem] = []
     @State private var showCamera: Bool = false
     @State private var showFileImporter: Bool = false
+    @State private var isSavingEntry: Bool = false
+    @State private var saveErrorMessage: String?
     @StateObject private var diarySTTService = DeepgramStreamingSTTService()
     @FocusState private var focusedField: Field?
     @FocusState private var focusedBlockId: UUID?
@@ -2085,7 +2181,7 @@ private struct NewDiaryNoteSheet: View {
                             .font(.system(size: 17, weight: .semibold))
                     }
                     .accessibilityLabel("Save draft and close")
-                    .disabled(isVoiceRecording)
+                    .disabled(isVoiceRecording || isSavingEntry)
                 }
 
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -2113,21 +2209,26 @@ private struct NewDiaryNoteSheet: View {
                             .font(.system(size: 18, weight: .semibold))
                     }
                     .accessibilityLabel("More")
-                    .disabled(isVoiceRecording)
+                    .disabled(isVoiceRecording || isSavingEntry)
 
                     Button("Add") {
                         Haptics.impact(.light)
-                        onAdd(
-                            NewJournalEntryDraft(
-                                date: initialDate,
-                                title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-                                body: blocks.textContent
-                            )
-                        )
-                        dismiss()
+                        Task {
+                            await MainActor.run { isSavingEntry = true }
+                            do {
+                                let draft = try await saveNewEntryWithBlocks()
+                                await MainActor.run {
+                                    onAdd(draft)
+                                    dismiss()
+                                }
+                            } catch {
+                                await MainActor.run { saveErrorMessage = DiaryService.userFacingMessage(from: error) }
+                            }
+                            await MainActor.run { isSavingEntry = false }
+                        }
                     }
                     .fontWeight(.semibold)
-                    .disabled(isVoiceRecording)
+                    .disabled(isVoiceRecording || isSavingEntry)
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -2183,6 +2284,14 @@ private struct NewDiaryNoteSheet: View {
         } message: {
             if let msg = voiceErrorMessage { Text(msg) }
         }
+        .alert("Couldn't save note", isPresented: Binding(
+            get: { saveErrorMessage != nil },
+            set: { if !$0 { saveErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { saveErrorMessage = nil }
+        } message: {
+            if let msg = saveErrorMessage { Text(msg) }
+        }
     }
 
     private func loadImagesFromPickerItems(_ items: [PhotosPickerItem]) async -> [UIImage] {
@@ -2195,6 +2304,76 @@ private struct NewDiaryNoteSheet: View {
             } catch {}
         }
         return result
+    }
+
+    /// Saves the new note (including image blocks) to Supabase and returns a draft with `entryId` set
+    /// so `addEntry` only inserts locally.
+    private func saveNewEntryWithBlocks() async throws -> NewJournalEntryDraft {
+        // Load any photos still pending in selection (user may tap Add before onChange completes).
+        let pendingSelection = await MainActor.run { photoLibrarySelection }
+        if !pendingSelection.isEmpty {
+            let images = await loadImagesFromPickerItems(pendingSelection)
+            await MainActor.run {
+                imagesToInsert.append(contentsOf: images)
+                photoLibrarySelection = []
+            }
+        }
+        await MainActor.run { flushPendingImagesIntoBlocksNewNote() }
+
+        let payload: [DiaryBlockPayload] = await MainActor.run {
+            blocks.compactMap { block in
+                switch block.content {
+                case .text(let s):
+                    return .text(id: block.id, content: s)
+                case .image(_, let path?) where path.isEmpty == false:
+                    return .imageRemote(id: block.id, storagePath: path)
+                case .image(let img?, _):
+                    return .imageLocal(id: block.id, image: img)
+                case .image(nil, _):
+                    return nil
+                }
+            }
+        }
+
+        let tz = TimeZone.current.abbreviation() ?? "UTC"
+        let titleText = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalTitle = titleText.isEmpty ? "Untitled" : titleText
+
+        guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else {
+            throw NSError(
+                domain: "Diary",
+                code: 401,
+                userInfo: [NSLocalizedDescriptionKey: "Sign in to save this note."]
+            )
+        }
+
+        let entryId = try await DiaryService.shared.saveEntry(
+            userId: uid,
+            entryId: nil,
+            date: initialDate,
+            title: finalTitle,
+            bodyBlocks: payload,
+            timezoneAbbreviation: tz
+        )
+        return NewJournalEntryDraft(
+            date: initialDate,
+            title: titleText,
+            body: blocks.textContent,
+            entryId: entryId
+        )
+    }
+
+    private func flushPendingImagesIntoBlocksNewNote() {
+        guard !imagesToInsert.isEmpty else { return }
+        var insertIndex = blocks.count
+        if let id = focusedBlockId, let idx = blocks.firstIndex(where: { $0.id == id }) {
+            insertIndex = idx + 1
+        }
+        for image in imagesToInsert.reversed() {
+            blocks.insert(.text(""), at: min(insertIndex + 1, blocks.count))
+            blocks.insert(.image(image, storagePath: nil), at: min(insertIndex, blocks.count))
+        }
+        imagesToInsert = []
     }
 
     private func startVoiceRecording() {
