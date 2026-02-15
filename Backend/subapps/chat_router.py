@@ -313,7 +313,10 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                 fid = await get_friendship_id_for_pair(user_id=user_uuid, friend_user_id=chat_request.friend_user_id)
                 if not fid:
                     raise HTTPException(status_code=400, detail="Not friends with selected user")
-                await attach_friendship_to_session(user_id=user_uuid, session_id=session_uuid, friendship_id=fid)
+                try:
+                    await attach_friendship_to_session(user_id=user_uuid, session_id=session_uuid, friendship_id=fid)
+                except PermissionError:
+                    pass  # Session already linked to a different friend; proceed with chat
 
             store_as_segments = bool(chat_request.attachments)
             if store_as_segments:

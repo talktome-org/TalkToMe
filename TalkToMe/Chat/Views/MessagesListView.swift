@@ -1,6 +1,13 @@
 import SwiftUI
 import UIKit
 
+private struct MessageMinYKey: PreferenceKey {
+    static var defaultValue: [UUID: CGFloat] = [:]
+    static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
 struct MessagesListView: View {
     @ObservedObject var chatViewModel: ChatViewModel
 
@@ -19,6 +26,12 @@ struct MessagesListView: View {
     @State private var scrollAnimator: UIViewPropertyAnimator? = nil
     @State private var toastMessage: String? = nil
     @State private var toastWorkItem: DispatchWorkItem? = nil
+    @State private var scrollToTopPadding: CGFloat = 0
+    @State private var messagePositions: [UUID: CGFloat] = [:]
+    @State private var pendingScrollTargetId: UUID? = nil
+    @State private var enforcedOffsetY: CGFloat? = nil
+    @State private var scrollToTopTargetId: UUID? = nil
+    @State private var isAnimatingToTop: Bool = false
 
     private var messages: [ChatMessage] { chatViewModel.messages }
     private var initialJumpToken: Int { chatViewModel.initialJumpToken }
@@ -27,9 +40,11 @@ struct MessagesListView: View {
     private let scrollButtonSize: CGFloat = 36
     private let scrollButtonIconSize: CGFloat = 14
 
+    // Scrolls to the "effective bottom" (ignoring extra scroll-to-top padding)
     private func scrollToBottomUIKit(_ scrollView: UIScrollView, animated: Bool) {
         let minOffsetY = -scrollView.adjustedContentInset.top
-        let maxOffsetY = max(minOffsetY, scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom)
+        let effectiveContentHeight = scrollView.contentSize.height - scrollToTopPadding
+        let maxOffsetY = max(minOffsetY, effectiveContentHeight - scrollView.bounds.height + scrollView.adjustedContentInset.bottom)
         let target = CGPoint(x: 0, y: maxOffsetY)
 
         if animated {
@@ -46,8 +61,42 @@ struct MessagesListView: View {
         }
     }
 
+    // Animates scroll so the message at `messageY` lands at the top, then locks enforcement
+    private func scrollToTopUIKit(_ scrollView: UIScrollView, messageY: CGFloat) {
+        let targetOffset = messageY - scrollView.adjustedContentInset.top
+        isAnimatingToTop = true
+
+        scrollAnimator?.stopAnimation(true)
+        let animator = UIViewPropertyAnimator(duration: 0.38, curve: .easeInOut) {
+            scrollView.setContentOffset(CGPoint(x: 0, y: targetOffset), animated: false)
+        }
+        animator.addCompletion { _ in
+            self.isAnimatingToTop = false
+
+            let naturalContentHeight = scrollView.contentSize.height - self.scrollToTopPadding
+            let contentBelowMessage = naturalContentHeight - messageY
+            let visibleHeight = scrollView.bounds.height - scrollView.adjustedContentInset.top - scrollView.adjustedContentInset.bottom
+
+            if contentBelowMessage >= visibleHeight {
+                self.scrollToTopPadding = 0
+                self.scrollToTopTargetId = nil
+                self.followBottom = true
+            } else {
+                self.enforcedOffsetY = targetOffset
+                // Shrink padding using keyboard-independent height
+                let stableVisibleHeight = UIScreen.main.bounds.height - scrollView.adjustedContentInset.top
+                let neededPadding = max(0, stableVisibleHeight - contentBelowMessage)
+                if self.scrollToTopPadding - neededPadding > 2 {
+                    self.scrollToTopPadding = neededPadding
+                }
+            }
+        }
+        animator.startAnimation()
+        scrollAnimator = animator
+    }
+
     private var shouldShowScrollButton: Bool {
-        !messages.isEmpty && !isNearBottom
+        !messages.isEmpty && !isNearBottom && scrollToTopTargetId == nil
     }
 
     var body: some View {
@@ -69,6 +118,15 @@ struct MessagesListView: View {
                         sendAnimationNamespace: sendAnimationNamespace,
                         outgoingAnimatingMessageId: outgoingAnimatingMessageId
                     )
+                    .id(message.id)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: MessageMinYKey.self,
+                                value: [message.id: geo.frame(in: .named("scrollContent")).minY]
+                            )
+                        }
+                    )
                     .opacity(message.id == outgoingSourceMessageId ? 0 : 1)
                     .animation(nil, value: outgoingSourceMessageId)
                     .padding(.top, index > 0 && (messages[index - 1].isFromUser != message.isFromUser) ? 4 : 0)
@@ -76,17 +134,68 @@ struct MessagesListView: View {
             }
             .padding(.top, 24)
             .padding(.horizontal)
-            .padding(.bottom, 14) // breathing room above input
+            .padding(.bottom, 14 + scrollToTopPadding)
+            .coordinateSpace(name: "scrollContent")
             .background(
                 ScrollViewBottomProximityObserver(onChange: { scrollView in
+                    // Don't interfere while the scroll-to-top animation is playing
+                    guard !isAnimatingToTop else { return }
+
+                    // Release enforcement when user drags (must be checked BEFORE enforcement block)
+                    let isUserDragging = scrollView.isDragging || scrollView.isTracking
+                    if isUserDragging && enforcedOffsetY != nil {
+                        enforcedOffsetY = nil
+                        scrollToTopTargetId = nil
+                        scrollToTopPadding = 0
+                    }
+
+                    // Always update isNearBottom (must run before enforcement early-return)
                     let visibleBottomY = scrollView.contentOffset.y
                         + scrollView.bounds.height
                         - scrollView.adjustedContentInset.bottom
                     let rawDistance = scrollView.contentSize.height - visibleBottomY
-                    let distanceFromBottom = max(0, rawDistance)
+                    let distanceFromBottom = max(0, rawDistance - scrollToTopPadding)
                     isNearBottom = distanceFromBottom <= nearBottomThreshold
 
-                    let isUserDragging = scrollView.isDragging || scrollView.isTracking
+                    // Shrink padding as content grows; release to follow-bottom when screen is filled
+                    if scrollToTopTargetId != nil, let targetY = enforcedOffsetY {
+                        let messageY = targetY + scrollView.adjustedContentInset.top
+                        let naturalContentHeight = scrollView.contentSize.height - scrollToTopPadding
+                        let contentBelowMessage = naturalContentHeight - messageY
+
+                        // Use real visibleHeight for release check (keyboard-sensitive — releases earlier with keyboard open)
+                        let visibleHeight = scrollView.bounds.height - scrollView.adjustedContentInset.top - scrollView.adjustedContentInset.bottom
+                        if contentBelowMessage >= visibleHeight {
+                            scrollToTopPadding = 0
+                            enforcedOffsetY = nil
+                            scrollToTopTargetId = nil
+                            followBottom = true
+                            return
+                        }
+
+                        // Use keyboard-independent height for padding (ignores bottom inset so padding stays sufficient after keyboard dismissal)
+                        let stableVisibleHeight = UIScreen.main.bounds.height - scrollView.adjustedContentInset.top
+                        let neededPadding = max(0, stableVisibleHeight - contentBelowMessage)
+                        if scrollToTopPadding - neededPadding > 2 {
+                            scrollToTopPadding = neededPadding
+                        }
+                    }
+
+                    // If we're enforcing a scroll position, keep it locked
+                    // Recalculate from stored position so inset changes (toolbar) don't shift the message
+                    if enforcedOffsetY != nil {
+                        var targetY = enforcedOffsetY!
+                        if let targetId = scrollToTopTargetId, let messageY = messagePositions[targetId] {
+                            targetY = messageY - scrollView.adjustedContentInset.top
+                            enforcedOffsetY = targetY
+                        }
+                        let current = scrollView.contentOffset.y
+                        if abs(current - targetY) > 1 {
+                            scrollView.setContentOffset(CGPoint(x: 0, y: targetY), animated: false)
+                        }
+                        return
+                    }
+
                     if isUserDragging && distanceFromBottom > nearBottomThreshold {
                         if followBottom { followBottom = false }
                     }
@@ -99,6 +208,25 @@ struct MessagesListView: View {
                     scrollView.clipsToBounds = true
                 })
             )
+        }
+        .onPreferenceChange(MessageMinYKey.self) { positions in
+            messagePositions = positions
+            guard !isAnimatingToTop else { return }
+
+            // If we have a pending scroll target and its position just arrived, animate now
+            if let targetId = pendingScrollTargetId, let messageY = positions[targetId] {
+                pendingScrollTargetId = nil
+                scrollToTopTargetId = targetId
+                guard let sv = underlyingScrollView else { return }
+                scrollToTopUIKit(sv, messageY: messageY)
+            }
+
+            // Continuously re-enforce position for scroll-to-top target
+            if let targetId = scrollToTopTargetId, let messageY = positions[targetId] {
+                guard let sv = underlyingScrollView else { return }
+                let targetOffset = messageY - sv.adjustedContentInset.top
+                enforcedOffsetY = targetOffset
+            }
         }
         .contentShape(Rectangle())
         .onTapGesture {
@@ -125,16 +253,42 @@ struct MessagesListView: View {
         }
         .onChange(of: initialJumpToken, initial: false) { _, token in
             guard token > 0 else { return }
+            isAnimatingToTop = false
+            enforcedOffsetY = nil
+            scrollToTopTargetId = nil
+            scrollToTopPadding = 0
             guard let sv = underlyingScrollView else { return }
-            sv.layoutIfNeeded()
-            scrollToBottomUIKit(sv, animated: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                sv.layoutIfNeeded()
+                scrollToBottomUIKit(sv, animated: false)
+            }
         }
         .onChange(of: isInputFocused, initial: false) { _, focused in
-            guard focused, isNearBottom else { return }
+            guard focused, isNearBottom, enforcedOffsetY == nil else { return }
             guard let sv = underlyingScrollView else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                 sv.layoutIfNeeded()
                 scrollToBottomUIKit(sv, animated: true)
+            }
+        }
+        .onChange(of: chatViewModel.pendingOutgoingUserMessageId, initial: false) { _, newId in
+            guard let id = newId else { return }
+            chatViewModel.pendingOutgoingUserMessageId = nil
+
+            followBottom = false
+            scrollToTopPadding = UIScreen.main.bounds.height
+            pendingScrollTargetId = id
+            scrollToTopTargetId = id
+
+            // If position is already known, animate scroll after padding takes effect
+            if let messageY = messagePositions[id] {
+                pendingScrollTargetId = nil
+                guard let sv = underlyingScrollView else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    guard let sv = underlyingScrollView else { return }
+                    sv.layoutIfNeeded()
+                    scrollToTopUIKit(sv, messageY: messageY)
+                }
             }
         }
     }
@@ -183,8 +337,15 @@ struct MessagesListView: View {
     }
 
     private func scrollToBottom() {
+        isAnimatingToTop = false
+        enforcedOffsetY = nil
+        scrollToTopTargetId = nil
+        scrollToTopPadding = 0
+        pendingScrollTargetId = nil
         followBottom = true
-        scrollToBottomToken &+= 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            scrollToBottomToken &+= 1
+        }
     }
 
     private func showToast(_ message: String) {

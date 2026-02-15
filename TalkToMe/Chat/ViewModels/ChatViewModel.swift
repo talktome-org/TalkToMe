@@ -198,22 +198,27 @@ class ChatViewModel: ObservableObject {
         guard !trimmed.isEmpty else { return }
         guard let friendId = selectedFriendUserId else { return }
 
+        let sid = await ensureSessionId()
+        guard let sid else { return }
+        persistFriendUserId(friendId, for: sid)
+
+        // Optimistically persist sent state so it survives refreshes
+        partnerDrafts.markPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
+        objectWillChange.send()
+
         do {
-            let sid = await ensureSessionId()
-            guard let sid else { return }
-            persistFriendUserId(friendId, for: sid)
-
             guard let accessToken = await authService.getAccessToken() else { return }
-
             _ = try await backend.sendPartnerMessage(
                 message: trimmed,
                 sessionId: sid,
                 friendUserId: friendId,
                 accessToken: accessToken
             )
-
-            partnerDrafts.markPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
-        } catch { }
+        } catch {
+            // Roll back on failure
+            partnerDrafts.unmarkPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
+            objectWillChange.send()
+        }
     }
 
     func unsendPartnerDraft(_ text: String) async -> Bool {
@@ -222,16 +227,18 @@ class ChatViewModel: ObservableObject {
         guard let sid = sessionId else { return false }
         guard let accessToken = await authService.getAccessToken() else { return false }
 
+        // Optimistically persist unsent state so it survives refreshes
+        partnerDrafts.unmarkPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
+        objectWillChange.send()
+
         do {
             try await backend.unsendPartnerMessage(
                 sessionId: sid,
                 messageText: trimmed,
                 accessToken: accessToken
             )
-            partnerDrafts.unmarkPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
 
             // If no other sent drafts remain for this session, clear the friend linkage
-            // so the chat doesn't auto-assume future drafts are for the same person.
             if !partnerDrafts.hasAnySentDraft(for: sid) {
                 selectedFriendUserId = nil
                 UserDefaults.standard.removeObject(forKey: Self.friendKey(for: sid))
@@ -239,6 +246,9 @@ class ChatViewModel: ObservableObject {
 
             return true
         } catch {
+            // Roll back on failure — re-mark as sent
+            partnerDrafts.markPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
+            objectWillChange.send()
             return false
         }
     }
@@ -247,9 +257,14 @@ class ChatViewModel: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        let sid = await ensureSessionId()
+        guard let sid else { return }
+
+        // Optimistically persist sent state so it survives refreshes
+        partnerDrafts.markPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
+        objectWillChange.send()
+
         do {
-            let sid = await ensureSessionId()
-            guard let sid else { return }
             guard let accessToken = await authService.getAccessToken() else { return }
             _ = try await backend.sendPartnerMessage(
                 message: trimmed,
@@ -257,8 +272,11 @@ class ChatViewModel: ObservableObject {
                 friendUserId: nil,
                 accessToken: accessToken
             )
-            partnerDrafts.markPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
-        } catch { }
+        } catch {
+            // Roll back on failure
+            partnerDrafts.unmarkPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
+            objectWillChange.send()
+        }
     }
 
     func regenerateResponse(for assistantMessageId: UUID) {
