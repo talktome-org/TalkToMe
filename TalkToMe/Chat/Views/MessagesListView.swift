@@ -73,21 +73,37 @@ struct MessagesListView: View {
         animator.addCompletion { _ in
             self.isAnimatingToTop = false
 
-            let naturalContentHeight = scrollView.contentSize.height - self.scrollToTopPadding
-            let contentBelowMessage = naturalContentHeight - messageY
-            let visibleHeight = scrollView.bounds.height - scrollView.adjustedContentInset.top - scrollView.adjustedContentInset.bottom
+            let stableVisibleHeight = UIScreen.main.bounds.height - scrollView.adjustedContentInset.top
 
-            if contentBelowMessage >= visibleHeight {
-                self.scrollToTopPadding = 0
-                self.scrollToTopTargetId = nil
-                self.followBottom = true
-            } else {
-                self.enforcedOffsetY = targetOffset
-                // Shrink padding using keyboard-independent height
-                let stableVisibleHeight = UIScreen.main.bounds.height - scrollView.adjustedContentInset.top
-                let neededPadding = max(0, stableVisibleHeight - contentBelowMessage)
-                if self.scrollToTopPadding - neededPadding > 2 {
-                    self.scrollToTopPadding = neededPadding
+            let recalcPadding = { (mY: CGFloat) in
+                let currentTargetOffset = mY - scrollView.adjustedContentInset.top
+                let naturalContentHeight = scrollView.contentSize.height - self.scrollToTopPadding
+                let contentBelowMessage = naturalContentHeight - mY
+                let visibleHeight = scrollView.bounds.height - scrollView.adjustedContentInset.top - scrollView.adjustedContentInset.bottom
+
+                if contentBelowMessage >= visibleHeight {
+                    self.scrollToTopPadding = 0
+                    self.enforcedOffsetY = nil
+                    self.scrollToTopTargetId = nil
+                    self.followBottom = true
+                } else {
+                    self.enforcedOffsetY = currentTargetOffset
+                    let neededPadding = max(0, stableVisibleHeight - contentBelowMessage)
+                    if self.scrollToTopPadding - neededPadding > 2 {
+                        self.scrollToTopPadding = neededPadding
+                    }
+                }
+            }
+
+            recalcPadding(messageY)
+
+            // Recalculate after layout settles, using current position from preferences
+            for delay in [0.15, 0.5] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    guard let targetId = self.scrollToTopTargetId else { return }
+                    scrollView.layoutIfNeeded()
+                    let currentMY = self.messagePositions[targetId] ?? messageY
+                    recalcPadding(currentMY)
                 }
             }
         }
@@ -134,7 +150,7 @@ struct MessagesListView: View {
             }
             .padding(.top, 24)
             .padding(.horizontal)
-            .padding(.bottom, 14 + scrollToTopPadding)
+            .padding(.bottom, 2 + scrollToTopPadding)
             .coordinateSpace(name: "scrollContent")
             .background(
                 ScrollViewBottomProximityObserver(onChange: { scrollView in
@@ -218,11 +234,18 @@ struct MessagesListView: View {
                 pendingScrollTargetId = nil
                 scrollToTopTargetId = targetId
                 guard let sv = underlyingScrollView else { return }
-                scrollToTopUIKit(sv, messageY: messageY)
+                // Delay to let scroll view content size settle after padding change
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    guard let sv = underlyingScrollView else { return }
+                    sv.layoutIfNeeded()
+                    scrollToTopUIKit(sv, messageY: messageY)
+                }
             }
 
-            // Continuously re-enforce position for scroll-to-top target
-            if let targetId = scrollToTopTargetId, let messageY = positions[targetId] {
+            // Continuously re-enforce position for scroll-to-top target.
+            // Only UPDATE an already-set offset — don't initiate enforcement before
+            // the scroll-to-top animation has had a chance to run and set it.
+            if enforcedOffsetY != nil, let targetId = scrollToTopTargetId, let messageY = positions[targetId] {
                 guard let sv = underlyingScrollView else { return }
                 let targetOffset = messageY - sv.adjustedContentInset.top
                 enforcedOffsetY = targetOffset

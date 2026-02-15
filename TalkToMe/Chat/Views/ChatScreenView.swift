@@ -14,7 +14,7 @@ struct ChatScreenView: View {
     }
 
     private var inputAreaYOffset: CGFloat {
-        isInputFocused.wrappedValue ? 8 : 14
+        isInputFocused.wrappedValue ? 8 : 6
     }
 
     private var focusedBottomInset: CGFloat {

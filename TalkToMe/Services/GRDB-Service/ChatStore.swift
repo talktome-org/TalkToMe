@@ -310,9 +310,10 @@ final class ChatStore {
         let thinkingSummary: String?
         let regenerationCount: Int
         let isVoiceMode: Bool
+        let ghostName: String?
     }
 
-    /// Returns local-only metadata (thinking_summary, regeneration_count, is_voice_mode) for all messages in a session, keyed by message ID.
+    /// Returns local-only metadata (thinking_summary, regeneration_count, is_voice_mode, ghost_name) for all messages in a session, keyed by message ID.
     func loadLocalMetadata(sessionId: UUID) async -> [String: MessageLocalMetadata] {
         let sid = sessionId.uuidString
         do {
@@ -320,12 +321,13 @@ final class ChatStore {
                 let rows = try Row.fetchAll(
                     db,
                     sql: """
-                    SELECT id, thinking_summary, regeneration_count, is_voice_mode FROM messages
+                    SELECT id, thinking_summary, regeneration_count, is_voice_mode, ghost_name FROM messages
                     WHERE session_id = ?
                       AND (
                         (thinking_summary IS NOT NULL AND thinking_summary != '')
                         OR regeneration_count > 0
                         OR is_voice_mode = 1
+                        OR (ghost_name IS NOT NULL AND ghost_name != '')
                       )
                     """,
                     arguments: [sid]
@@ -336,7 +338,8 @@ final class ChatStore {
                     let ts: String? = row["thinking_summary"]
                     let rc: Int = row["regeneration_count"] ?? 0
                     let vm: Bool = row["is_voice_mode"] ?? false
-                    result[id] = MessageLocalMetadata(thinkingSummary: ts, regenerationCount: rc, isVoiceMode: vm)
+                    let gn: String? = row["ghost_name"]
+                    result[id] = MessageLocalMetadata(thinkingSummary: ts, regenerationCount: rc, isVoiceMode: vm, ghostName: gn)
                 }
                 return result
             }
@@ -361,6 +364,48 @@ final class ChatStore {
                     )
                     """,
                     arguments: [summary, sid]
+                )
+            }
+        } catch {}
+    }
+
+    /// Sets ghost_name on the last assistant message in a session.
+    func setGhostNameForLastAssistant(sessionId: UUID, ghostName: String) async {
+        let sid = sessionId.uuidString
+        do {
+            try await dbQueue.write { db in
+                try db.execute(
+                    sql: """
+                    UPDATE messages SET ghost_name = ?
+                    WHERE id = (
+                        SELECT id FROM messages
+                        WHERE session_id = ? AND role = 'assistant'
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    )
+                    """,
+                    arguments: [ghostName, sid]
+                )
+            }
+        } catch {}
+    }
+
+    /// Sets ghost_name and is_voice_mode on the last user message in a session.
+    func setVoiceMetadataForLastUserMessage(sessionId: UUID, ghostName: String) async {
+        let sid = sessionId.uuidString
+        do {
+            try await dbQueue.write { db in
+                try db.execute(
+                    sql: """
+                    UPDATE messages SET ghost_name = ?, is_voice_mode = 1
+                    WHERE id = (
+                        SELECT id FROM messages
+                        WHERE session_id = ? AND role = 'user'
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    )
+                    """,
+                    arguments: [ghostName, sid]
                 )
             }
         } catch {}
@@ -415,6 +460,19 @@ final class ChatStore {
                 try db.execute(
                     sql: "UPDATE messages SET regeneration_count = ? WHERE id = ?",
                     arguments: [count, messageId.uuidString]
+                )
+            }
+        } catch {}
+    }
+
+    /// Sets ghost_name and is_voice_mode on a specific user message (used for speak-mode user messages).
+    func setUserMessageVoiceMetadata(messageId: UUID, ghostName: String) async {
+        let mid = messageId.uuidString
+        do {
+            try await dbQueue.write { db in
+                try db.execute(
+                    sql: "UPDATE messages SET ghost_name = ?, is_voice_mode = 1 WHERE id = ?",
+                    arguments: [ghostName, mid]
                 )
             }
         } catch {}
@@ -552,7 +610,7 @@ final class ChatStore {
         } catch {}
     }
 
-    func upsertMessages(_ dtos: [BackendService.ChatMessageDTO]) async {
+    func upsertMessages(_ dtos: [BackendService.ChatMessageDTO], voiceMetadata: (ghostName: String, messageId: UUID)? = nil) async {
         if dtos.isEmpty { return }
         let wrote: Bool
         do {
@@ -573,8 +631,18 @@ final class ChatStore {
                 let nowISO = isoFormatter.string(from: Date())
                 for dto in dtos {
                     let created = dto.created_at ?? nowISO
-                    // Preserve existing regeneration_count when upserting server messages
+                    // Preserve local-only metadata when upserting server messages.
+                    // First try matching by ID; if not found, fall back to matching by
+                    // session+role+content to handle server-assigned IDs that differ from
+                    // client-generated ones (e.g. after reconciliation).
                     let existing = try ChatMessageRecord.fetchOne(db, key: dto.id.uuidString)
+                        ?? ChatMessageRecord.fetchOne(db, sql: """
+                            SELECT * FROM messages
+                            WHERE session_id = ? AND role = ? AND content = ? AND id != ?
+                            ORDER BY created_at DESC LIMIT 1
+                            """, arguments: [dto.session_id.uuidString, dto.role, dto.content, dto.id.uuidString])
+                    // If voice metadata targets this message, apply it in the same transaction
+                    let isVoiceTarget = voiceMetadata.map { $0.messageId == dto.id } ?? false
                     let rec = ChatMessageRecord(
                         id: dto.id.uuidString,
                         session_id: dto.session_id.uuidString,
@@ -583,9 +651,9 @@ final class ChatStore {
                         content: dto.content,
                         created_at: created,
                         regeneration_count: existing?.regeneration_count ?? 0,
-                        ghost_name: existing?.ghost_name,
+                        ghost_name: isVoiceTarget ? voiceMetadata?.ghostName : existing?.ghost_name,
                         thinking_summary: existing?.thinking_summary,
-                        is_voice_mode: existing?.is_voice_mode ?? false
+                        is_voice_mode: isVoiceTarget ? true : (existing?.is_voice_mode ?? false)
                     )
                     try rec.save(db)
                 }
