@@ -27,6 +27,9 @@ class ChatViewModel: ObservableObject {
     @Published var thinkingTextDone: Bool = false
     @Published var initialJumpToken: Int = 0
     @Published var regenerationCounts: [String: Int] = [:]
+    @Published var isTTSSpeaking: Bool = false
+    @Published var hasSpokenCurrentResponse: Bool = false
+    private(set) var hasActiveStreamingCycle: Bool = false
 
     let voiceController = ChatVoiceModeController()
     let streamingController = ChatStreamingController()
@@ -125,6 +128,16 @@ class ChatViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
+        voiceController.elevenLabsStreamingTTS.$isSpeaking
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] speaking in
+                self?.isTTSSpeaking = speaking
+                if speaking {
+                    self?.hasSpokenCurrentResponse = true
+                }
             }
             .store(in: &cancellables)
 
@@ -370,6 +383,8 @@ extension ChatViewModel: ChatStreamingDelegate {
 
     func streamingWillStart() {
         didReceiveFirstToken = false
+        hasSpokenCurrentResponse = false
+        hasActiveStreamingCycle = true
 
         guard isSpeakModeActive else {
             return
