@@ -154,7 +154,7 @@ class GeminiStreamEvent:
 
 class VoiceChatService:
     """
-    Gemini-based chat service for voice-first (ephemeral) mode.
+    Gemini-based chat service for voice-first mode.
     Uses gemini-2.5-flash for fast, low-latency responses.
     """
 

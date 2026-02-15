@@ -35,7 +35,6 @@ extension BackendService {
         previousResponseId: String? = nil,
         friendUserId: UUID? = nil,
         messageId: UUID? = nil,
-        ephemeral: Bool = false,
         voiceAgent: String? = nil,
         ghostName: String? = nil,
         deleteBefore: UUID? = nil
@@ -57,34 +56,12 @@ extension BackendService {
             previous_response_id: previousResponseId,
             attachments: attachments,
             friend_user_id: friendUserId,
-            ephemeral: ephemeral ? true : nil,
             voice_agent: (voiceAgent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : voiceAgent,
             ghost_name: (ghostName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : ghostName,
             delete_before: deleteBefore
         )
         request.httpBody = try? jsonEncoder.encode(payload)
         return SSEService.shared.stream(request: request)
-    }
-
-    /// Ephemeral streaming for speak mode - no persistence, just AI response
-    func streamEphemeralMessage(
-        _ message: String,
-        chatHistory: [ChatHistoryMessage]?,
-        accessToken: String,
-        voiceAgent: String?
-    ) -> AsyncStream<StreamEvent> {
-        return streamChatMessage(
-            message,
-            sessionId: nil,
-            chatHistory: chatHistory,
-            attachments: nil,
-            accessToken: accessToken,
-            previousResponseId: nil,
-            friendUserId: nil,
-            messageId: nil,
-            ephemeral: true,
-            voiceAgent: voiceAgent
-        )
     }
 
     func fetchMessages(sessionId: UUID, accessToken: String) async throws -> [ChatMessageDTO] {
@@ -314,7 +291,6 @@ private struct ChatRequestBody: Codable {
     let previous_response_id: String?
     let attachments: [BackendService.ChatAttachment]?
     let friend_user_id: UUID?
-    let ephemeral: Bool?
     let voice_agent: String?
     let ghost_name: String?
     let delete_before: UUID?

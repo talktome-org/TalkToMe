@@ -291,142 +291,136 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
             raise HTTPException(status_code=401, detail="Invalid user ID in token")
 
         public_base = _resolve_public_base_url(http_request)
-        is_ephemeral = chat_request.ephemeral
 
-        # For ephemeral mode (speak), we don't create/use sessions or persist anything
         session_uuid: Optional[uuid.UUID] = None
-        if not is_ephemeral:
-            if chat_request.session_id is not None:
-                try:
-                    await assert_session_owned_by_user(user_id=user_uuid, session_id=chat_request.session_id)
-                    session_uuid = chat_request.session_id
-                except PermissionError:
-                    raise HTTPException(status_code=403, detail="Forbidden: invalid session")
-            else:
-                session_row = await create_session(user_id=user_uuid, title=None)
-                session_uuid = _as_uuid(session_row["id"])
-
-            # Friend selection is OPTIONAL for AI chat.
-            # If provided, we attach the friendship to the session so partner messaging can reuse it later.
-            # (Partner messaging itself is handled via /partner/send-message, and may still require selection.)
-            if chat_request.friend_user_id is not None:
-                fid = await get_friendship_id_for_pair(user_id=user_uuid, friend_user_id=chat_request.friend_user_id)
-                if not fid:
-                    raise HTTPException(status_code=400, detail="Not friends with selected user")
-                try:
-                    await attach_friendship_to_session(user_id=user_uuid, session_id=session_uuid, friendship_id=fid)
-                except PermissionError:
-                    pass  # Session already linked to a different friend; proceed with chat
-
-            store_as_segments = bool(chat_request.attachments)
-            if store_as_segments:
-                segs = []
-                msg = (chat_request.message or "").strip()
-                if msg:
-                    segs.append({"type": "text", "content": msg})
-                for a in chat_request.attachments or []:
-                    try:
-                        t = getattr(a, "type", None) or (a.get("type") if isinstance(a, dict) else None)
-                        p = getattr(a, "path", None) or (a.get("path") if isinstance(a, dict) else None)
-                        fn = getattr(a, "filename", None) or (a.get("filename") if isinstance(a, dict) else None)
-                        ct = getattr(a, "content_type", None) or (a.get("content_type") if isinstance(a, dict) else None)
-                        if not t or not p:
-                            continue
-                        seg_obj = {"type": t, "path": p}
-                        if fn:
-                            seg_obj["filename"] = fn
-                        if ct:
-                            seg_obj["content_type"] = ct
-                        segs.append(seg_obj)
-                    except Exception:
-                        continue
-                content_to_store = json.dumps({"_talktome": {"type": "segments", "segments": segs}}, ensure_ascii=False)
-            else:
-                content_to_store = chat_request.message
-
-            # During regeneration the client sends delete_before to atomically
-            # remove the old user+assistant messages before persisting the new ones.
-            if chat_request.delete_before is not None:
-                try:
-                    await delete_messages_after(
-                        user_id=user_uuid,
-                        session_id=session_uuid,
-                        after_message_id=chat_request.delete_before,
-                        include_anchor=True,
-                    )
-                except Exception:
-                    pass  # best-effort; the standalone DELETE already retried
-
+        if chat_request.session_id is not None:
             try:
-                await save_message_with_id(
+                await assert_session_owned_by_user(user_id=user_uuid, session_id=chat_request.session_id)
+                session_uuid = chat_request.session_id
+            except PermissionError:
+                raise HTTPException(status_code=403, detail="Forbidden: invalid session")
+        else:
+            session_row = await create_session(user_id=user_uuid, title=None)
+            session_uuid = _as_uuid(session_row["id"])
+
+        # Friend selection is OPTIONAL for AI chat.
+        # If provided, we attach the friendship to the session so partner messaging can reuse it later.
+        # (Partner messaging itself is handled via /partner/send-message, and may still require selection.)
+        if chat_request.friend_user_id is not None:
+            fid = await get_friendship_id_for_pair(user_id=user_uuid, friend_user_id=chat_request.friend_user_id)
+            if not fid:
+                raise HTTPException(status_code=400, detail="Not friends with selected user")
+            try:
+                await attach_friendship_to_session(user_id=user_uuid, session_id=session_uuid, friendship_id=fid)
+            except PermissionError:
+                pass  # Session already linked to a different friend; proceed with chat
+
+        store_as_segments = bool(chat_request.attachments)
+        if store_as_segments:
+            segs = []
+            msg = (chat_request.message or "").strip()
+            if msg:
+                segs.append({"type": "text", "content": msg})
+            for a in chat_request.attachments or []:
+                try:
+                    t = getattr(a, "type", None) or (a.get("type") if isinstance(a, dict) else None)
+                    p = getattr(a, "path", None) or (a.get("path") if isinstance(a, dict) else None)
+                    fn = getattr(a, "filename", None) or (a.get("filename") if isinstance(a, dict) else None)
+                    ct = getattr(a, "content_type", None) or (a.get("content_type") if isinstance(a, dict) else None)
+                    if not t or not p:
+                        continue
+                    seg_obj = {"type": t, "path": p}
+                    if fn:
+                        seg_obj["filename"] = fn
+                    if ct:
+                        seg_obj["content_type"] = ct
+                    segs.append(seg_obj)
+                except Exception:
+                    continue
+            content_to_store = json.dumps({"_talktome": {"type": "segments", "segments": segs}}, ensure_ascii=False)
+        else:
+            content_to_store = chat_request.message
+
+        # During regeneration the client sends delete_before to atomically
+        # remove the old user+assistant messages before persisting the new ones.
+        if chat_request.delete_before is not None:
+            try:
+                await delete_messages_after(
                     user_id=user_uuid,
                     session_id=session_uuid,
-                    role="user",
-                    content=content_to_store,
-                    message_id=chat_request.message_id,
+                    after_message_id=chat_request.delete_before,
+                    include_anchor=True,
                 )
-            except PermissionError:
-                # If the client reuses a message id that already exists for a different user/session, treat it as a bad request.
-                raise HTTPException(status_code=400, detail="Invalid message_id")
-            last_preview = (chat_request.message or "").strip()
-            if not last_preview and chat_request.attachments:
-                has_image = False
-                try:
-                    for a in chat_request.attachments or []:
-                        t = getattr(a, "type", None) or (a.get("type") if isinstance(a, dict) else None)
-                        if t == "image":
-                            has_image = True
-                            break
-                except Exception:
-                    has_image = False
-                last_preview = "Sent a photo." if has_image else "Sent an attachment."
-            await update_session_last_message(session_id=session_uuid, content=last_preview)
-            user_message_count = await count_user_messages(session_id=session_uuid)
+            except Exception:
+                pass  # best-effort; the standalone DELETE already retried
 
-            if user_message_count in (1, 2):
-                try:
-                    recent_user_messages = await get_recent_user_messages(session_id=session_uuid, limit=2)
-                    chat_title = await chat_title_service.generate_chat_title(recent_user_messages)
-                    if chat_title:
-                        await update_session_title(user_id=user_uuid, session_id=session_uuid, title=chat_title)
-                except Exception:
-                    pass
+        try:
+            await save_message_with_id(
+                user_id=user_uuid,
+                session_id=session_uuid,
+                role="user",
+                content=content_to_store,
+                message_id=chat_request.message_id,
+            )
+        except PermissionError:
+            # If the client reuses a message id that already exists for a different user/session, treat it as a bad request.
+            raise HTTPException(status_code=400, detail="Invalid message_id")
+        last_preview = (chat_request.message or "").strip()
+        if not last_preview and chat_request.attachments:
+            has_image = False
+            try:
+                for a in chat_request.attachments or []:
+                    t = getattr(a, "type", None) or (a.get("type") if isinstance(a, dict) else None)
+                    if t == "image":
+                        has_image = True
+                        break
+            except Exception:
+                has_image = False
+            last_preview = "Sent a photo." if has_image else "Sent an attachment."
+        await update_session_last_message(session_id=session_uuid, content=last_preview)
+        user_message_count = await count_user_messages(session_id=session_uuid)
+
+        if user_message_count in (1, 2):
+            try:
+                recent_user_messages = await get_recent_user_messages(session_id=session_uuid, limit=2)
+                chat_title = await chat_title_service.generate_chat_title(recent_user_messages)
+                if chat_title:
+                    await update_session_title(user_id=user_uuid, session_id=session_uuid, title=chat_title)
+            except Exception:
+                pass
 
         # Provide minimal context about who the "other person" is (if selected / attached).
-        # Skip for ephemeral mode since there's no session/friend context.
         context_text: Optional[str] = None
-        if not is_ephemeral:
-            try:
-                other_user_id: Optional[uuid.UUID] = None
-                if chat_request.friend_user_id is not None:
-                    other_user_id = chat_request.friend_user_id
-                else:
-                    sess = await get_session_by_id(user_id=user_uuid, session_id=session_uuid)
-                    fid = sess.get("friendship_id") if isinstance(sess, dict) else None
-                    if fid:
-                        try:
-                            fid_uuid = uuid.UUID(str(fid))
-                            other_user_id = await _resolve_other_user_id_from_friendship(
-                                friendship_id=fid_uuid, current_user_id=user_uuid
-                            )
-                        except Exception:
-                            other_user_id = None
-
-                if other_user_id:
-                    other_name = await _resolve_friend_display_name(user_id=other_user_id)
-                    if other_name:
-                        context_text = (
-                            "Context:\n"
-                            f"- The other person in this chat is named {other_name}.\n"
+        try:
+            other_user_id: Optional[uuid.UUID] = None
+            if chat_request.friend_user_id is not None:
+                other_user_id = chat_request.friend_user_id
+            else:
+                sess = await get_session_by_id(user_id=user_uuid, session_id=session_uuid)
+                fid = sess.get("friendship_id") if isinstance(sess, dict) else None
+                if fid:
+                    try:
+                        fid_uuid = uuid.UUID(str(fid))
+                        other_user_id = await _resolve_other_user_id_from_friendship(
+                            friendship_id=fid_uuid, current_user_id=user_uuid
                         )
-            except Exception:
-                context_text = None
+                    except Exception:
+                        other_user_id = None
+
+            if other_user_id:
+                other_name = await _resolve_friend_display_name(user_id=other_user_id)
+                if other_name:
+                    context_text = (
+                        "Context:\n"
+                        f"- The other person in this chat is named {other_name}.\n"
+                    )
+        except Exception:
+            context_text = None
 
         state = {"final_text": "", "partner_texts": [], "segments": []}
 
         async def persist_stream_results():
-            # Skip persistence for ephemeral mode
-            if is_ephemeral or session_uuid is None:
+            if session_uuid is None:
                 return
             try:
                 final_text = (state.get("final_text") or "").strip()
@@ -454,8 +448,7 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
         async def iter_sse():
             yield (":" + " " * 2048 + "\n\n").encode()
 
-            # Only emit session event for persistent mode
-            if not is_ephemeral and session_uuid is not None:
+            if session_uuid is not None:
                 sess_payload = json.dumps({"session_id": str(session_uuid)})
                 yield f"event: session\ndata: {sess_payload}\n\n".encode()
 
@@ -488,12 +481,14 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                         except Exception:
                             continue
 
+                use_voice_agent = bool((chat_request.voice_agent or "").strip())
+
                 # RAG: retrieve relevant book chunks from Supabase.
-                # Skip RAG for ephemeral/voice mode to reduce latency.
+                # Skip RAG for voice mode to reduce latency.
                 rag_context_text: Optional[str] = None
                 try:
                     q_text = (chat_request.message or "").strip()
-                    if q_text and RAG_TOP_K > 0 and not is_ephemeral:
+                    if q_text and RAG_TOP_K > 0 and not use_voice_agent:
                         # Embeddings call is synchronous; run it off the event loop.
                         q_embed = await run_in_threadpool(embedding_service.get_embedding, q_text)
                         rows = await search_similar_chunks(query_embedding=q_embed, limit=RAG_TOP_K)
@@ -511,8 +506,7 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                         merged_context += "\n\n"
                     merged_context += rag_context_text
 
-                use_voice_agent = bool((chat_request.voice_agent or "").strip())
-                use_gemini = is_ephemeral or use_voice_agent
+                use_gemini = use_voice_agent
 
                 system_prompt_override = None
                 if use_gemini:
@@ -521,7 +515,7 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                     # don't fall back to chat_prompt.txt.
                     system_prompt_override = voice_agent_prompts.get_prompt(chat_request.voice_agent) or ""
 
-                # Use Gemini for voice-agent / ephemeral mode, OpenAI otherwise.
+                # Use Gemini for voice-agent mode, OpenAI otherwise.
                 if use_gemini:
                     # Convert chat_history to list of dicts for Gemini
                     history_for_gemini = None
@@ -746,7 +740,7 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                                 in_partner = False
                                 continue
 
-                # Use Gemini for voice-agent / ephemeral mode, OpenAI otherwise.
+                # Use Gemini for voice-agent mode, OpenAI otherwise.
                 reasoning_effort = _classify_reasoning_effort(chat_request.message)
                 print(f"[SSE] reasoning_effort={reasoning_effort} for message ({len((chat_request.message or '').strip())} chars)")
                 if use_gemini:

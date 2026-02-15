@@ -324,6 +324,12 @@ final class ChatVoiceModeController: ObservableObject {
         updatePhase(.connecting)
         delegate?.inputText = ""
 
+        // Eagerly activate the audio session and start the engine so the
+        // hardware mic is ready by the time we install the input tap.
+        // This causes any background music to pause immediately, giving
+        // a clean transition into voice mode.
+        SharedAudioEngine.shared.ensureRunning()
+
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard NetworkMonitor.shared.isOnline else {
