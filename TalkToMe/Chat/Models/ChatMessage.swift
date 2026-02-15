@@ -2,7 +2,7 @@ import Foundation
 
 enum MessageSegment: Equatable {
     case text(String)
-    case partnerMessage(String)
+    case partnerMessage(text: String, ghostName: String?)
     case partnerReceived(String)
     case imageData(Data)
     case imageURL(String)
@@ -18,7 +18,10 @@ struct ChatMessage: Identifiable {
     let isFromPartnerUser: Bool
     let timestamp: Date
     let isToolLoading: Bool
-    let isFromVoiceMode: Bool
+    var isFromVoiceMode: Bool
+    var regenerationCount: Int
+    var ghostName: String?
+    var thinkingSummary: String?
 
     static func text(_ text: String, isFromUser: Bool, timestamp: Date = Date(), isFromVoiceMode: Bool = false) -> ChatMessage {
         return ChatMessage(
@@ -27,7 +30,8 @@ struct ChatMessage: Identifiable {
             isFromPartnerUser: false,
             timestamp: timestamp,
             isToolLoading: false,
-            isFromVoiceMode: isFromVoiceMode
+            isFromVoiceMode: isFromVoiceMode,
+            regenerationCount: 0
         )
     }
 
@@ -39,7 +43,9 @@ struct ChatMessage: Identifiable {
         isFromPartnerUser: Bool = false,
         timestamp: Date = Date(),
         isToolLoading: Bool = false,
-        isFromVoiceMode: Bool = false
+        isFromVoiceMode: Bool = false,
+        regenerationCount: Int = 0,
+        ghostName: String? = nil
     ) {
         self.id = id
         self.senderUserId = senderUserId
@@ -49,6 +55,8 @@ struct ChatMessage: Identifiable {
         self.timestamp = timestamp
         self.isToolLoading = isToolLoading
         self.isFromVoiceMode = isFromVoiceMode
+        self.regenerationCount = regenerationCount
+        self.ghostName = ghostName
     }
 
     static func partnerReceived(_ text: String) -> ChatMessage {
@@ -58,7 +66,8 @@ struct ChatMessage: Identifiable {
             isFromPartnerUser: false,
             timestamp: Date(),
             isToolLoading: false,
-            isFromVoiceMode: false
+            isFromVoiceMode: false,
+            regenerationCount: 0
         )
     }
 
@@ -70,6 +79,7 @@ struct ChatMessage: Identifiable {
         let isFromPartnerUser = (dto.user_id != currentUserId) && dto.role == "user"
 
         var segments: [MessageSegment] = dto.content.isEmpty ? [] : [.text(dto.content)]
+        var parsedGhostName: String? = nil
 
         if let obj = ChatMessage.tryDecodeJSONDictionary(from: dto.content) {
             let talktome = (obj["_talktome"] as? [String: Any]) ?? [:]
@@ -95,7 +105,11 @@ struct ChatMessage: Identifiable {
                         }
                     case "partner_draft":
                         if let txt = dict["text"] as? String, !txt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            segs.append(.partnerMessage(txt))
+                            let gn = dict["ghost_name"] as? String
+                            segs.append(.partnerMessage(text: txt, ghostName: gn))
+                            if parsedGhostName == nil, let gn = dict["ghost_name"] as? String, !gn.isEmpty {
+                                parsedGhostName = gn
+                            }
                         }
                     case "partner_received":
                         if let txt = dict["text"] as? String, !txt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -128,6 +142,8 @@ struct ChatMessage: Identifiable {
         self.timestamp = timestamp
         self.isToolLoading = false
         self.isFromVoiceMode = false
+        self.regenerationCount = 0
+        self.ghostName = parsedGhostName
     }
 
     private static func parseISO8601(_ iso: String?) -> Date? {

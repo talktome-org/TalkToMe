@@ -23,7 +23,10 @@ class ChatViewModel: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var isLoadingHistory: Bool = false
     @Published var isAssistantTyping: Bool = false
+    @Published var thinkingText: String = ""
+    @Published var thinkingTextDone: Bool = false
     @Published var initialJumpToken: Int = 0
+    @Published var regenerationCounts: [String: Int] = [:]
 
     let voiceController = ChatVoiceModeController()
     let streamingController = ChatStreamingController()
@@ -195,31 +198,73 @@ class ChatViewModel: ObservableObject {
         guard !trimmed.isEmpty else { return }
         guard let friendId = selectedFriendUserId else { return }
 
+        let sid = await ensureSessionId()
+        guard let sid else { return }
+        persistFriendUserId(friendId, for: sid)
+
+        // Optimistically persist sent state so it survives refreshes
+        partnerDrafts.markPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
+        objectWillChange.send()
+
         do {
-            let sid = await ensureSessionId()
-            guard let sid else { return }
-            persistFriendUserId(friendId, for: sid)
-
             guard let accessToken = await authService.getAccessToken() else { return }
-
             _ = try await backend.sendPartnerMessage(
                 message: trimmed,
                 sessionId: sid,
                 friendUserId: friendId,
                 accessToken: accessToken
             )
+        } catch {
+            // Roll back on failure
+            partnerDrafts.unmarkPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
+            objectWillChange.send()
+        }
+    }
 
+    func unsendPartnerDraft(_ text: String) async -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        guard let sid = sessionId else { return false }
+        guard let accessToken = await authService.getAccessToken() else { return false }
+
+        // Optimistically persist unsent state so it survives refreshes
+        partnerDrafts.unmarkPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
+        objectWillChange.send()
+
+        do {
+            try await backend.unsendPartnerMessage(
+                sessionId: sid,
+                messageText: trimmed,
+                accessToken: accessToken
+            )
+
+            // If no other sent drafts remain for this session, clear the friend linkage
+            if !partnerDrafts.hasAnySentDraft(for: sid) {
+                selectedFriendUserId = nil
+                UserDefaults.standard.removeObject(forKey: Self.friendKey(for: sid))
+            }
+
+            return true
+        } catch {
+            // Roll back on failure — re-mark as sent
             partnerDrafts.markPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
-        } catch { }
+            objectWillChange.send()
+            return false
+        }
     }
 
     func sendPartnerDraftViaSession(_ text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        let sid = await ensureSessionId()
+        guard let sid else { return }
+
+        // Optimistically persist sent state so it survives refreshes
+        partnerDrafts.markPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
+        objectWillChange.send()
+
         do {
-            let sid = await ensureSessionId()
-            guard let sid else { return }
             guard let accessToken = await authService.getAccessToken() else { return }
             _ = try await backend.sendPartnerMessage(
                 message: trimmed,
@@ -227,8 +272,55 @@ class ChatViewModel: ObservableObject {
                 friendUserId: nil,
                 accessToken: accessToken
             )
-            partnerDrafts.markPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
-        } catch { }
+        } catch {
+            // Roll back on failure
+            partnerDrafts.unmarkPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
+            objectWillChange.send()
+        }
+    }
+
+    func regenerateResponse(for assistantMessageId: UUID) {
+        guard !streamingController.isStreaming else { return }
+
+        guard let assistantIndex = messages.firstIndex(where: { $0.id == assistantMessageId }) else { return }
+
+        // Find the preceding user message
+        var userMessageText = ""
+        var userMessageIndex: Int? = nil
+        for i in stride(from: assistantIndex - 1, through: 0, by: -1) {
+            if messages[i].isFromUser {
+                userMessageText = messages[i].segments.compactMap { seg -> String? in
+                    if case .text(let t) = seg { return t }
+                    return nil
+                }.joined()
+                userMessageIndex = i
+                break
+            }
+        }
+
+        let trimmed = userMessageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let userIdx = userMessageIndex else { return }
+
+        Haptics.impact(.medium)
+
+        // Increment regeneration count keyed by user message text
+        regenerationCounts[trimmed, default: 0] += 1
+
+        // Truncate: remove user message and everything after it
+        messages = Array(messages[..<userIdx])
+        chatMessagesVM.updateCacheForCurrentSession(currentMessages: messages)
+
+        // Clear stale response ID so backend doesn't reference deleted context
+        if let sid = sessionId {
+            streamingController.clearResponseId(for: sid)
+        }
+
+        // Re-send the user message (sendMessage recreates it + streams new response)
+        streamingController.sendMessage(overrideText: trimmed)
+    }
+
+    func regenerationCount(forUserMessageText text: String) -> Int {
+        regenerationCounts[text.trimmingCharacters(in: .whitespacesAndNewlines)] ?? 0
     }
 
     func presentSession(_ id: UUID) async {
@@ -238,6 +330,8 @@ class ChatViewModel: ObservableObject {
             self.streamingController.handleSessionPresented(id)
             self.isLoading = self.streamingController.isCurrentlyStreaming(sessionId: id)
             self.isAssistantTyping = false
+            self.thinkingText = ""
+            self.thinkingTextDone = false
             self.pendingInitialJump = true
         }
 
@@ -283,10 +377,12 @@ extension ChatViewModel: ChatStreamingDelegate {
 
         let voiceId = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let voiceName = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !voiceId.isEmpty else { return }
 
         Task { @MainActor in
-            await elevenLabsStreamingTTS.start(voiceId: voiceId)
+            await elevenLabsStreamingTTS.start(voiceId: voiceId, voiceName: voiceName)
         }
     }
 

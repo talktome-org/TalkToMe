@@ -13,64 +13,51 @@ struct SettingsView: View {
 
     @Binding var isPresented: Bool
 
-    @State private var showCards = false
     @State private var avatarRefreshKey = UUID()
 
-    // Settings should behave like the sidebar: show the cached image immediately if available.
-    // (We preload the image before the sheet is presented.)
     private var avatarPlaceholder: AnyView { AnyView(Color.clear) }
 
     private var avatarFallback: AnyView {
         AnyView(
             Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.26, green: 0.58, blue: 1.00),
-                            Color(red: 0.63, green: 0.32, blue: 0.98)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(width: 84, height: 84)
+                .fill(Color(.tertiarySystemFill))
+                .frame(width: 72, height: 72)
                 .overlay(
-                    Circle().stroke(Color.white.opacity(0.9), lineWidth: 2)
-                )
-                .overlay(
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 36, weight: .semibold))
-                        .foregroundColor(.white)
+                    Text(preferredName.prefix(1).uppercased())
+                        .font(.system(size: 28, weight: .semibold, design: .rounded))
+                        .foregroundColor(.secondary)
                 )
         )
     }
 
-    private var avatarView: some View {
-        ZStack {
-            AvatarCacheManager.shared.cachedAsyncImage(
-                urlString: sessionsVM.myAvatarURL,
-                placeholder: { avatarPlaceholder },
-                fallback: { avatarFallback }
-            )
-            .frame(width: 84, height: 84)
-            .clipShape(Circle())
-            .id(avatarRefreshKey)
+    private var preferredName: String {
+        let name = viewModel.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { return name }
+        if let user = AuthService.shared.currentUser {
+            if let n = user.userMetadata["full_name"]?.stringValue, !n.isEmpty { return n }
+            if let n = user.userMetadata["name"]?.stringValue, !n.isEmpty { return n }
+            if let email = user.email { return email.components(separatedBy: "@").first ?? "User" }
         }
-        .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 6)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
-        .padding(.bottom, 12)
+        return "User"
     }
 
-    private var headerInfoView: some View {
+    private var avatarView: some View {
+        AvatarCacheManager.shared.cachedAsyncImage(
+            urlString: sessionsVM.myAvatarURL,
+            placeholder: { avatarPlaceholder },
+            fallback: { avatarFallback }
+        )
+        .frame(width: 72, height: 72)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(Color(.separator).opacity(0.3), lineWidth: 0.5))
+        .id(avatarRefreshKey)
+    }
+
+    private var profileHeader: some View {
         VStack(spacing: 6) {
-            let preferredName = !viewModel.fullName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? viewModel.fullName : {
-                if let user = AuthService.shared.currentUser {
-                    if let n = user.userMetadata["full_name"]?.stringValue, !n.isEmpty { return n }
-                    if let n = user.userMetadata["name"]?.stringValue, !n.isEmpty { return n }
-                    if let email = user.email { return email.components(separatedBy: "@").first ?? "User" }
-                }
-                return "User"
-            }()
+            avatarView
+                .padding(.bottom, 6)
+
             Text(preferredName)
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundColor(.primary)
@@ -78,17 +65,17 @@ struct SettingsView: View {
             if let email = AuthService.shared.currentUser?.email, !email.isEmpty {
                 Text(email)
                     .font(.system(size: 15, weight: .regular))
-                    .foregroundColor(Color(.label).opacity(0.5))
+                    .foregroundColor(.secondary)
             }
         }
-        .padding(.bottom, 32)
+        .padding(.top, 12)
+        .padding(.bottom, 24)
     }
 
     @ViewBuilder
     private var sectionsListView: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 36) {
             ForEach(Array(viewModel.settingsSections.enumerated()), id: \.offset) { sectionIndex, section in
-
                 SettingsCardView(
                     section: section,
                     onToggle: { settingIndex in
@@ -99,105 +86,63 @@ struct SettingsView: View {
                     }
                 )
             }
-
-            VStack(spacing: 0) {
-                Text("VERSION 1.0.0")
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundColor(.secondary)
-                    .textCase(.uppercase)
-                    .padding(.top, 20)
-            }
         }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 40)
     }
 
     var body: some View {
-        ZStack {
-            NavigationStack {
+        NavigationStack {
+            ZStack {
+                Color(.systemGroupedBackground).ignoresSafeArea()
+
                 ScrollView {
                     VStack(spacing: 0) {
-                        avatarView
-                        headerInfoView
-
-                        if showCards {
-                            sectionsListView
-                        }
+                        profileHeader
+                        sectionsListView
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 40)
                 }
                 .scrollIndicators(.hidden)
-                .background(Color.clear)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-                .navigationTitle("Settings")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Edit") {
-                            Haptics.impact(.light)
-                            viewModel.showPersonalizationEdit = true
-                        }
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(Color(red: 0.4, green: 0.2, blue: 0.6))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 8)
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(action: {
-                            Haptics.impact(.light)
-                            isPresented = false
-                        }) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(Color(red: 0.4, green: 0.2, blue: 0.6))
-                                .frame(width: 32, height: 32)
-                        }
-                        .buttonStyle(.plain)
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        Haptics.impact(.light)
+                        viewModel.showPersonalizationEdit = true
+                    } label: {
+                        Text("Edit")
                     }
                 }
             }
-            .sheet(isPresented: $viewModel.showPersonalizationEdit) {
-                PersonalizationEditView(
-                    isPresented: $viewModel.showPersonalizationEdit,
-                    profileNamespace: profileNamespace,
-                    viewModel: viewModel
-                )
-                .environmentObject(sessionsVM)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
-            }
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .sheet(isPresented: $viewModel.showPersonalizationEdit) {
+            PersonalizationEditView(
+                isPresented: $viewModel.showPersonalizationEdit,
+                profileNamespace: profileNamespace,
+                viewModel: viewModel
+            )
+            .environmentObject(sessionsVM)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
         .preferredColorScheme(
             appearance == "Light" ? .light : appearance == "Dark" ? .dark : nil
         )
-        .animation(.spring(response: 0.45, dampingFraction: 0.9, blendDuration: 0), value: isPresented)
         .onAppear {
-            showCards = false
-
-            // Preload avatar for personalization screen
             viewModel.preloadAvatar()
 
-            // As a safety net (normally this is warmed before presenting the sheet).
             Task { @MainActor in
                 await sessionsVM.ensureProfilePictureCached()
                 avatarRefreshKey = UUID()
             }
 
-            // Load profile information only if not already loaded from cache
             if !viewModel.isProfileLoaded {
                 viewModel.loadProfileInfo()
             }
 
             Task { await friendsVM.refreshMyCode() }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.92)) {
-                    showCards = true
-                }
-            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .profileChanged)) { _ in
-            // Profile changed elsewhere; reload to sync cached name and bio
             viewModel.loadProfileInfo()
         }
         .onReceive(NotificationCenter.default.publisher(for: .avatarChanged)) { _ in

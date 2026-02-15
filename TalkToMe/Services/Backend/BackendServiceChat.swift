@@ -36,7 +36,9 @@ extension BackendService {
         friendUserId: UUID? = nil,
         messageId: UUID? = nil,
         ephemeral: Bool = false,
-        voiceAgent: String? = nil
+        voiceAgent: String? = nil,
+        ghostName: String? = nil,
+        deleteBefore: UUID? = nil
     ) -> AsyncStream<StreamEvent> {
         var request = URLRequest(url: baseURL
             .appendingPathComponent("chat")
@@ -56,7 +58,9 @@ extension BackendService {
             attachments: attachments,
             friend_user_id: friendUserId,
             ephemeral: ephemeral ? true : nil,
-            voice_agent: (voiceAgent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : voiceAgent
+            voice_agent: (voiceAgent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : voiceAgent,
+            ghost_name: (ghostName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : ghostName,
+            delete_before: deleteBefore
         )
         request.httpBody = try? jsonEncoder.encode(payload)
         return SSEService.shared.stream(request: request)
@@ -223,6 +227,52 @@ extension BackendService {
         }
     }
 
+    /// Deletes all messages in a session after (and optionally including) a given message.
+    /// Retries up to 3 times on failure. Returns `true` if the server confirmed deletion.
+    @discardableResult
+    func deleteMessagesAfter(messageId: UUID, sessionId: UUID, accessToken: String, includeAnchor: Bool = false) async -> Bool {
+        var components = URLComponents(url: baseURL
+            .appendingPathComponent("chat")
+            .appendingPathComponent("sessions")
+            .appendingPathComponent(sessionId.uuidString)
+            .appendingPathComponent("messages")
+            .appendingPathComponent("after")
+            .appendingPathComponent(messageId.uuidString), resolvingAgainstBaseURL: false)!
+        if includeAnchor {
+            components.queryItems = [URLQueryItem(name: "include_anchor", value: "true")]
+        }
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = BackendService.coreRequestTimeoutSeconds
+
+        for attempt in 1...3 {
+            do {
+                let (_, response) = try await urlSession.data(for: request)
+                if let http = response as? HTTPURLResponse {
+                    if (200..<300).contains(http.statusCode) {
+                        return true
+                    }
+                    if http.statusCode == 404 {
+                        // Try POST variant
+                        var postRequest = request
+                        postRequest.httpMethod = "POST"
+                        let (_, postResp) = try await urlSession.data(for: postRequest)
+                        if let postHttp = postResp as? HTTPURLResponse, (200..<300).contains(postHttp.statusCode) {
+                            return true
+                        }
+                    }
+                }
+            } catch {
+                // Network error — will retry
+            }
+            if attempt < 3 {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
+        }
+        return false
+    }
+
     // Chat attachments
     func uploadChatAttachment(fileData: Data, filename: String, contentType: String, accessToken: String) async throws -> (path: String, url: String?) {
         let url = baseURL
@@ -266,6 +316,8 @@ private struct ChatRequestBody: Codable {
     let friend_user_id: UUID?
     let ephemeral: Bool?
     let voice_agent: String?
+    let ghost_name: String?
+    let delete_before: UUID?
 }
 
 private struct MessagesResponseBody: Codable {

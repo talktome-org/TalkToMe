@@ -10,6 +10,8 @@ protocol ChatStreamingDelegate: AnyObject {
     var selectedFriendUserId: UUID? { get }
     var isLoading: Bool { get set }
     var isAssistantTyping: Bool { get set }
+    var thinkingText: String { get set }
+    var thinkingTextDone: Bool { get set }
     var pendingOutgoingUserMessageId: UUID? { get set }
     var assistantScrollTargetId: UUID? { get set }
     var streamingScrollToken: Int { get set }
@@ -35,6 +37,8 @@ final class ChatStreamingController {
     private var responseIdBySession: [UUID: String] = [:]
     private var assistantMessageIdBySession: [UUID: UUID] = [:]
     private var currentStreamingSessionId: UUID?
+    private var pendingRegenerationCount: Int = 0
+    private var ghostNameBySession: [UUID: String] = [:]
 
     private weak var delegate: ChatStreamingDelegate?
     private var onCacheUpdate: (() -> Void)?
@@ -88,6 +92,10 @@ final class ChatStreamingController {
         currentStreamingSessionId == sessionId
     }
 
+    func clearResponseId(for sessionId: UUID) {
+        responseIdBySession.removeValue(forKey: sessionId)
+    }
+
     func handleSessionPresented(_ id: UUID) {
         if let placeholderId = assistantMessageIdBySession[id] {
             currentAssistantMessageId = placeholderId
@@ -96,7 +104,7 @@ final class ChatStreamingController {
         }
     }
 
-    func sendMessage(overrideText: String? = nil) {
+    func sendMessage(overrideText: String? = nil, isRegeneration: Bool = false, reuseMessageId: UUID? = nil) {
         guard let delegate else { return }
 
         let trimmedMessage = (overrideText ?? delegate.inputText).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -193,39 +201,60 @@ final class ChatStreamingController {
             }
         }
 
-        let persistedContent: String = {
-            guard !attachmentsToSend.isEmpty else { return messageToSend }
-            let obj: [String: Any] = ["_talktome": ["type": "segments", "segments": segs]]
-            let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
-            return String(data: data, encoding: .utf8) ?? messageToSend
-        }()
+        let clientMessageId: UUID
 
-        let dto = BackendService.ChatMessageDTO(
-            id: UUID(),
-            user_id: userId,
-            session_id: sid,
-            role: "user",
-            content: persistedContent,
-            created_at: ISO8601DateFormatter().string(from: Date())
-        )
-        let clientMessageId = dto.id
+        if !isRegeneration {
+            let persistedContent: String = {
+                guard !attachmentsToSend.isEmpty else { return messageToSend }
+                let obj: [String: Any] = ["_talktome": ["type": "segments", "segments": segs]]
+                let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
+                return String(data: data, encoding: .utf8) ?? messageToSend
+            }()
 
-        let localMessage = ChatMessage(dto: dto, currentUserId: userId)
-        delegate.messages.append(localMessage)
-        delegate.pendingOutgoingUserMessageId = clientMessageId
-        onCacheUpdate?()
-        Task.detached {
-            await ChatStore.shared.upsertMessages([dto])
+            let dto = BackendService.ChatMessageDTO(
+                id: UUID(),
+                user_id: userId,
+                session_id: sid,
+                role: "user",
+                content: persistedContent,
+                created_at: ISO8601DateFormatter().string(from: Date())
+            )
+            clientMessageId = dto.id
+
+            let localMessage = ChatMessage(dto: dto, currentUserId: userId)
+            delegate.messages.append(localMessage)
+            delegate.pendingOutgoingUserMessageId = clientMessageId
+            onCacheUpdate?()
+            Task.detached {
+                await ChatStore.shared.upsertMessages([dto])
+            }
+
+            NotificationCenter.default.post(name: .chatMessageSent, object: nil, userInfo: [
+                "sessionId": sid,
+                "messageContent": previewToSend
+            ])
+            NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
+
+            delegate.inputText = ""
+            delegate.pendingAttachments = []
+        } else {
+            // Regeneration: persist the user message to local DB (the old one
+            // was deleted) but don't add it to the messages array — the original
+            // row is still visible in the UI for a seamless experience.
+            // Reuse the original message ID so the UI and DB stay in sync on reload.
+            let dto = BackendService.ChatMessageDTO(
+                id: reuseMessageId ?? UUID(),
+                user_id: userId,
+                session_id: sid,
+                role: "user",
+                content: messageToSend,
+                created_at: ISO8601DateFormatter().string(from: Date())
+            )
+            clientMessageId = dto.id
+            Task.detached {
+                await ChatStore.shared.upsertMessages([dto])
+            }
         }
-
-        NotificationCenter.default.post(name: .chatMessageSent, object: nil, userInfo: [
-            "sessionId": sid,
-            "messageContent": previewToSend
-        ])
-        NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
-
-        delegate.inputText = ""
-        delegate.pendingAttachments = []
 
         if NetworkMonitor.shared.isOnline == false {
             Task.detached {
@@ -247,6 +276,8 @@ final class ChatStreamingController {
 
         delegate.isLoading = true
         delegate.isAssistantTyping = false
+        delegate.thinkingText = ""
+        delegate.thinkingTextDone = false
         receivedAnyAssistantOutput = false
         typingDelayTask?.cancel()
         typingDelayTask = Task { [weak self, weak delegate] in
@@ -376,6 +407,7 @@ final class ChatStreamingController {
             let chatHistory = chatHistoryForStream
 
             var accumulated = ""
+            var accumulatedThinking = ""
             var currentSegments: [MessageSegment] = []
             var streamSessionId: UUID? = requestSessionIdForStream ?? localSessionIdForSend
             let prevId: String? = {
@@ -501,11 +533,27 @@ final class ChatStreamingController {
                             delegate.setCachedMessages(newMessages, for: sid)
                         }
                     }
+                case .thinking(let text):
+                    accumulatedThinking += text
+                    Task { @MainActor in
+                        if !self.receivedAnyAssistantOutput {
+                            self.typingDelayTask?.cancel()
+                            delegate.isAssistantTyping = true
+                        }
+                        delegate.thinkingText += text
+                    }
+                case .thinkingDone:
+                    Task { @MainActor in
+                        delegate.thinkingTextDone = true
+                    }
                 case .session(let sid):
                     streamSessionId = sid
                     Task { @MainActor in
                         if let local = createdLocalSessionIdForSend, delegate.sessionId == local, sid != local {
                             await ChatStore.shared.rekeySession(oldId: local, newId: sid)
+                            if let ghostName = self.ghostNameBySession[local] {
+                                self.ghostNameBySession[sid] = ghostName
+                            }
                             NotificationCenter.default.post(name: .chatSessionRekeyed, object: nil, userInfo: [
                                 "oldSessionId": local,
                                 "newSessionId": sid
@@ -605,7 +653,8 @@ final class ChatStreamingController {
                             self.typingDelayTask?.cancel()
                             delegate.isAssistantTyping = false
                         }
-                        currentSegments.append(.partnerMessage(text))
+                        let currentGhostName = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName)
+                        currentSegments.append(.partnerMessage(text: text, ghostName: currentGhostName))
                         if sid == delegate.sessionId {
                             var newMessages = delegate.messages
                             let idx: Int = {
@@ -618,7 +667,7 @@ final class ChatStreamingController {
                                 return newMessages.count - 1
                             }()
                             let last = newMessages[idx]
-                            let updated = ChatMessage(
+                            var updated = ChatMessage(
                                 id: last.id,
                                 segments: currentSegments,
                                 isFromUser: false,
@@ -626,6 +675,7 @@ final class ChatStreamingController {
                                 isToolLoading: false,
                                 isFromVoiceMode: last.isFromVoiceMode
                             )
+                            updated.ghostName = self.ghostNameBySession[sid]
                             newMessages[idx] = updated
                             delegate.messages = newMessages
                             if let id = self.currentAssistantMessageId { delegate.assistantScrollTargetId = id }
@@ -641,7 +691,7 @@ final class ChatStreamingController {
                                 return newMessages.count - 1
                             }()
                             let last = newMessages[idx]
-                            let updated = ChatMessage(
+                            var updated = ChatMessage(
                                 id: last.id,
                                 segments: currentSegments,
                                 isFromUser: false,
@@ -649,6 +699,7 @@ final class ChatStreamingController {
                                 isToolLoading: false,
                                 isFromVoiceMode: last.isFromVoiceMode
                             )
+                            updated.ghostName = self.ghostNameBySession[sid]
                             newMessages[idx] = updated
                             delegate.setCachedMessages(newMessages, for: sid)
                         }
@@ -664,9 +715,47 @@ final class ChatStreamingController {
                             if self.currentStreamingSessionId == sid { self.currentStreamingSessionId = nil }
                         }
                     } else {
+                        let capturedRegenCount = self.pendingRegenerationCount
                         Task { @MainActor in
+                            // Apply regeneration count to the completed message
+                            if self.pendingRegenerationCount > 0,
+                               let msgId = self.currentAssistantMessageId,
+                               let idx = delegate.messages.firstIndex(where: { $0.id == msgId }) {
+                                let count = self.pendingRegenerationCount
+                                delegate.messages[idx].regenerationCount = count
+                                self.pendingRegenerationCount = 0
+                            }
+
+                            // Save thinking summary to the completed message (in-memory for immediate display)
+                            let thinkingSummary = accumulatedThinking.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !thinkingSummary.isEmpty,
+                               let msgId = self.currentAssistantMessageId,
+                               let idx = delegate.messages.firstIndex(where: { $0.id == msgId }) {
+                                delegate.messages[idx].thinkingSummary = thinkingSummary
+                            }
+
+                            // If the assistant message is empty (no segments), clear the
+                            // stored response ID so the next request doesn't chain from a
+                            // broken/empty response, which can cause repeated empty replies.
+                            if let msgId = self.currentAssistantMessageId,
+                               let idx = delegate.messages.firstIndex(where: { $0.id == msgId }) {
+                                let msg = delegate.messages[idx]
+                                let hasContent = msg.segments.contains(where: { seg in
+                                    switch seg {
+                                    case .text(let t): return !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    case .partnerMessage: return true
+                                    default: return false
+                                    }
+                                })
+                                if !hasContent, let sid = delegate.sessionId {
+                                    self.responseIdBySession.removeValue(forKey: sid)
+                                }
+                            }
+
                             delegate.isLoading = false
                             delegate.isAssistantTyping = false
+                            delegate.thinkingText = ""
+                            delegate.thinkingTextDone = false
                             self.isStreaming = false
                             delegate.streamingDidFinish()
                         }
@@ -682,10 +771,29 @@ final class ChatStreamingController {
                         if NetworkMonitor.shared.isOnline {
                             if let sid = (streamSessionId ?? delegate.sessionId) {
                                 let tokenForSync = accessToken
+                                let capturedGhostName = self.ghostNameBySession[sid]
+                                let capturedThinkingSummary = accumulatedThinking.trimmingCharacters(in: .whitespacesAndNewlines)
+                                let skipReconciliation = isRegeneration
                                 Task.detached {
                                     try? await Task.sleep(nanoseconds: 900_000_000)
-                                    if let dtos = try? await BackendService.shared.fetchMessages(sessionId: sid, accessToken: tokenForSync) {
-                                        await ChatStore.shared.upsertMessages(dtos)
+                                    // Skip server reconciliation after regeneration: the local
+                                    // DB already has the correct messages and reconciling risks
+                                    // restoring old messages that failed to delete on the server.
+                                    if !skipReconciliation,
+                                       let dtos = try? await BackendService.shared.fetchMessages(sessionId: sid, accessToken: tokenForSync) {
+                                        await ChatStore.shared.reconcileMessagesWithServer(dtos, sessionId: sid)
+                                    }
+                                    if let ghostName = capturedGhostName {
+                                        await ChatStore.shared.setGhostNameForPartnerDrafts(sessionId: sid, ghostName: ghostName)
+                                    }
+                                    if !capturedThinkingSummary.isEmpty {
+                                        await ChatStore.shared.setThinkingSummaryForLastAssistant(sessionId: sid, summary: capturedThinkingSummary)
+                                    }
+                                    if capturedRegenCount > 0 {
+                                        await ChatStore.shared.setRegenerationCountForLastAssistant(sessionId: sid, count: capturedRegenCount)
+                                    }
+                                    if isVoiceModeMessage {
+                                        await ChatStore.shared.setVoiceModeForLastAssistant(sessionId: sid)
                                     }
                                 }
                             }
@@ -719,6 +827,8 @@ final class ChatStreamingController {
                             }
                             delegate.isLoading = false
                             delegate.isAssistantTyping = false
+                            delegate.thinkingText = ""
+                            delegate.thinkingTextDone = false
                             self.isStreaming = false
                             self.currentStreamingSessionId = nil
                             delegate.streamingDidFinish()
@@ -755,6 +865,13 @@ final class ChatStreamingController {
                 }
             }
 
+            let ghostNameToSend = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName)
+            let cleanedGhostName = ghostNameToSend?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !cleanedGhostName.isEmpty {
+                self.ghostNameBySession[localSessionIdForSend] = cleanedGhostName
+            }
+
+            let deleteBeforeId: UUID? = isRegeneration ? reuseMessageId : nil
             let task = Task.detached { [streamToken] in
                 let stream = BackendService.shared.streamChatMessage(
                     messageToSend,
@@ -766,7 +883,9 @@ final class ChatStreamingController {
                     friendUserId: friendToUse,
                     messageId: clientMessageId,
                     ephemeral: false,
-                    voiceAgent: voiceAgentToSend
+                    voiceAgent: voiceAgentToSend,
+                    ghostName: ghostNameToSend,
+                    deleteBefore: deleteBeforeId
                 )
                 for await event in stream {
                     onEvent(event)
@@ -793,6 +912,85 @@ final class ChatStreamingController {
     func stopGeneration() {
         cancelCurrentStream()
         delegate?.isLoading = false
+        delegate?.isAssistantTyping = false
+        delegate?.thinkingText = ""
+        delegate?.thinkingTextDone = false
         isStreaming = false
+    }
+
+    func regenerateResponse(forAssistantMessageId assistantMessageId: UUID) {
+        guard let delegate else { return }
+        guard !isStreaming else { return }
+
+        // Find the assistant message
+        guard let assistantIndex = delegate.messages.firstIndex(where: { $0.id == assistantMessageId }) else { return }
+
+        // Track regeneration count from the original message
+        let previousCount = delegate.messages[assistantIndex].regenerationCount
+
+        // Find the preceding user message text and index
+        var userText: String?
+        var userIndex: Int?
+        var userMessageId: UUID?
+        for i in stride(from: assistantIndex - 1, through: 0, by: -1) {
+            if delegate.messages[i].isFromUser {
+                userIndex = i
+                userMessageId = delegate.messages[i].id
+                userText = delegate.messages[i].segments.compactMap { seg -> String? in
+                    if case .text(let t) = seg { return t }
+                    return nil
+                }.joined()
+                break
+            }
+        }
+
+        guard let text = userText, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard let removeFrom = userIndex else { return }
+        let anchorMessageId = userMessageId
+        let sessionId = delegate.sessionId
+
+        // Save current input state
+        let savedInput = delegate.inputText
+        let savedAttachments = delegate.pendingAttachments
+
+        // Keep the user message in place; only remove the assistant message and everything after it
+        let removeAfterUser = removeFrom + 1
+        if removeAfterUser < delegate.messages.count {
+            delegate.messages.removeSubrange(removeAfterUser...)
+        }
+        delegate.pendingAttachments = []
+        onCacheUpdate?()
+
+        // Store the regeneration count so we can apply it to the new message
+        pendingRegenerationCount = previousCount + 1
+
+        // Clear stale response ID for this session so it isn't sent with the retry
+        if let sid = sessionId {
+            responseIdBySession.removeValue(forKey: sid)
+        }
+
+        // Await deletes before re-sending to avoid a race where the delete
+        // removes the newly created message.
+        if let anchorId = anchorMessageId, let sid = sessionId {
+            Task { [weak self, weak delegate] in
+                // Delete the user message + everything after from DB (sendMessage will re-persist it)
+                await ChatStore.shared.deleteMessagesAfter(messageId: anchorId, sessionId: sid, includeAnchor: true)
+
+                if let accessToken = await AuthService.shared.getAccessToken() {
+                    await BackendService.shared.deleteMessagesAfter(messageId: anchorId, sessionId: sid, accessToken: accessToken, includeAnchor: true)
+                }
+
+                await MainActor.run { [weak self, weak delegate] in
+                    guard let self, let delegate else { return }
+                    self.sendMessage(overrideText: text, isRegeneration: true, reuseMessageId: anchorId)
+                    delegate.inputText = savedInput
+                    delegate.pendingAttachments = savedAttachments
+                }
+            }
+        } else {
+            sendMessage(overrideText: text, isRegeneration: true, reuseMessageId: anchorMessageId)
+            delegate.inputText = savedInput
+            delegate.pendingAttachments = savedAttachments
+        }
     }
 }

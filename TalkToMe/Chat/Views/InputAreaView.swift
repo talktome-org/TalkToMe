@@ -378,7 +378,7 @@ struct InputAreaView: View {
 
                 // Ghost — always mounted so the video never restarts
                 ghostButton
-                    .offset(x: -2, y: isSpeakModeActive ? 4 : -1)
+                    .offset(x: -2, y: isSpeakModeActive ? 4 : 1)
                     .opacity(!shouldHideGhost ? 1 : 0)
                     .frame(width: !shouldHideGhost ? nil : 0)
             }
@@ -444,7 +444,7 @@ private struct GhostVideoContentView: View {
     }
 
     var body: some View {
-        let size: CGFloat = isSpeakModeActive ? 80 : 48
+        let size: CGFloat = isSpeakModeActive ? 80 : 54
 
         Group {
             if hasGhostVideo && isSpeechActive {

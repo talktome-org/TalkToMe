@@ -13,6 +13,14 @@ struct ChatScreenView: View {
         chatViewModel.pendingAttachments.isEmpty ? 68 : 220
     }
 
+    private var inputAreaYOffset: CGFloat {
+        isInputFocused.wrappedValue ? 8 : 14
+    }
+
+    private var focusedBottomInset: CGFloat {
+        isInputFocused.wrappedValue ? 10 : 0
+    }
+
     var body: some View {
         MessagesListView(
             chatViewModel: chatViewModel,
@@ -60,17 +68,12 @@ struct ChatScreenView: View {
                 onVoiceModeStart: { chatViewModel.voiceController.startVoiceModePushToTalk() },
                 onVoiceModeStop: { chatViewModel.voiceController.stopVoiceModePushToTalk() }
             )
-            .frame(height: chatViewModel.pendingAttachments.isEmpty ? inputAreaHeight : nil, alignment: .bottom)
-            .offset(y: 14)
-            .padding(.bottom, isInputFocused.wrappedValue ? 23 : 0)
+            .frame(minHeight: chatViewModel.pendingAttachments.isEmpty ? inputAreaHeight : nil, alignment: .bottom)
+            .offset(y: inputAreaYOffset)
+            .padding(.bottom, focusedBottomInset)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
         .background(Color(.systemBackground))
-        .onChange(of: chatViewModel.pendingOutgoingUserMessageId, initial: false) { _, newId in
-            if newId != nil {
-                chatViewModel.pendingOutgoingUserMessageId = nil
-            }
-        }
     }
 }
 
@@ -95,7 +98,7 @@ struct ChatScreenView: View {
                 vm.messages = [
                     ChatMessage.text("Hey! Can we talk about yesterday?", isFromUser: true),
                     ChatMessage(segments: [.text("Of course—what's on your mind?")], isFromUser: false),
-                    ChatMessage(segments: [.text("You could say:"), .partnerMessage("I felt dismissed during our talk. Can we revisit it?")], isFromUser: false),
+                    ChatMessage(segments: [.text("You could say:"), .partnerMessage(text: "I felt dismissed during our talk. Can we revisit it?", ghostName: nil)], isFromUser: false),
                     ChatMessage(segments: [.partnerReceived("Absolutely, I'd like that. When works for you?")], isFromUser: false)
                 ]
             }

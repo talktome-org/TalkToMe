@@ -149,6 +149,30 @@ final class LocalDatabase {
             )
         }
 
+        migrator.registerMigration("messages_add_regeneration_count") { db in
+            try db.alter(table: "messages") { t in
+                t.add(column: "regeneration_count", .integer).defaults(to: 0)
+            }
+        }
+
+        migrator.registerMigration("messages_add_ghost_name") { db in
+            try db.alter(table: "messages") { t in
+                t.add(column: "ghost_name", .text)
+            }
+        }
+
+        migrator.registerMigration("messages_add_thinking_summary") { db in
+            try db.alter(table: "messages") { t in
+                t.add(column: "thinking_summary", .text)
+            }
+        }
+
+        migrator.registerMigration("messages_add_is_voice_mode") { db in
+            try db.alter(table: "messages") { t in
+                t.add(column: "is_voice_mode", .boolean).defaults(to: false)
+            }
+        }
+
         return migrator
     }
 }

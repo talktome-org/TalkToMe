@@ -55,6 +55,28 @@ final class VoicesCache {
             memoryDefaultVoiceId = UserDefaults.standard.string(forKey: defaultVoiceIdKey)
         }
     }
+
+    /// Validates `storedVoiceId` against the cached voice list.
+    /// If stale, resolves the correct ID by matching `storedVoiceName` (case-insensitive)
+    /// and updates UserDefaults. Returns nil when no resolution is possible.
+    func resolvedVoiceId(storedId: String, storedName: String) -> String? {
+        guard let voices = memoryCache, !voices.isEmpty else { return nil }
+
+        // Already valid
+        if voices.contains(where: { $0.voice_id == storedId }) {
+            return storedId
+        }
+
+        // Stale ID – try to match by name
+        let nameLower = storedName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if !nameLower.isEmpty,
+           let matched = voices.first(where: { $0.name.lowercased() == nameLower }) {
+            UserDefaults.standard.set(matched.voice_id, forKey: PreferenceKeys.elevenLabsVoiceId)
+            return matched.voice_id
+        }
+
+        return nil
+    }
 }
 
 private struct BuddyDefinition: Identifiable {
@@ -226,7 +248,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Buddies")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
 
             voiceGrid
@@ -436,13 +458,18 @@ struct ElevenLabsVoiceSuggestionsView: View {
         return id.isEmpty && name.isEmpty
     }
 
-    /// If the user selected a buddy by name but we didn't have a backend voice ID
-    /// yet, back-fill the ID now that voices are available.
-    private func backfillVoiceIdIfNeeded(from voiceList: [BackendService.AppVoiceDTO]) {
+    /// Ensures the stored voice ID is valid against the current voice list.
+    /// Handles both empty IDs (user picked a buddy before voices loaded) and
+    /// stale IDs (backend voice IDs changed since the user last selected).
+    private func refreshVoiceIdIfNeeded(from voiceList: [BackendService.AppVoiceDTO]) {
         let storedId = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard storedId.isEmpty, !localVoiceName.isEmpty else { return }
 
+        // Already valid
+        if !storedId.isEmpty, voiceList.contains(where: { $0.voice_id == storedId }) { return }
+
+        // Empty or stale — resolve by name
+        guard !localVoiceName.isEmpty else { return }
         let key = Self.normalizedGhostKey(localVoiceName)
         if let matched = voiceList.first(where: { Self.normalizedGhostKey($0.name) == key }) {
             localVoiceId = matched.voice_id
@@ -467,7 +494,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
                 localVoiceName = defaultVoice.name
             }
 
-            backfillVoiceIdIfNeeded(from: cached)
+            refreshVoiceIdIfNeeded(from: cached)
 
             // If cache is still valid, skip network refresh
             if cache.isCacheValid { return }
@@ -498,7 +525,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
                 localVoiceName = defaultVoice.name
             }
 
-            backfillVoiceIdIfNeeded(from: result.voices)
+            refreshVoiceIdIfNeeded(from: result.voices)
         } catch {
             // If we have cached data, silently ignore network errors
         }

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from Backend.auth import get_current_user
-from Backend.crud.chat.chat_crud import save_message, update_session_last_message
+from Backend.crud.chat.chat_crud import delete_partner_message, save_message, update_session_last_message
 from Backend.crud.chat.chat_session_crud import (
     ensure_linked_session_for_friendship,
     get_session_by_id,
@@ -152,4 +152,35 @@ async def send_message(request: SendPartnerMessageRequest, current_user: dict = 
         pass
 
     return SendPartnerMessageResponse(success=True, recipient_session_id=recipient_session_id)
+
+
+class UnsendPartnerMessageRequest(BaseModel):
+    session_id: uuid.UUID
+    message_text: str
+
+
+class UnsendPartnerMessageResponse(BaseModel):
+    success: bool
+
+
+@router.post("/unsend-message", response_model=UnsendPartnerMessageResponse)
+async def unsend_message(request: UnsendPartnerMessageRequest, current_user: dict = Depends(get_current_user)):
+    try:
+        user_id = uuid.UUID(current_user.get("sub"))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid user ID in token")
+
+    message_text = (request.message_text or "").strip()
+    if not message_text:
+        raise HTTPException(status_code=400, detail="message_text required")
+
+    deleted = await delete_partner_message(
+        sender_user_id=user_id,
+        sender_session_id=request.session_id,
+        message_text=message_text,
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Message not found or already deleted")
+
+    return UnsendPartnerMessageResponse(success=True)
 

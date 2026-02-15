@@ -20,6 +20,7 @@ from sqlalchemy import select, text
 from Backend.auth import get_current_user
 from Backend.crud.chat.chat_crud import (
     count_user_messages,
+    delete_messages_after,
     get_recent_user_messages,
     list_messages_for_session,
     save_message,
@@ -58,6 +59,21 @@ voice_agent_prompts = VoiceAgentPromptLibrary()
 
 RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5") or "5")
 RAG_MAX_CHARS_PER_CHUNK = int(os.getenv("RAG_MAX_CHARS_PER_CHUNK", "1200") or "1200")
+
+_HIGH_EFFORT_PATTERNS = re.compile(
+    r"(explain|analyze|compar|why\b|how does|what causes|step.?by.?step|in detail|pros? and cons|trade.?offs?|differences? between)",
+    re.IGNORECASE,
+)
+
+def _classify_reasoning_effort(message: str) -> str:
+    """Choose reasoning effort based on message complexity."""
+    text = (message or "").strip()
+    length = len(text)
+    if length < 30:
+        return "low"
+    if length > 300 or _HIGH_EFFORT_PATTERNS.search(text):
+        return "high"
+    return "medium"
 
 
 def _format_rag_context(rows: list[dict]) -> Optional[str]:
@@ -297,7 +313,10 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                 fid = await get_friendship_id_for_pair(user_id=user_uuid, friend_user_id=chat_request.friend_user_id)
                 if not fid:
                     raise HTTPException(status_code=400, detail="Not friends with selected user")
-                await attach_friendship_to_session(user_id=user_uuid, session_id=session_uuid, friendship_id=fid)
+                try:
+                    await attach_friendship_to_session(user_id=user_uuid, session_id=session_uuid, friendship_id=fid)
+                except PermissionError:
+                    pass  # Session already linked to a different friend; proceed with chat
 
             store_as_segments = bool(chat_request.attachments)
             if store_as_segments:
@@ -324,6 +343,19 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                 content_to_store = json.dumps({"_talktome": {"type": "segments", "segments": segs}}, ensure_ascii=False)
             else:
                 content_to_store = chat_request.message
+
+            # During regeneration the client sends delete_before to atomically
+            # remove the old user+assistant messages before persisting the new ones.
+            if chat_request.delete_before is not None:
+                try:
+                    await delete_messages_after(
+                        user_id=user_uuid,
+                        session_id=session_uuid,
+                        after_message_id=chat_request.delete_before,
+                        include_anchor=True,
+                    )
+                except Exception:
+                    pass  # best-effort; the standalone DELETE already retried
 
             try:
                 await save_message_with_id(
@@ -427,6 +459,7 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                 sess_payload = json.dumps({"session_id": str(session_uuid)})
                 yield f"event: session\ndata: {sess_payload}\n\n".encode()
 
+            ghost_name = (chat_request.ghost_name or "").strip() or None
             full_text_parts = []
             segments_list = []
             current_text_segment = ""
@@ -483,7 +516,7 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
 
                 system_prompt_override = None
                 if use_gemini:
-                    # Voice-agent mode uses the selected voice agent prompt (VOLT/LUMA/etc),
+                    # Voice-agent mode uses the selected voice agent prompt (MIRA/PAX/etc),
                     # not the general chat_prompt.txt. Pass empty string if not found so we
                     # don't fall back to chat_prompt.txt.
                     system_prompt_override = voice_agent_prompts.get_prompt(chat_request.voice_agent) or ""
@@ -525,8 +558,46 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                 # For high concurrency, frequent heartbeats add up quickly.
                 heartbeat_interval = 5.0
 
+                received_event_types: set[str] = set()
+                received_text_deltas = 0
+                received_reasoning_summary_deltas = 0
+                received_reasoning_summary_chars = 0
+                received_reasoning_summary_done = 0
+
+                def _reset_stream_debug_counters():
+                    nonlocal received_event_types
+                    nonlocal received_text_deltas
+                    nonlocal received_reasoning_summary_deltas
+                    nonlocal received_reasoning_summary_chars
+                    nonlocal received_reasoning_summary_done
+                    received_event_types = set()
+                    received_text_deltas = 0
+                    received_reasoning_summary_deltas = 0
+                    received_reasoning_summary_chars = 0
+                    received_reasoning_summary_done = 0
+
+                def _log_stream_debug_counters(label: str):
+                    emitted = "yes" if received_reasoning_summary_deltas > 0 else "no"
+                    print(
+                        "[SSE] stream_debug"
+                        f" label={label}"
+                        f" reasoning_summary_emitted={emitted}"
+                        f" reasoning_summary_delta_count={received_reasoning_summary_deltas}"
+                        f" reasoning_summary_char_count={received_reasoning_summary_chars}"
+                        f" reasoning_summary_done_events={received_reasoning_summary_done}"
+                        f" text_delta_count={received_text_deltas}"
+                        f" event_types={sorted(received_event_types)}"
+                    )
+
                 async def _consume_stream(stream):
-                    nonlocal buffer, in_partner, current_text_segment
+                    nonlocal buffer
+                    nonlocal in_partner
+                    nonlocal current_text_segment
+                    nonlocal received_text_deltas
+                    nonlocal received_event_types
+                    nonlocal received_reasoning_summary_deltas
+                    nonlocal received_reasoning_summary_chars
+                    nonlocal received_reasoning_summary_done
                     aiter = stream.__aiter__()
                     while True:
                         try:
@@ -551,10 +622,12 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                         except StopAsyncIteration:
                             break
                         except Exception as e:
+                            print(f"[SSE] stream iteration error: {e}")
                             yield f"event: error\ndata: {json.dumps(str(e))}\n\n".encode()
                             break
 
                         etype = getattr(event, "type", "")
+                        received_event_types.add(etype)
 
                         if etype == "response.created":
                             rid = None
@@ -571,14 +644,50 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                                 err_obj = getattr(event, "error", None)
                                 if err_obj is not None:
                                     err_msg = str(err_obj)
+                            print(f"[SSE] OpenAI response.error: {err_msg}")
                             yield f"event: error\ndata: {json.dumps(err_msg)}\n\n".encode()
                             break
 
                         if etype == "response.completed":
+                            with suppress(Exception):
+                                resp = getattr(event, "response", None)
+                                status = getattr(resp, "status", None)
+                                if status and status != "completed":
+                                    print(f"[SSE] response.completed with status={status}")
+                                rid = getattr(resp, "id", None)
+                                print(
+                                    "[SSE] response.completed"
+                                    f" response_id={rid}"
+                                    f" reasoning_summary_emitted={'yes' if received_reasoning_summary_deltas > 0 else 'no'}"
+                                    f" reasoning_summary_delta_count={received_reasoning_summary_deltas}"
+                                    f" reasoning_summary_char_count={received_reasoning_summary_chars}"
+                                    f" reasoning_summary_done_events={received_reasoning_summary_done}"
+                                    f" text_delta_count={received_text_deltas}"
+                                )
+                                # Log output item types when no text was produced
+                                if received_text_deltas == 0:
+                                    output_items = getattr(resp, "output", []) or []
+                                    item_types = [getattr(item, "type", "?") for item in output_items]
+                                    print(f"[SSE] response.completed with 0 text deltas. output_types={item_types} event_types={sorted(received_event_types)}")
                             break
+
+                        if etype == "response.reasoning_summary_text.delta":
+                            delta = getattr(event, "delta", "") or ""
+                            if delta:
+                                received_reasoning_summary_deltas += 1
+                                received_reasoning_summary_chars += len(delta)
+                                yield f"event: thinking\ndata: {json.dumps(delta)}\n\n".encode()
+                            continue
+
+                        if etype == "response.reasoning_summary_text.done":
+                            received_reasoning_summary_done += 1
+                            yield b"event: thinking_done\ndata: {}\n\n"
+                            continue
 
                         if etype != "response.output_text.delta":
                             continue
+
+                        received_text_deltas += 1
 
                         delta = getattr(event, "delta", "") or ""
                         if not isinstance(delta, str):
@@ -628,28 +737,40 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                                 if current_text_segment:
                                     segments_list.append({"type": "text", "content": current_text_segment})
                                     current_text_segment = ""
-                                segments_list.append({"type": "partner_draft", "text": content})
+                                partner_seg = {"type": "partner_draft", "text": content}
+                                if ghost_name:
+                                    partner_seg["ghost_name"] = ghost_name
+                                segments_list.append(partner_seg)
 
                                 buffer = buffer[close_idx + len(end_marker) :]
                                 in_partner = False
                                 continue
 
                 # Use Gemini for voice-agent / ephemeral mode, OpenAI otherwise.
+                reasoning_effort = _classify_reasoning_effort(chat_request.message)
+                print(f"[SSE] reasoning_effort={reasoning_effort} for message ({len((chat_request.message or '').strip())} chars)")
                 if use_gemini:
+                    _reset_stream_debug_counters()
                     async with voice_chat_service.stream_response(
                         messages=input_messages,
                         previous_response_id=None,  # Gemini doesn't support response chaining
                     ) as stream:
                         async for chunk in _consume_stream(stream):
                             yield chunk
+                    _log_stream_debug_counters("gemini_primary")
                 else:
                     try:
-                        async with chat_service.stream_response(
-                            messages=input_messages,
-                            previous_response_id=chat_request.previous_response_id,
-                        ) as stream:
-                            async for chunk in _consume_stream(stream):
-                                yield chunk
+                        _reset_stream_debug_counters()
+                        try:
+                            async with chat_service.stream_response(
+                                messages=input_messages,
+                                previous_response_id=chat_request.previous_response_id,
+                                reasoning_effort=reasoning_effort,
+                            ) as stream:
+                                async for chunk in _consume_stream(stream):
+                                    yield chunk
+                        finally:
+                            _log_stream_debug_counters("openai_primary")
                     except Exception as e:
                         # If OpenAI rejects `previous_response_id`, retry once without it.
                         msg = str(e)
@@ -660,9 +781,13 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                             buffer = ""
                             in_partner = False
                             current_text_segment = ""
-                            async with chat_service.stream_response(messages=input_messages, previous_response_id=None) as stream:
-                                async for chunk in _consume_stream(stream):
-                                    yield chunk
+                            _reset_stream_debug_counters()
+                            try:
+                                async with chat_service.stream_response(messages=input_messages, previous_response_id=None) as stream:
+                                    async for chunk in _consume_stream(stream):
+                                        yield chunk
+                            finally:
+                                _log_stream_debug_counters("openai_prev_id_retry")
                         else:
                             raise
 
@@ -676,10 +801,46 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                     segments_list.append({"type": "text", "content": current_text_segment})
                     current_text_segment = ""
 
+                # If the AI returned an empty response, retry with reduced reasoning effort
+                # and without previous_response_id. gpt-5.2 sometimes spends its entire
+                # budget on reasoning and produces zero text output.
+                if (
+                    not full_text_parts
+                    and not segments_list
+                    and not in_partner
+                    and not use_gemini
+                ):
+                    prev_id = chat_request.previous_response_id
+                    print(f"[SSE] Empty response (prev_id={'yes' if prev_id else 'no'}), retrying with reasoning=low for session {session_uuid}")
+                    buffer = ""
+                    in_partner = False
+                    current_text_segment = ""
+                    _reset_stream_debug_counters()
+                    try:
+                        async with chat_service.stream_response(
+                            messages=input_messages,
+                            previous_response_id=None,
+                            reasoning_effort="low",
+                        ) as stream:
+                            async for chunk in _consume_stream(stream):
+                                yield chunk
+                    finally:
+                        _log_stream_debug_counters("openai_empty_output_retry_low")
+                    if buffer:
+                        full_text_parts.append(buffer)
+                        yield f"event: token\ndata: {json.dumps(buffer)}\n\n".encode()
+                        current_text_segment += buffer
+                        buffer = ""
+                    if current_text_segment:
+                        segments_list.append({"type": "text", "content": current_text_segment})
+                        current_text_segment = ""
+
                 final_text = "".join(full_text_parts)
                 state["final_text"] = final_text or ""
                 if segments_list:
                     state["segments"] = segments_list
+                elif not final_text:
+                    print(f"[SSE] WARNING: No output produced for session {session_uuid}")
 
                 yield b"event: done\ndata: {}\n\n"
             except Exception as e:
@@ -807,3 +968,25 @@ async def delete_session_route(session_id: uuid.UUID, current_user: dict = Depen
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.delete("/sessions/{session_id}/messages/after/{message_id}")
+async def delete_messages_after_route(
+    session_id: uuid.UUID,
+    message_id: uuid.UUID,
+    include_anchor: bool = False,
+    current_user: dict = Depends(get_current_user),
+):
+    try:
+        user_uuid = uuid.UUID(current_user.get("sub"))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid user ID in token")
+
+    try:
+        await assert_session_owned_by_user(user_id=user_uuid, session_id=session_id)
+        deleted = await delete_messages_after(
+            user_id=user_uuid, session_id=session_id, after_message_id=message_id, include_anchor=include_anchor,
+        )
+        return {"success": True, "deleted_count": deleted}
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Forbidden: invalid session")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

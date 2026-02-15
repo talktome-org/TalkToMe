@@ -12,6 +12,7 @@ struct ChatView: View {
     @State private var pendingPartnerDraftText: String? = nil
     @State private var isFriendPickerLoading: Bool = false
     @State private var friendPickerErrorMessage: String? = nil
+    @State private var showAddFriendSheet: Bool = false
 
     @FocusState private var isInputFocused: Bool
 
@@ -48,7 +49,6 @@ struct ChatView: View {
                 if let onBack {
                     ToolbarItem(placement: .topBarLeading) {
                         Button {
-                            Haptics.impact(.light)
                             onBack()
                         } label: {
                             Image(systemName: "chevron.left")
@@ -58,14 +58,11 @@ struct ChatView: View {
                 }
 
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("New chat", systemImage: "square.and.pencil") {
-                        sessionsViewModel.startNewChat()
-                    }
-
                     ChatSessionActionsMenu(
                         sessionId: activeSessionIdForActions,
                         currentTitle: activeSessionTitleForActions,
                         onRenameRequest: { sessionActions.requestRename(currentTitle: activeSessionTitleForActions) },
+                        onArchiveRequest: { sessionActions.requestArchive() },
                         onDeleteRequest: { sessionActions.requestDelete() },
                         onReportRequest: { sessionActions.requestReport() }
                     )
@@ -118,6 +115,11 @@ struct ChatView: View {
             let content = (note.userInfo?["content"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !content.isEmpty else { return }
             Task { @MainActor in
+                if let friendId = note.userInfo?["friend_user_id"] as? UUID {
+                    viewModel.selectedFriendUserId = friendId
+                    await viewModel.sendPartnerDraftToSelectedFriend(content)
+                    return
+                }
                 if viewModel.isConnectedToFriendInThisChat {
                     await viewModel.sendPartnerDraftViaSession(content)
                     return
@@ -126,6 +128,26 @@ struct ChatView: View {
                 showFriendPicker = true
                 await refreshFriendsForPicker()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .unsendPartnerMessageFromBubble)) { note in
+            let content = (note.userInfo?["content"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !content.isEmpty else { return }
+            Task { @MainActor in
+                let success = await viewModel.unsendPartnerDraft(content)
+                NotificationCenter.default.post(
+                    name: .unsendPartnerMessageResult,
+                    object: nil,
+                    userInfo: ["content": content, "success": success]
+                )
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openAddFriendSheet)) { _ in
+            showAddFriendSheet = true
+        }
+        .sheet(isPresented: $showAddFriendSheet) {
+            FriendsSheetView(isPresented: $showAddFriendSheet)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .animation(nil, value: viewModel.messages.isEmpty)
     }

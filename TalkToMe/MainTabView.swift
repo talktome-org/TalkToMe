@@ -11,11 +11,13 @@ enum AppTab: Hashable {
     case home
     case diary
     case chat
+    case settings
     case search
 }
 
 struct MainTabView: View {
     @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
+    @EnvironmentObject private var navigationViewModel: SidebarNavigationViewModel
 
     @State private var selectedTab: AppTab = .chat
     @State private var showChat: Bool = false
@@ -40,11 +42,12 @@ struct MainTabView: View {
     }
 
     private func dismissChat() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         withAnimation(.easeOut(duration: 0.25)) {
-            showChat = false
+            chatDragOffset = UIScreen.main.bounds.width
         }
-        // Reset offset after animation completes
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            showChat = false
             chatDragOffset = 0
         }
     }
@@ -65,6 +68,10 @@ struct MainTabView: View {
                         onOpenChat: { sid in openChat(sessionId: sid) },
                         onStartNewChat: { openChat(sessionId: nil) }
                     )
+                }
+
+                Tab("Settings", systemImage: "gearshape", value: .settings) {
+                    SettingsTabWrapper()
                 }
 
                 Tab(value: .search, role: .search) {
@@ -134,9 +141,27 @@ struct MainTabView: View {
     }
 }
 
+/// Wraps SettingsView so it can live inside a tab instead of a sheet.
+private struct SettingsTabWrapper: View {
+    @Namespace private var profileNamespace
+    @State private var isPresented: Bool = true
+
+    var body: some View {
+        SettingsView(
+            profileNamespace: profileNamespace,
+            isPresented: $isPresented
+        )
+        .onChange(of: isPresented) { _, newValue in
+            // In a tab, we can't dismiss — keep it presented.
+            if !newValue { isPresented = true }
+        }
+    }
+}
+
 #Preview {
     MainTabView()
         .environmentObject(SidebarNavigationViewModel())
         .environmentObject(ChatSessionsViewModel())
         .environmentObject(FriendsViewModel(accessTokenProvider: { "" }))
+        .environmentObject(SettingsViewModel())
 }
