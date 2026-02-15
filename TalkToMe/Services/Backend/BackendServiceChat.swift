@@ -37,7 +37,8 @@ extension BackendService {
         messageId: UUID? = nil,
         ephemeral: Bool = false,
         voiceAgent: String? = nil,
-        ghostName: String? = nil
+        ghostName: String? = nil,
+        deleteBefore: UUID? = nil
     ) -> AsyncStream<StreamEvent> {
         var request = URLRequest(url: baseURL
             .appendingPathComponent("chat")
@@ -58,7 +59,8 @@ extension BackendService {
             friend_user_id: friendUserId,
             ephemeral: ephemeral ? true : nil,
             voice_agent: (voiceAgent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : voiceAgent,
-            ghost_name: (ghostName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : ghostName
+            ghost_name: (ghostName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : ghostName,
+            delete_before: deleteBefore
         )
         request.httpBody = try? jsonEncoder.encode(payload)
         return SSEService.shared.stream(request: request)
@@ -225,9 +227,10 @@ extension BackendService {
         }
     }
 
-    /// Best-effort deletion of all messages in a session after a given message.
-    /// Silently ignores 404 (backend may not support this endpoint yet).
-    func deleteMessagesAfter(messageId: UUID, sessionId: UUID, accessToken: String, includeAnchor: Bool = false) async {
+    /// Deletes all messages in a session after (and optionally including) a given message.
+    /// Retries up to 3 times on failure. Returns `true` if the server confirmed deletion.
+    @discardableResult
+    func deleteMessagesAfter(messageId: UUID, sessionId: UUID, accessToken: String, includeAnchor: Bool = false) async -> Bool {
         var components = URLComponents(url: baseURL
             .appendingPathComponent("chat")
             .appendingPathComponent("sessions")
@@ -243,16 +246,31 @@ extension BackendService {
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = BackendService.coreRequestTimeoutSeconds
 
-        do {
-            let (_, response) = try await urlSession.data(for: request)
-            if let http = response as? HTTPURLResponse, http.statusCode == 404 {
-                // Try POST variant
-                request.httpMethod = "POST"
-                _ = try? await urlSession.data(for: request)
+        for attempt in 1...3 {
+            do {
+                let (_, response) = try await urlSession.data(for: request)
+                if let http = response as? HTTPURLResponse {
+                    if (200..<300).contains(http.statusCode) {
+                        return true
+                    }
+                    if http.statusCode == 404 {
+                        // Try POST variant
+                        var postRequest = request
+                        postRequest.httpMethod = "POST"
+                        let (_, postResp) = try await urlSession.data(for: postRequest)
+                        if let postHttp = postResp as? HTTPURLResponse, (200..<300).contains(postHttp.statusCode) {
+                            return true
+                        }
+                    }
+                }
+            } catch {
+                // Network error — will retry
             }
-        } catch {
-            // Best-effort — don't propagate errors
+            if attempt < 3 {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
         }
+        return false
     }
 
     // Chat attachments
@@ -299,6 +317,7 @@ private struct ChatRequestBody: Codable {
     let ephemeral: Bool?
     let voice_agent: String?
     let ghost_name: String?
+    let delete_before: UUID?
 }
 
 private struct MessagesResponseBody: Codable {

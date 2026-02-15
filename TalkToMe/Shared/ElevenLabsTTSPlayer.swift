@@ -55,7 +55,10 @@ final class ElevenLabsTTSPlayer: NSObject, ObservableObject, AVAudioPlayerDelega
     private func resolveVoiceId() -> String? {
         let raw = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId)
         let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? nil : trimmed
+        guard !trimmed.isEmpty else { return nil }
+        let name = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return VoicesCache.shared.resolvedVoiceId(storedId: trimmed, storedName: name) ?? trimmed
     }
 
     private func _speak(_ text: String) async {

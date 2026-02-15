@@ -16,6 +16,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
     private var wsTask: URLSessionWebSocketTask?
     private var config: Config = .init()
     private var voiceId: String?
+    private var voiceName: String?
     private let audioQueue = DispatchQueue(label: "talktome.elevenlabs.tts.audio")
     private let wsSendQueue = DispatchQueue(label: "talktome.elevenlabs.tts.wsSend")
 
@@ -41,10 +42,11 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
     // MARK: - Public (MainActor)
 
     @MainActor
-    func preconnect(voiceId: String, config: Config = .init()) async {
+    func preconnect(voiceId: String, voiceName: String? = nil, config: Config = .init()) async {
         guard !isConnected else { return }
         self.config = config
         self.voiceId = voiceId
+        self.voiceName = voiceName
 
         guard let token = await AuthService.shared.getAccessToken() else { return }
         do {
@@ -58,9 +60,10 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
     }
 
     @MainActor
-    func start(voiceId: String, config: Config = .init()) async {
+    func start(voiceId: String, voiceName: String? = nil, config: Config = .init()) async {
         self.config = config
         self.voiceId = voiceId
+        self.voiceName = voiceName
         self.lastError = nil
         self.isSpeaking = false
         self.speakerLevel = 0
@@ -177,7 +180,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
 
         let base = BackendService.shared.baseURL
         guard let url = Self.makeTTSStreamURL(
-            baseURL: base, voiceId: voiceId,
+            baseURL: base, voiceId: voiceId, voiceName: voiceName,
             modelId: config.modelId, outputFormat: config.outputFormat
         ) else {
             throw NSError(domain: "ElevenLabsTTS", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid backend URL"])
@@ -381,18 +384,23 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
     // MARK: - URL
 
     private static func makeTTSStreamURL(
-        baseURL: URL, voiceId: String, modelId: String, outputFormat: String
+        baseURL: URL, voiceId: String, voiceName: String?,
+        modelId: String, outputFormat: String
     ) -> URL? {
         let url = baseURL
             .appendingPathComponent("speech")
             .appendingPathComponent("tts")
             .appendingPathComponent("stream")
         guard var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
-        comps.queryItems = [
+        var items = [
             URLQueryItem(name: "voice_id", value: voiceId),
             URLQueryItem(name: "model_id", value: modelId),
             URLQueryItem(name: "output_format", value: outputFormat),
         ]
+        if let name = voiceName, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            items.append(URLQueryItem(name: "voice_name", value: name))
+        }
+        comps.queryItems = items
         if comps.scheme == "https" { comps.scheme = "wss" }
         else if comps.scheme == "http" { comps.scheme = "ws" }
         return comps.url

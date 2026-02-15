@@ -181,6 +181,10 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         isPaused = true
         isUserSpeaking = false
         spawnLevel = 0
+        // Flush any buffered audio and ask Deepgram to finalize so an
+        // in-progress utterance still produces a final transcript.
+        flushBufferedAudioIfPossible()
+        sendJSONEvent(["type": "finalize"])
     }
 
     @MainActor

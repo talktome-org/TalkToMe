@@ -344,6 +344,19 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
             else:
                 content_to_store = chat_request.message
 
+            # During regeneration the client sends delete_before to atomically
+            # remove the old user+assistant messages before persisting the new ones.
+            if chat_request.delete_before is not None:
+                try:
+                    await delete_messages_after(
+                        user_id=user_uuid,
+                        session_id=session_uuid,
+                        after_message_id=chat_request.delete_before,
+                        include_anchor=True,
+                    )
+                except Exception:
+                    pass  # best-effort; the standalone DELETE already retried
+
             try:
                 await save_message_with_id(
                     user_id=user_uuid,
@@ -503,7 +516,7 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
 
                 system_prompt_override = None
                 if use_gemini:
-                    # Voice-agent mode uses the selected voice agent prompt (VOLT/LUMA/etc),
+                    # Voice-agent mode uses the selected voice agent prompt (MIRA/PAX/etc),
                     # not the general chat_prompt.txt. Pass empty string if not found so we
                     # don't fall back to chat_prompt.txt.
                     system_prompt_override = voice_agent_prompts.get_prompt(chat_request.voice_agent) or ""

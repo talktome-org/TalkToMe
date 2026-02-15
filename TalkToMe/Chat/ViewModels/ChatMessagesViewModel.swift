@@ -116,13 +116,16 @@ final class ChatMessagesViewModel: ObservableObject {
             guard let userId = resolvedCurrentUserId() else { self.isLoadingHistory = false; return }
             var mapped = dtos.map { ChatMessage(dto: $0, currentUserId: userId) }
 
-            // Merge local-only fields (thinking_summary, regeneration_count) that aren't in server DTOs
+            // Merge local-only fields (thinking_summary, regeneration_count, isVoiceMode) that aren't in server DTOs
             let localMetadata = await ChatStore.shared.loadLocalMetadata(sessionId: sid)
             for i in mapped.indices {
                 if let meta = localMetadata[mapped[i].id.uuidString] {
                     mapped[i].thinkingSummary = meta.thinkingSummary
                     if meta.regenerationCount > 0 {
                         mapped[i].regenerationCount = meta.regenerationCount
+                    }
+                    if meta.isVoiceMode {
+                        mapped[i].isFromVoiceMode = true
                     }
                 }
             }

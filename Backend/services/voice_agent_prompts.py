@@ -14,14 +14,14 @@ class VoiceAgentPromptLibrary:
     Prompts live under:
       Backend/resources/elevenlabs_prompts/<agent>_prompt.txt
 
-    Agent keys are case-insensitive and whitespace-trimmed (e.g. "volt", "Volt ").
+    Agent keys are case-insensitive and whitespace-trimmed (e.g. "mira", "Mira ").
     """
 
     def __init__(self):
         self._prompts: dict[str, str] = {}
 
         prompts_dir = _backend_root() / "resources" / "elevenlabs_prompts"
-        for name in ("volt", "luma", "pax", "mira", "hexley"):
+        for name in ("mira", "pax", "luma", "snow", "jay", "hex"):
             path = prompts_dir / f"{name}_prompt.txt"
             try:
                 text = path.read_text(encoding="utf-8").strip()
