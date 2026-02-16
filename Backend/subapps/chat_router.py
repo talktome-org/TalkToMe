@@ -795,31 +795,42 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                     segments_list.append({"type": "text", "content": current_text_segment})
                     current_text_segment = ""
 
-                # If the AI returned an empty response, retry with reduced reasoning effort
-                # and without previous_response_id. gpt-5.2 sometimes spends its entire
-                # budget on reasoning and produces zero text output.
+                # If the AI returned an empty response, retry once.
+                # gpt-5.2 sometimes spends its entire budget on reasoning and
+                # produces zero text; Gemini can also return empty streams.
                 if (
                     not full_text_parts
                     and not segments_list
                     and not in_partner
-                    and not use_gemini
                 ):
-                    prev_id = chat_request.previous_response_id
-                    print(f"[SSE] Empty response (prev_id={'yes' if prev_id else 'no'}), retrying with reasoning=low for session {session_uuid}")
                     buffer = ""
                     in_partner = False
                     current_text_segment = ""
                     _reset_stream_debug_counters()
-                    try:
-                        async with chat_service.stream_response(
-                            messages=input_messages,
-                            previous_response_id=None,
-                            reasoning_effort="low",
-                        ) as stream:
-                            async for chunk in _consume_stream(stream):
-                                yield chunk
-                    finally:
-                        _log_stream_debug_counters("openai_empty_output_retry_low")
+                    if use_gemini:
+                        print(f"[SSE] Empty Gemini response, retrying for session {session_uuid}")
+                        try:
+                            async with voice_chat_service.stream_response(
+                                messages=input_messages,
+                                previous_response_id=None,
+                            ) as stream:
+                                async for chunk in _consume_stream(stream):
+                                    yield chunk
+                        finally:
+                            _log_stream_debug_counters("gemini_empty_output_retry")
+                    else:
+                        prev_id = chat_request.previous_response_id
+                        print(f"[SSE] Empty response (prev_id={'yes' if prev_id else 'no'}), retrying with reasoning=low for session {session_uuid}")
+                        try:
+                            async with chat_service.stream_response(
+                                messages=input_messages,
+                                previous_response_id=None,
+                                reasoning_effort="low",
+                            ) as stream:
+                                async for chunk in _consume_stream(stream):
+                                    yield chunk
+                        finally:
+                            _log_stream_debug_counters("openai_empty_output_retry_low")
                     if buffer:
                         full_text_parts.append(buffer)
                         yield f"event: token\ndata: {json.dumps(buffer)}\n\n".encode()
