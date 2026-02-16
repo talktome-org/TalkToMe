@@ -272,6 +272,8 @@ private struct FriendCodeInlineRow: View {
 @ViewBuilder
 private func viewForTitle(_ title: String) -> some View {
     switch title {
+    case "Friends & Contacts":
+        FriendsAndContactsSectionView()
     case "Contact Support":
         ContactSupportView()
     case "Privacy Policy":

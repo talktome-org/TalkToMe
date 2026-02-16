@@ -65,6 +65,14 @@ class SettingsViewModel: ObservableObject {
                 icon: "",
                 gradient: [],
                 settings: [
+                    SettingItem(title: "Friends & Contacts", subtitle: nil, type: .navigation, icon: "person.2")
+                ]
+            ),
+            SettingsSection(
+                title: "",
+                icon: "",
+                gradient: [],
+                settings: [
                     SettingItem(title: "Appearance", subtitle: nil, type: .picker(["Light", "Dark", "System"]), icon: "circle.lefthalf.filled"),
                     SettingItem(title: "Wallpapers", subtitle: nil, type: .navigation, icon: "photo")
                 ]
