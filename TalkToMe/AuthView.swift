@@ -12,7 +12,7 @@ struct AuthView: View {
 
     var body: some View {
         ZStack {
-            Color(.systemBackground)
+            AppTheme.background
                 .ignoresSafeArea()
 
             // App icon - centered and moved up
@@ -49,13 +49,14 @@ struct AuthView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(Color(.systemBackground))
+                        .background(AppTheme.surface)
                         .foregroundColor(.primary)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 12)
+                            RoundedRectangle(cornerRadius: 14)
                                 .stroke(Color.gray.opacity(0.3), lineWidth: 1)
                         )
-                        .cornerRadius(12)
+                        .cornerRadius(14)
+                        .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
                     }
 
                     Button(action: {
@@ -78,7 +79,8 @@ struct AuthView: View {
                         .padding(.vertical, 14)
                         .background(Color.black)
                         .foregroundColor(.white)
-                        .cornerRadius(12)
+                        .cornerRadius(14)
+                        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
                     }
 
                     Divider()
@@ -92,13 +94,14 @@ struct AuthView: View {
                             .font(.system(size: 16, weight: .semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
-                            .background(Color(.secondarySystemBackground))
+                            .background(AppTheme.surface)
                             .foregroundColor(.primary)
                             .overlay(
-                                RoundedRectangle(cornerRadius: 12)
+                                RoundedRectangle(cornerRadius: 14)
                                     .stroke(Color.primary.opacity(0.08), lineWidth: 1)
                             )
-                            .cornerRadius(12)
+                            .cornerRadius(14)
+                            .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
                     }
 
                     Button(action: {
@@ -109,9 +112,10 @@ struct AuthView: View {
                             .font(.system(size: 16, weight: .semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
-                            .background(Color.purple)
+                            .background(AppTheme.accent)
                             .foregroundColor(.white)
-                            .cornerRadius(12)
+                            .cornerRadius(14)
+                            .shadow(color: AppTheme.accent.opacity(0.3), radius: 8, x: 0, y: 4)
                     }
                 }
                 .padding(.horizontal, 40)
@@ -185,8 +189,9 @@ private struct AuthTextFieldStyle: ViewModifier {
             .padding(.vertical, 16)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color(UIColor.secondarySystemBackground))
+                    .fill(AppTheme.surface)
             )
+            .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
     }
 }
 
@@ -202,7 +207,10 @@ private struct EmailLoginView: View {
     @State private var showOfflineAlert: Bool = false
 
     var body: some View {
-        ScrollView {
+        ZStack {
+            AppTheme.background.ignoresSafeArea()
+            
+            ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Welcome back")
@@ -241,9 +249,10 @@ private struct EmailLoginView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
-                    .background(Color.purple)
+                    .background(AppTheme.accent)
                     .foregroundColor(.white)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .shadow(color: AppTheme.accent.opacity(0.3), radius: 8, x: 0, y: 4)
                 }
                 .disabled(isSubmitting)
                 .padding(.top, 4)
@@ -257,7 +266,7 @@ private struct EmailLoginView: View {
                             switchUp()
                         })
                         .fontWeight(.semibold)
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(AppTheme.accent)
                     }
                     .font(.subheadline)
                     .frame(maxWidth: .infinity)
@@ -267,8 +276,9 @@ private struct EmailLoginView: View {
             .padding(.horizontal, 24)
             .padding(.top, 20)
             .padding(.bottom, 32)
+            }
+            .scrollDismissesKeyboard(.interactively)
         }
-        .scrollDismissesKeyboard(.interactively)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -339,21 +349,10 @@ private struct EmailSignUpView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.primary.opacity(0.08)).frame(height: 4)
-                        Capsule()
-                            .fill(Color.purple.opacity(0.7))
-                            .frame(width: geo.size.width * progress, height: 4)
-                            .animation(.easeInOut(duration: 0.2), value: progress)
-                    }
-                }
-                .frame(height: 4)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 28)
-
+        ZStack {
+            AppTheme.background.ignoresSafeArea()
+            
+            ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Create account")
@@ -410,9 +409,10 @@ private struct EmailSignUpView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
-                    .background(Color.purple)
+                    .background(AppTheme.accent)
                     .foregroundColor(.white)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .shadow(color: AppTheme.accent.opacity(0.3), radius: 8, x: 0, y: 4)
                 }
                 .disabled(!canSubmit)
                 .padding(.top, 4)
@@ -423,7 +423,7 @@ private struct EmailSignUpView: View {
                             .foregroundStyle(.secondary)
                         Button("Log in", action: { Haptics.selection(); switchIn() })
                             .fontWeight(.semibold)
-                            .foregroundStyle(.purple)
+                            .foregroundStyle(AppTheme.accent)
                     }
                     .font(.subheadline)
                     .frame(maxWidth: .infinity)
