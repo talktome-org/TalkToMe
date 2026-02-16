@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
 
@@ -360,3 +361,17 @@ async def update_onboarding(payload: dict = Body(...), current_user: dict = Depe
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
 
+@router.post("/presence")
+async def update_presence(payload: dict = Body(...), current_user: dict = Depends(get_current_user)):
+    try:
+        user_id = uuid.UUID(current_user.get("sub"))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid user ID in token")
+
+    online = bool(payload.get("online", False))
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    update_data = {"is_online": online, "last_seen_at": now}
+    _upsert_profile(user_id, update_data)
+
+    return {"success": True}

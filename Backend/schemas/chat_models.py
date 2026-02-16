@@ -57,6 +57,7 @@ class SessionDTO(BaseModel):
     title: Optional[str] = None
     last_message_at: Optional[str] = None
     last_message_content: Optional[str] = None
+    unread_count: int = 0
 
 
 class SessionsResponse(BaseModel):

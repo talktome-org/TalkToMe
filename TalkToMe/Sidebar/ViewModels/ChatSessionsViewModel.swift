@@ -28,6 +28,15 @@ final class ChatSessionsViewModel: ObservableObject {
     func openSession(_ id: UUID) {
         activeSessionId = id
         chatViewKey = UUID()
+        // Clear local unread count immediately for responsive UI
+        if let idx = sessions.firstIndex(where: { $0.id == id }), sessions[idx].unreadCount > 0 {
+            sessions[idx].unreadCount = 0
+        }
+        // Tell the server
+        Task {
+            guard let token = await AuthService.shared.getAccessToken() else { return }
+            try? await BackendService.shared.markSessionRead(sessionId: id, accessToken: token)
+        }
     }
 
     func resetForLogout() {
@@ -141,6 +150,22 @@ final class ChatSessionsViewModel: ObservableObject {
                 }
             }
         )
+        notificationTokens.append(
+            nc.addObserver(forName: .partnerMessageReceived, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    await self?.refreshSessions()
+                }
+            }
+        )
+        notificationTokens.append(
+            nc.addObserver(forName: .partnerMessageOpen, object: nil, queue: .main) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let sid = note.userInfo?["sessionId"] as? UUID else { return }
+                    self?.openSession(sid)
+                    NotificationCenter.default.post(name: .openChatSession, object: nil, userInfo: ["sessionId": sid])
+                }
+            }
+        )
 
         bootstrapTask?.cancel()
         let tokenAtStart = generationToken
@@ -220,7 +245,8 @@ final class ChatSessionsViewModel: ObservableObject {
                     id: dto.id,
                     title: dto.title ?? ChatSession.defaultTitle,
                     lastUsedISO8601: dto.last_message_at,
-                    lastMessageContent: dto.last_message_content
+                    lastMessageContent: dto.last_message_content,
+                    unreadCount: dto.unread_count ?? 0
                 )
             }
             if tokenAtStart != generationToken { return }

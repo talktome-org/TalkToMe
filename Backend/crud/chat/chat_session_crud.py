@@ -263,6 +263,40 @@ async def update_session_title(*, user_id: uuid.UUID, session_id: uuid.UUID, tit
     await run_in_threadpool(_update)
 
 
+async def increment_unread_count(*, session_id: uuid.UUID) -> None:
+    def _update():
+        db = SessionLocal()
+        try:
+            db.execute(
+                update(UserChatSession)
+                .where(UserChatSession.id == session_id)
+                .values(unread_count=UserChatSession.unread_count + 1)
+            )
+            db.commit()
+        finally:
+            db.close()
+
+    await run_in_threadpool(_update)
+
+
+async def mark_session_read(*, user_id: uuid.UUID, session_id: uuid.UUID) -> None:
+    await assert_session_owned_by_user(user_id=user_id, session_id=session_id)
+
+    def _update():
+        db = SessionLocal()
+        try:
+            db.execute(
+                update(UserChatSession)
+                .where(UserChatSession.id == session_id, UserChatSession.user_id == user_id)
+                .values(unread_count=0)
+            )
+            db.commit()
+        finally:
+            db.close()
+
+    await run_in_threadpool(_update)
+
+
 async def delete_session(*, user_id: uuid.UUID, session_id: uuid.UUID) -> None:
     await assert_session_owned_by_user(user_id=user_id, session_id=session_id)
 

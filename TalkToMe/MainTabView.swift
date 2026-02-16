@@ -138,6 +138,12 @@ struct MainTabView: View {
                 .zIndex(1)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openChatSession)) { note in
+            if let sid = note.userInfo?["sessionId"] as? UUID {
+                selectedTab = .chat
+                openChat(sessionId: sid)
+            }
+        }
     }
 }
 

@@ -173,6 +173,12 @@ final class LocalDatabase {
             }
         }
 
+        migrator.registerMigration("sessions_add_unread_count") { db in
+            try db.alter(table: "sessions") { t in
+                t.add(column: "unread_count", .integer).defaults(to: 0)
+            }
+        }
+
         return migrator
     }
 }

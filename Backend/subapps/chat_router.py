@@ -34,6 +34,7 @@ from Backend.crud.chat.chat_session_crud import (
     get_session_by_id,
     list_sessions_for_user,
     attach_friendship_to_session,
+    mark_session_read,
     update_session_title,
 )
 from Backend.schemas.chat_models import ChatRequest, MessageDTO, MessagesResponse, SessionDTO, SessionsResponse
@@ -909,10 +910,27 @@ async def get_sessions(current_user: dict = Depends(get_current_user)):
                 title=r.get("title"),
                 last_message_at=_as_iso8601(r.get("last_message_at")),
                 last_message_content=r.get("last_message_content"),
+                unread_count=r.get("unread_count", 0) or 0,
             )
             for r in rows
         ]
     )
+
+
+@router.post("/sessions/{session_id}/mark-read")
+async def mark_read(session_id: uuid.UUID, current_user: dict = Depends(get_current_user)):
+    try:
+        user_uuid = uuid.UUID(current_user.get("sub"))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid user ID in token")
+
+    try:
+        await mark_session_read(user_id=user_uuid, session_id=session_id)
+        return {"success": True}
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Forbidden: invalid session")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/sessions", response_model=SessionDTO)

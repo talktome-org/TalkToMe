@@ -71,7 +71,12 @@ def _profile_fields_for_user(user_id: uuid.UUID) -> dict:
         row = db.get(Profile, user_id)
         if row is None:
             return {}
-        return {"full_name": getattr(row, "full_name", None), "avatar_path": getattr(row, "avatar_path", None)}
+        return {
+            "full_name": getattr(row, "full_name", None),
+            "avatar_path": getattr(row, "avatar_path", None),
+            "last_seen_at": getattr(row, "last_seen_at", None),
+            "is_online": getattr(row, "is_online", False),
+        }
     finally:
         db.close()
 
@@ -134,12 +139,17 @@ async def list_friends(http_request: Request, current_user: dict = Depends(get_c
             if not avatar_url:
                 avatar_url = (user_meta.get("avatar_url") or user_meta.get("picture")) if isinstance(user_meta, dict) else None
 
+            last_seen_dt = profile.get("last_seen_at")
+            last_seen_str = last_seen_dt.isoformat() + "Z" if last_seen_dt else None
+
             out.append(
                 FriendSummary(
                     user_id=fid,
                     full_name=full_name,
                     auth_provider=auth_provider,
                     avatar_url=avatar_url,
+                    last_seen_at=last_seen_str,
+                    is_online=bool(profile.get("is_online", False)),
                 )
             )
         return FriendsListResponse(friends=out)

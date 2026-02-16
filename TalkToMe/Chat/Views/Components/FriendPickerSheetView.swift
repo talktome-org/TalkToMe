@@ -82,14 +82,33 @@ struct FriendPickerSheetView: View {
                                 onPick(friend.id)
                             } label: {
                                 HStack {
-                                    SidebarAvatarView(avatarURL: friend.avatarURL)
-                                        .frame(width: 34, height: 34)
-                                        .clipShape(Circle())
+                                    ZStack(alignment: .bottomTrailing) {
+                                        SidebarAvatarView(avatarURL: friend.avatarURL)
+                                            .frame(width: 34, height: 34)
+                                            .clipShape(Circle())
+
+                                        if friend.isOnline {
+                                            Circle()
+                                                .fill(Color.green)
+                                                .frame(width: 10, height: 10)
+                                                .overlay(
+                                                    Circle()
+                                                        .strokeBorder(Color(.systemBackground), lineWidth: 1.5)
+                                                )
+                                                .offset(x: 1, y: 1)
+                                        }
+                                    }
 
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(friend.fullName.isEmpty ? "Friend" : friend.fullName)
                                             .font(.system(size: 16, weight: .semibold))
                                             .foregroundStyle(.primary)
+                                        if let presence = friend.presenceText {
+                                            Text(presence)
+                                                .font(.system(size: 12))
+                                                .foregroundStyle(friend.isOnline ? .green : .secondary)
+                                                .lineLimit(1)
+                                        }
                                     }
                                     Spacer()
                                     Image(systemName: "chevron.right")

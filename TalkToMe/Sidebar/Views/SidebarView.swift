@@ -149,21 +149,30 @@ struct SidebarView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text(title)
-                        .font(.system(size: 18, weight: .regular))
+                        .font(.system(size: 18, weight: session.unreadCount > 0 ? .semibold : .regular))
                         .foregroundColor(.primary)
                     Spacer()
                     Text(dateText)
                         .font(.system(size: 12))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(session.unreadCount > 0 ? .blue : .secondary)
                 }
 
                 HStack(spacing: 6) {
                     Text(previewText)
                         .font(.system(size: 14))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(session.unreadCount > 0 ? .primary : .secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer()
+                    if session.unreadCount > 0 {
+                        Text("\(session.unreadCount)")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.blue)
+                            .clipShape(Capsule())
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -521,9 +530,22 @@ struct FriendsSheetView: View {
 
     private func friendRow(_ friend: FriendSummary) -> some View {
         HStack(spacing: 14) {
-            SidebarAvatarView(avatarURL: friend.avatarURL)
-                .frame(width: 44, height: 44)
-                .clipShape(Circle())
+            ZStack(alignment: .bottomTrailing) {
+                SidebarAvatarView(avatarURL: friend.avatarURL)
+                    .frame(width: 44, height: 44)
+                    .clipShape(Circle())
+
+                if friend.isOnline {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 12, height: 12)
+                        .overlay(
+                            Circle()
+                                .strokeBorder(Color(.systemBackground), lineWidth: 2)
+                        )
+                        .offset(x: 2, y: 2)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(friend.fullName)
@@ -531,7 +553,12 @@ struct FriendsSheetView: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
-                if let voice = friend.voiceName, !voice.isEmpty {
+                if let presence = friend.presenceText {
+                    Text(presence)
+                        .font(.system(size: 13))
+                        .foregroundColor(friend.isOnline ? .green : .gray)
+                        .lineLimit(1)
+                } else if let voice = friend.voiceName, !voice.isEmpty {
                     Text(voice)
                         .font(.system(size: 13))
                         .foregroundStyle(.tertiary)
