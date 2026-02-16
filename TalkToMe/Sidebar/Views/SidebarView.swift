@@ -25,7 +25,6 @@ struct SidebarView: View {
 
     private enum ActiveSheet: String, Identifiable {
         case renameConversation
-        case friends
 
         var id: String { self.rawValue }
     }
@@ -72,11 +71,6 @@ struct SidebarView: View {
             switch sheet {
             case .renameConversation:
                 renameSheet
-            case .friends:
-                FriendsSheetView(isPresented: sheetPresentedBinding(for: .friends))
-                    .environmentObject(friendsViewModel)
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
             }
         }
     }
@@ -85,35 +79,6 @@ struct SidebarView: View {
 
     private var headerBar: some View {
         HStack {
-            Button(action: {
-                Haptics.impact(.light)
-                Task { @MainActor in
-                    await sessionsViewModel.ensureProfilePictureCached()
-                    navigationViewModel.showSettingsSheet = true
-                }
-            }) {
-                SidebarAvatarView(avatarURL: sessionsViewModel.myAvatarURL)
-                    .frame(width: 36, height: 36)
-                    .clipShape(Circle())
-            }
-            .frame(width: 44, height: 44)
-            .buttonStyle(.plain)
-            .modifier(HeaderCircleStyle())
-
-            Button(action: {
-                Haptics.impact(.light)
-                presentSheet(.friends)
-            }) {
-                Image(systemName: "person.2")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Friends")
-            .contentShape(Circle())
-            .modifier(HeaderCircleStyle())
-
             Spacer()
             ConnectionStatusPillView()
             Spacer()

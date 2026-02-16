@@ -16,8 +16,11 @@ struct ToastOverlayView: View {
             if let onDismiss {
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundColor(.secondary)
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(Color(.tertiarySystemFill)))
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
             }
@@ -35,7 +38,7 @@ struct ToastOverlayView: View {
                     .fill(.thinMaterial)
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 20)
         .transition(
             .move(edge: .top)
             .combined(with: .opacity)
