@@ -2,7 +2,7 @@
 //  DiaryService.swift
 //  TalkToMe
 //
-//  Persists diary settings and entries via Backend API. Photos are uploaded to Supabase Storage.
+//  Persists diary settings and entries via Backend API. Photos are uploaded to the backend uploads table.
 //
 
 import Foundation
@@ -25,44 +25,22 @@ struct DiaryEntryRow: Codable {
   let user_id: UUID
   var date: String  // "yyyy-MM-dd"
   var title: String
-  var body_blocks: [[String: String]]  // [["id": uuid, "type": "text", "content": "..."], ["id": uuid, "type": "image", "storage_path": "user/entry/block.jpg"]]
+  var body_blocks: [[String: String]]  // [["id": uuid, "type": "text", "content": "..."], ["id": uuid, "type": "image", "path": "uploads/UUID", "url": "..."]]
   var created_at: String?
   var timezone_abbreviation: String
-}
-
-/// Payload for direct Supabase upsert when backend fails (e.g. 42P01).
-private struct DiaryEntryUpsertPayload: Encodable {
-  let id: String
-  let user_id: String
-  let date: String
-  let title: String
-  let body_blocks: [[String: String]]
-  let timezone_abbreviation: String
 }
 
 // MARK: - Service
 
 final class DiaryService {
   static let shared = DiaryService()
-  private let bucketName = "diary-photos"
-  /// Keep slightly below bucket cap (20MB) to avoid hard-limit failures.
+  /// Keep below backend upload limits to avoid failures.
   private let maxPhotoUploadBytes = 19 * 1024 * 1024
 
   private init() {}
 
-  private var client: SupabaseClient { AuthService.shared.client }
-
-  private func requireUserId() throws -> UUID {
-    guard let id = AuthService.shared.currentUserId, let uuid = UUID(uuidString: id) else {
-      throw NSError(
-        domain: "DiaryService", code: 401,
-        userInfo: [NSLocalizedDescriptionKey: "Not authenticated"])
-    }
-    return uuid
-  }
-
   private func accessToken() async throws -> String {
-    let session = try await client.auth.session
+    let session = try await AuthService.shared.client.auth.session
     return session.accessToken
   }
 
@@ -121,26 +99,11 @@ final class DiaryService {
     )
   }
 
-  /// Download image from storage; supports private buckets via authenticated download.
-  func loadImage(storagePath: String) async -> UIImage? {
-    do {
-      let data = try await client.storage
-        .from(bucketName)
-        .download(path: storagePath)
-      if let image = UIImage(data: data) {
-        return image
-      }
-    } catch {
-      // Fallback for public buckets/CDN path if direct download fails.
-    }
-
-    guard let url = publicURL(for: storagePath) else { return nil }
-    do {
-      let (data, _) = try await URLSession.shared.data(from: url)
-      return UIImage(data: data)
-    } catch {
-      return nil
-    }
+  /// Load image from a signed URL (backend uploads).
+  func loadImageFromURL(_ urlString: String) async -> UIImage? {
+    guard let url = URL(string: urlString) else { return nil }
+    guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+    return UIImage(data: data)
   }
 
   // MARK: - Entry (single) + body_blocks with images
@@ -155,6 +118,7 @@ final class DiaryService {
   ) async throws -> UUID {
     let resolvedEntryId = entryId ?? UUID()
     let dateStr = DiaryService.isoDate(date)
+    let token = try await accessToken()
     var bodyBlocksJson: [[String: String]] = []
 
     for block in bodyBlocks {
@@ -162,8 +126,6 @@ final class DiaryService {
       case .text(let id, let content):
         bodyBlocksJson.append(["id": id.uuidString, "type": "text", "content": content])
       case .imageLocal(let id, let image):
-        let path =
-          "\(userId.uuidString.lowercased())/\(resolvedEntryId.uuidString.lowercased())/\(id.uuidString.lowercased()).jpg"
         guard let data = preparedUploadJPEGData(from: image, maxBytes: maxPhotoUploadBytes) else {
           throw NSError(
             domain: "DiaryService",
@@ -173,91 +135,30 @@ final class DiaryService {
             ]
           )
         }
-        try await uploadPhoto(path: path, data: data)
-        bodyBlocksJson.append(["id": id.uuidString, "type": "image", "storage_path": path])
-      case .imageRemote(let id, let storagePath):
-        bodyBlocksJson.append(["id": id.uuidString, "type": "image", "storage_path": storagePath])
+        let filename = "\(id.uuidString.lowercased()).jpg"
+        let result = try await BackendService.shared.uploadDiaryPhoto(
+          fileData: data, filename: filename, contentType: "image/jpeg", accessToken: token)
+        bodyBlocksJson.append(["id": id.uuidString, "type": "image", "path": result.path])
+      case .imageRemote(let id, let remotePath):
+        bodyBlocksJson.append(["id": id.uuidString, "type": "image", "path": remotePath])
       }
     }
 
-    let token = try await accessToken()
-    do {
-      _ = try await BackendService.shared.saveDiaryEntry(
-        id: resolvedEntryId,
-        date: dateStr,
-        title: title,
-        bodyBlocks: bodyBlocksJson,
-        timezoneAbbreviation: timezoneAbbreviation,
-        accessToken: token
-      )
-      return resolvedEntryId
-    } catch {
-      if Self.isBackendDiaryTableMissing(error) {
-        try await saveEntryDirectToSupabase(
-          id: resolvedEntryId,
-          userId: userId,
-          dateStr: dateStr,
-          title: title,
-          bodyBlocksJson: bodyBlocksJson,
-          timezoneAbbreviation: timezoneAbbreviation
-        )
-        return resolvedEntryId
-      }
-      throw error
-    }
-  }
-
-  private static func isBackendDiaryTableMissing(_ error: Error) -> Bool {
-    let ns = error as NSError
-    guard ns.domain == "Backend" else { return false }
-    let msg = (ns.userInfo["message"] as? String ?? "") + (ns.userInfo[NSLocalizedDescriptionKey] as? String ?? "")
-    let isTableMissing = msg.contains("42P01") || msg.contains("Diary table missing") || msg.contains("undefined table")
-    return ns.code == 503 || isTableMissing
-  }
-
-  private func saveEntryDirectToSupabase(
-    id: UUID,
-    userId: UUID,
-    dateStr: String,
-    title: String,
-    bodyBlocksJson: [[String: String]],
-    timezoneAbbreviation: String
-  ) async throws {
-    let payload = DiaryEntryUpsertPayload(
-      id: id.uuidString.lowercased(),
-      user_id: userId.uuidString.lowercased(),
+    _ = try await BackendService.shared.saveDiaryEntry(
+      id: resolvedEntryId,
       date: dateStr,
       title: title,
-      body_blocks: bodyBlocksJson,
-      timezone_abbreviation: timezoneAbbreviation
+      bodyBlocks: bodyBlocksJson,
+      timezoneAbbreviation: timezoneAbbreviation,
+      accessToken: token
     )
-    try await client
-      .from("diary_entries")
-      .upsert(payload)
-      .execute()
+
+    return resolvedEntryId
   }
 
   func deleteEntry(userId: UUID, entryId: UUID) async throws {
     let token = try await accessToken()
     try await BackendService.shared.deleteDiaryEntry(entryId: entryId, accessToken: token)
-  }
-
-  func deletePhoto(storagePath: String) async throws {
-    try await client.storage
-      .from(bucketName)
-      .remove(paths: [storagePath])
-  }
-
-  private func uploadPhoto(path: String, data: Data) async throws {
-    try await client.storage
-      .from(bucketName)
-      .upload(path, data: data, options: FileOptions(contentType: "image/jpeg", upsert: true))
-  }
-
-  func publicURL(for storagePath: String) -> URL? {
-    try? client.storage
-      .from(bucketName)
-      .getPublicURL(path: storagePath)
   }
 
   private func preparedUploadJPEGData(from sourceImage: UIImage, maxBytes: Int) -> Data? {
@@ -329,7 +230,8 @@ final class DiaryService {
 enum DiaryBlockPayload {
   case text(id: UUID, content: String)
   case imageLocal(id: UUID, image: UIImage)
-  case imageRemote(id: UUID, storagePath: String)
+  /// Already-uploaded image with path like `"uploads/UUID"`.
+  case imageRemote(id: UUID, remotePath: String)
 }
 
 // MARK: - Decode body_blocks to blocks (text + image URLs; caller loads images)
@@ -338,7 +240,8 @@ struct DiaryBlockDecoded {
   let id: UUID
   enum Content {
     case text(String)
-    case imageStoragePath(String)
+    /// Backend-hosted image with signed URL and path reference.
+    case imageURL(url: String, path: String)
   }
   let content: Content
 }
@@ -354,7 +257,6 @@ extension DiaryService {
       .joined(separator: "\n\n")
   }
 
-  /// Decode body_blocks from a row into blocks. Image blocks have storage paths; use `loadImage(storagePath:)` to get UIImage.
   static func decodeBodyBlocks(_ bodyBlocks: [[String: String]]) -> [DiaryBlockDecoded] {
     bodyBlocks.compactMap { dict -> DiaryBlockDecoded? in
       guard let idStr = dict["id"], let id = UUID(uuidString: idStr), let type = dict["type"] else {
@@ -365,8 +267,9 @@ extension DiaryService {
         let content = dict["content"] ?? ""
         return DiaryBlockDecoded(id: id, content: .text(content))
       case "image":
-        guard let path = dict["storage_path"] else { return nil }
-        return DiaryBlockDecoded(id: id, content: .imageStoragePath(path))
+        guard let url = dict["url"], !url.isEmpty else { return nil }
+        let path = dict["path"] ?? ""
+        return DiaryBlockDecoded(id: id, content: .imageURL(url: url, path: path))
       default:
         return nil
       }

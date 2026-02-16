@@ -1556,15 +1556,15 @@ private struct DiaryBlock: Identifiable {
 
     enum Content {
         case text(String)
-        case image(UIImage?, storagePath: String?)
+        case image(UIImage?, remotePath: String?)
     }
 
     static func text(_ string: String) -> DiaryBlock {
         DiaryBlock(id: UUID(), content: .text(string))
     }
 
-    static func image(_ image: UIImage, storagePath: String? = nil) -> DiaryBlock {
-        DiaryBlock(id: UUID(), content: .image(image, storagePath: storagePath))
+    static func image(_ image: UIImage, remotePath: String? = nil) -> DiaryBlock {
+        DiaryBlock(id: UUID(), content: .image(image, remotePath: remotePath))
     }
 }
 
@@ -1667,7 +1667,7 @@ private struct DiaryBlockListView: View {
             }()
             for image in imagesToInsert.reversed() {
                 blocks.insert(.text(""), at: min(insertIndex + 1, blocks.count))
-                blocks.insert(.image(image, storagePath: nil), at: min(insertIndex, blocks.count))
+                blocks.insert(.image(image, remotePath: nil), at: min(insertIndex, blocks.count))
             }
             onImagesInserted()
             onBodyChanged?()
@@ -2098,9 +2098,9 @@ private struct DiaryNoteEditorView: View {
                             switch d.content {
                             case .text(let s):
                                 loaded.append(DiaryBlock(id: d.id, content: .text(s)))
-                            case .imageStoragePath(let path):
-                                let img = await DiaryService.shared.loadImage(storagePath: path)
-                                loaded.append(DiaryBlock(id: d.id, content: .image(img, storagePath: path)))
+                            case .imageURL(let url, let path):
+                                let img = await DiaryService.shared.loadImageFromURL(url)
+                                loaded.append(DiaryBlock(id: d.id, content: .image(img, remotePath: path)))
                             }
                         }
                         await MainActor.run {
@@ -2144,7 +2144,7 @@ private struct DiaryNoteEditorView: View {
                 case .text(let s):
                     return .text(id: block.id, content: s)
                 case .image(_, let path?) where path.isEmpty == false:
-                    return .imageRemote(id: block.id, storagePath: path)
+                    return .imageRemote(id: block.id, remotePath: path)
                 case .image(let img?, _):
                     return .imageLocal(id: block.id, image: img)
                 case .image(nil, _):
@@ -2193,7 +2193,7 @@ private struct DiaryNoteEditorView: View {
         }
         for image in imagesToInsert.reversed() {
             blocks.insert(.text(""), at: min(insertIndex + 1, blocks.count))
-            blocks.insert(.image(image, storagePath: nil), at: min(insertIndex, blocks.count))
+            blocks.insert(.image(image, remotePath: nil), at: min(insertIndex, blocks.count))
         }
         imagesToInsert = []
         entry.body = blocks.textContent
@@ -2564,7 +2564,7 @@ private struct NewDiaryNoteSheet: View {
                 case .text(let s):
                     return .text(id: block.id, content: s)
                 case .image(_, let path?) where path.isEmpty == false:
-                    return .imageRemote(id: block.id, storagePath: path)
+                    return .imageRemote(id: block.id, remotePath: path)
                 case .image(let img?, _):
                     return .imageLocal(id: block.id, image: img)
                 case .image(nil, _):
@@ -2609,7 +2609,7 @@ private struct NewDiaryNoteSheet: View {
         }
         for image in imagesToInsert.reversed() {
             blocks.insert(.text(""), at: min(insertIndex + 1, blocks.count))
-            blocks.insert(.image(image, storagePath: nil), at: min(insertIndex, blocks.count))
+            blocks.insert(.image(image, remotePath: nil), at: min(insertIndex, blocks.count))
         }
         imagesToInsert = []
     }
@@ -2994,9 +2994,9 @@ private struct EditDiaryNoteSheet: View {
                             switch d.content {
                             case .text(let s):
                                 loaded.append(DiaryBlock(id: d.id, content: .text(s)))
-                            case .imageStoragePath(let path):
-                                let img = await DiaryService.shared.loadImage(storagePath: path)
-                                loaded.append(DiaryBlock(id: d.id, content: .image(img, storagePath: path)))
+                            case .imageURL(let url, let path):
+                                let img = await DiaryService.shared.loadImageFromURL(url)
+                                loaded.append(DiaryBlock(id: d.id, content: .image(img, remotePath: path)))
                             }
                         }
                         await MainActor.run {
@@ -3051,7 +3051,7 @@ private struct EditDiaryNoteSheet: View {
                 case .text(let s):
                     return .text(id: block.id, content: s)
                 case .image(_, let path?) where path.isEmpty == false:
-                    return .imageRemote(id: block.id, storagePath: path)
+                    return .imageRemote(id: block.id, remotePath: path)
                 case .image(let img?, _):
                     return .imageLocal(id: block.id, image: img)
                 case .image(nil, _):
@@ -3087,7 +3087,7 @@ private struct EditDiaryNoteSheet: View {
         }
         for image in imagesToInsert.reversed() {
             blocks.insert(.text(""), at: min(insertIndex + 1, blocks.count))
-            blocks.insert(.image(image, storagePath: nil), at: min(insertIndex, blocks.count))
+            blocks.insert(.image(image, remotePath: nil), at: min(insertIndex, blocks.count))
         }
         imagesToInsert = []
     }

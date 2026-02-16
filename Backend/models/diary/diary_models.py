@@ -39,7 +39,7 @@ class DiarySettings(Base):
 
 
 class DiaryEntry(Base):
-    """Diary/journal entry with body blocks (text + image storage paths)."""
+    """Diary/journal entry with body blocks (text + image upload references)."""
 
     __tablename__ = "diary_entries"
     __table_args__ = {"schema": "public"}

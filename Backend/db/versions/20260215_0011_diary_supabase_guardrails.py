@@ -15,7 +15,7 @@ from alembic import op
 
 
 revision = "20260215_0011b"
-down_revision = "20260215_0011"
+down_revision = "20260203_0010"
 branch_labels = None
 depends_on = None
 
@@ -189,6 +189,7 @@ def upgrade() -> None:
                 allowed_mime_types = EXCLUDED.allowed_mime_types;
         EXCEPTION
             WHEN undefined_table THEN NULL;
+            WHEN undefined_function THEN NULL;
             WHEN insufficient_privilege THEN NULL;
         END $$;
         """
@@ -209,7 +210,7 @@ def upgrade() -> None:
             TO authenticated
             USING (
                 bucket_id = 'diary-photos'
-                AND (storage.foldername(name))[1] = auth.uid()::text
+                AND (string_to_array(name, '/'))[1] = auth.uid()::text
             );
 
             CREATE POLICY "diary_photos_insert"
@@ -217,7 +218,7 @@ def upgrade() -> None:
             TO authenticated
             WITH CHECK (
                 bucket_id = 'diary-photos'
-                AND (storage.foldername(name))[1] = auth.uid()::text
+                AND (string_to_array(name, '/'))[1] = auth.uid()::text
             );
 
             CREATE POLICY "diary_photos_update"
@@ -225,7 +226,7 @@ def upgrade() -> None:
             TO authenticated
             USING (
                 bucket_id = 'diary-photos'
-                AND (storage.foldername(name))[1] = auth.uid()::text
+                AND (string_to_array(name, '/'))[1] = auth.uid()::text
             );
 
             CREATE POLICY "diary_photos_delete"
@@ -233,10 +234,11 @@ def upgrade() -> None:
             TO authenticated
             USING (
                 bucket_id = 'diary-photos'
-                AND (storage.foldername(name))[1] = auth.uid()::text
+                AND (string_to_array(name, '/'))[1] = auth.uid()::text
             );
         EXCEPTION
             WHEN undefined_table THEN NULL;
+            WHEN undefined_function THEN NULL;
             WHEN insufficient_privilege THEN NULL;
         END $$;
         """
@@ -255,6 +257,7 @@ def downgrade() -> None:
             DROP POLICY IF EXISTS "diary_photos_delete" ON storage.objects;
         EXCEPTION
             WHEN undefined_table THEN NULL;
+            WHEN undefined_function THEN NULL;
             WHEN insufficient_privilege THEN NULL;
         END $$;
         """
