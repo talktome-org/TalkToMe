@@ -190,6 +190,21 @@ struct TalkToMeApp: App {
                         DispatchQueue.main.async {
                             APNSService.shared.consumePendingIfReady()
                         }
+                        if auth.isAuthenticated {
+                            Task {
+                                guard let token = try? await AuthService.shared.client.auth.session.accessToken else { return }
+                                try? await BackendService.shared.updatePresence(online: true, accessToken: token)
+                            }
+                        }
+                    } else if phase == .background {
+                        if auth.isAuthenticated {
+                            let bgTaskId = UIApplication.shared.beginBackgroundTask(expirationHandler: nil)
+                            Task {
+                                defer { UIApplication.shared.endBackgroundTask(bgTaskId) }
+                                guard let token = try? await AuthService.shared.client.auth.session.accessToken else { return }
+                                try? await BackendService.shared.updatePresence(online: false, accessToken: token)
+                            }
+                        }
                     }
                 }
         }

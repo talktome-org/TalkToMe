@@ -7,6 +7,7 @@ struct ChatSessionRecord: Codable, FetchableRecord, PersistableRecord {
     var title: String?
     var last_message_at: String?
     var last_message_content: String?
+    var unread_count: Int = 0
 }
 
 struct ChatMessageRecord: Codable, FetchableRecord, PersistableRecord {
@@ -80,7 +81,7 @@ final class ChatStore {
             }
             return rows.compactMap { r -> ChatSession? in
                 guard let uuid = UUID(uuidString: r.id) else { return nil }
-                return ChatSession(id: uuid, title: r.title, lastUsedISO8601: r.last_message_at, lastMessageContent: r.last_message_content)
+                return ChatSession(id: uuid, title: r.title, lastUsedISO8601: r.last_message_at, lastMessageContent: r.last_message_content, unreadCount: r.unread_count)
             }
         } catch { return [] }
     }
@@ -95,7 +96,8 @@ final class ChatStore {
                         id: s.id.uuidString,
                         title: s.title,
                         last_message_at: s.lastUsedISO8601,
-                        last_message_content: s.lastMessageContent
+                        last_message_content: s.lastMessageContent,
+                        unread_count: s.unreadCount
                     )
                     try rec.save(db)
                 }
@@ -149,7 +151,8 @@ final class ChatStore {
                         id: s.id.uuidString,
                         title: s.title,
                         last_message_at: s.lastUsedISO8601,
-                        last_message_content: s.lastMessageContent
+                        last_message_content: s.lastMessageContent,
+                        unread_count: s.unreadCount
                     )
                     try rec.save(db)
                 }

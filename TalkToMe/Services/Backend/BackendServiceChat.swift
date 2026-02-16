@@ -20,6 +20,7 @@ extension BackendService {
         let title: String?
         let last_message_at: String?
         let last_message_content: String?
+        let unread_count: Int?
     }
 }
 
@@ -248,6 +249,21 @@ extension BackendService {
             }
         }
         return false
+    }
+
+    func markSessionRead(sessionId: UUID, accessToken: String) async throws {
+        let url = baseURL
+            .appendingPathComponent("chat")
+            .appendingPathComponent("sessions")
+            .appendingPathComponent(sessionId.uuidString)
+            .appendingPathComponent("mark-read")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = BackendService.coreRequestTimeoutSeconds
+
+        let (_, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return }
     }
 
     // Chat attachments

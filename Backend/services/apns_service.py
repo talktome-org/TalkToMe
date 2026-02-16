@@ -134,8 +134,10 @@ async def send_partner_message_notification_to_user(
     if not tokens:
         return
 
+    title = sender_name or "Partner Message"
+    body = preview or "Sent you a message."
     aps = {
-        "alert": {"title": "Partner Message", "body": "Your partner has sent a new message. Tap to open."},
+        "alert": {"title": title, "body": body},
         "sound": "default",
         "category": "PARTNER_MESSAGE",
     }
