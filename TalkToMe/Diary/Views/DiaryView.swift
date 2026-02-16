@@ -2201,6 +2201,11 @@ private struct DiaryNoteEditorView: View {
 
     private func startVoiceRecording() {
         guard !diarySTTService.isRecording else { return }
+        if !UserDefaults.standard.bool(forKey: PreferenceKeys.dictationEnabled) {
+            Haptics.notification(.warning)
+            voiceErrorMessage = "Turn on Dictation in Settings to use voice input."
+            return
+        }
         if !NetworkMonitor.shared.isOnline {
             voiceErrorMessage = "Voice input requires internet."
             return
@@ -2616,6 +2621,11 @@ private struct NewDiaryNoteSheet: View {
 
     private func startVoiceRecording() {
         guard !diarySTTService.isRecording else { return }
+        if !UserDefaults.standard.bool(forKey: PreferenceKeys.dictationEnabled) {
+            Haptics.notification(.warning)
+            voiceErrorMessage = "Turn on Dictation in Settings to use voice input."
+            return
+        }
         if !NetworkMonitor.shared.isOnline {
             voiceErrorMessage = "Voice input requires internet."
             return
@@ -3094,6 +3104,11 @@ private struct EditDiaryNoteSheet: View {
 
     private func startVoiceRecording() {
         guard !diarySTTService.isRecording else { return }
+        if !UserDefaults.standard.bool(forKey: PreferenceKeys.dictationEnabled) {
+            Haptics.notification(.warning)
+            voiceErrorMessage = "Turn on Dictation in Settings to use voice input."
+            return
+        }
         if !NetworkMonitor.shared.isOnline {
             voiceErrorMessage = "Voice input requires internet."
             return

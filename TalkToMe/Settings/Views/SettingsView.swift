@@ -51,65 +51,143 @@ struct SettingsView: View {
         )
         .frame(width: 100, height: 100)
         .clipShape(Circle())
-        .overlay(Circle().stroke(Color(.separator).opacity(0.3), lineWidth: 0.5))
+        .overlay(Circle().stroke(Color(.separator).opacity(0.5), lineWidth: 1))
         .id(avatarRefreshKey)
     }
 
     private var profileHeader: some View {
-        VStack(spacing: 16) {
-            HStack(alignment: .top, spacing: 0) {
-                // You
-                VStack(spacing: 10) {
-                    avatarView
+        let buddyDisplay = SettingsBuddyDisplayView()
 
-                    Text(preferredName.components(separatedBy: " ").first ?? preferredName)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-
-                    Text("You")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background(Color(.secondarySystemGroupedBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-                .frame(maxWidth: .infinity)
-
-                // Buddy
-                SettingsBuddyDisplayView()
-                    .frame(maxWidth: .infinity)
-            }
-            .padding(.horizontal, 16)
-
-            if let email = AuthService.shared.currentUser?.email, !email.isEmpty {
-                Text(email)
-                    .font(.system(size: 14, weight: .regular))
+        return HStack(alignment: .top, spacing: 0) {
+            // Left column: User
+            VStack(spacing: 6) {
+                avatarView
+                    .frame(height: 120)
+                Text(preferredName.components(separatedBy: " ").first ?? preferredName)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                    .frame(height: 22)
+                Text("You")
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
+            .frame(maxWidth: .infinity)
+
+            // Right column: Buddy (offset down by 10)
+            VStack(spacing: 6) {
+                buddyDisplay.ghostVideoView
+                Text(buddyDisplay.buddyDisplayName)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                    .frame(height: 22)
+                Text("Your Buddy")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .frame(maxWidth: .infinity)
         }
-        .padding(.top, 20)
-        .padding(.bottom, 24)
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 48)
     }
 
     @ViewBuilder
     private var sectionsListView: some View {
         VStack(spacing: 36) {
-            ForEach(Array(viewModel.settingsSections.enumerated()), id: \.offset) { sectionIndex, section in
-                SettingsCardView(
-                    section: section,
-                    onToggle: { settingIndex in
-                        viewModel.toggleSetting(for: sectionIndex, settingIndex: settingIndex)
-                    },
-                    onAction: { settingIndex in
-                        viewModel.handleSettingAction(for: sectionIndex, settingIndex: settingIndex)
-                    }
-                )
+            ForEach(Array(viewModel.settingsSections.enumerated()), id: \.element.id) { sectionIndex, section in
+                if section.id == "account" {
+                    accountSectionView(sectionIndex: sectionIndex, section: section)
+                } else {
+                    SettingsCardView(
+                        section: section,
+                        onToggle: { settingIndex in
+                            viewModel.toggleSetting(for: sectionIndex, settingIndex: settingIndex)
+                        },
+                        onAction: { settingIndex in
+                            viewModel.handleSettingAction(for: sectionIndex, settingIndex: settingIndex)
+                        }
+                    )
+                }
             }
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 40)
+    }
+
+    @ViewBuilder
+    private func accountSectionView(sectionIndex: Int, section: SettingsSection) -> some View {
+        VStack(spacing: 0) {
+            if let user = AuthService.shared.currentUser,
+               let email = user.email, !email.isEmpty {
+                let provider = user.appMetadata["provider"]?.stringValue ?? "email"
+
+                HStack(spacing: 14) {
+                    Image(systemName: "envelope")
+                        .font(.system(size: 18))
+                        .foregroundColor(.secondary)
+                        .frame(width: 30, height: 30)
+
+                    Text(email)
+                        .font(.system(size: 17, weight: .regular))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    if provider == "apple" {
+                        Image(systemName: "applelogo")
+                            .font(.system(size: 16))
+                            .foregroundColor(.primary)
+                    } else if provider == "google" {
+                        Image("icons8-google-48 copy")
+                            .renderingMode(.original)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 20, height: 20)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .frame(minHeight: 44)
+
+                Divider()
+                    .padding(.leading, 60)
+            }
+
+            ForEach(Array(section.settings.enumerated()), id: \.element.id) { settingIndex, setting in
+                Button(action: { viewModel.handleSettingAction(for: sectionIndex, settingIndex: settingIndex) }) {
+                    HStack(spacing: 14) {
+                        Image(systemName: setting.icon)
+                            .font(.system(size: 18))
+                            .foregroundColor(.secondary)
+                            .frame(width: 30, height: 30)
+
+                        Text(setting.title)
+                            .font(.system(size: 17, weight: .regular))
+                            .foregroundColor(.red)
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 44)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .padding(.vertical, 6)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
 
     var body: some View {
@@ -132,6 +210,9 @@ struct SettingsView: View {
                 }
             }
             .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
+            .navigationDestination(isPresented: $viewModel.shouldNavigateToContacts) {
+                FriendsAndContactsSectionView()
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {

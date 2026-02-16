@@ -120,7 +120,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "mira",
             name: "Mira",
-            description: "Bright & joyful",
+            description: "Bright, joyful, and uplifting",
             imageName: "mira",
             videoName: "mira",
             aliases: ["mira"]
@@ -128,7 +128,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "pax",
             name: "Pax",
-            description: "Calm & wise",
+            description: "Calm, wise, and grounded",
             imageName: "pax",
             videoName: "pax",
             aliases: ["pax"]
@@ -136,7 +136,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "luma",
             name: "Luma",
-            description: "Soft & warm",
+            description: "Soft, warm, and gentle",
             imageName: "luma",
             videoName: "luma",
             aliases: ["luma"]
@@ -144,7 +144,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "snow",
             name: "Snow",
-            description: "Regal & grand",
+            description: "Regal, grand, and composed",
             imageName: "snow",
             videoName: "snow",
             aliases: ["snow"]
@@ -152,7 +152,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "jay",
             name: "Jay",
-            description: "Bold & driven",
+            description: "Bold, driven, and direct",
             imageName: "jay",
             videoName: "jay",
             aliases: ["jay"]
@@ -160,7 +160,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "hex",
             name: "Hex",
-            description: "Arcane & curious",
+            description: "Arcane, curious, and mystical",
             imageName: "hex",
             videoName: "hex",
             aliases: ["hex"]
@@ -169,7 +169,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
 
     /// Per-buddy start offsets so the first visible frame isn't a blank/awkward pose.
     static let ghostStartTimes: [String: Double] = [
-        "jay": 0.1,
+        "jay": 0.2,
         "hex": 0.1,
         "snow": 0.1
     ]
@@ -481,6 +481,13 @@ struct ElevenLabsVoiceSuggestionsView: View {
         }
     }
 
+    /// Sets Mira as the default buddy if no buddy has been selected yet.
+    /// Call early at app launch so the buddy preview is available immediately.
+    static func ensureDefaultBuddySelected() {
+        guard isSelectionEmpty() else { return }
+        UserDefaults.standard.set("Mira", forKey: PreferenceKeys.elevenLabsVoiceName)
+    }
+
     private func loadVoices() async {
         let cache = VoicesCache.shared
 
@@ -491,7 +498,9 @@ struct ElevenLabsVoiceSuggestionsView: View {
 
             // Set default selection only when the user has never picked a buddy
             if Self.isSelectionEmpty(),
-               let defaultVoice = cached.first(where: { $0.voice_id == defaultVoiceId }) ?? cached.first {
+               let defaultVoice = cached.first(where: { Self.normalizedGhostKey($0.name) == "mira" })
+                   ?? cached.first(where: { $0.voice_id == defaultVoiceId })
+                   ?? cached.first {
                 UserDefaults.standard.set(defaultVoice.voice_id, forKey: PreferenceKeys.elevenLabsVoiceId)
                 UserDefaults.standard.set(defaultVoice.name, forKey: PreferenceKeys.elevenLabsVoiceName)
                 localVoiceId = defaultVoice.voice_id
@@ -522,7 +531,9 @@ struct ElevenLabsVoiceSuggestionsView: View {
 
             // Set default selection only when the user has never picked a buddy
             if Self.isSelectionEmpty(),
-               let defaultVoice = result.voices.first(where: { $0.voice_id == result.default_voice_id }) ?? result.voices.first {
+               let defaultVoice = result.voices.first(where: { Self.normalizedGhostKey($0.name) == "mira" })
+                   ?? result.voices.first(where: { $0.voice_id == result.default_voice_id })
+                   ?? result.voices.first {
                 UserDefaults.standard.set(defaultVoice.voice_id, forKey: PreferenceKeys.elevenLabsVoiceId)
                 UserDefaults.standard.set(defaultVoice.name, forKey: PreferenceKeys.elevenLabsVoiceName)
                 localVoiceId = defaultVoice.voice_id

@@ -45,7 +45,7 @@ struct SettingsCardView: View {
             }
 
             VStack(spacing: 0) {
-                ForEach(Array(section.settings.enumerated()), id: \.offset) { index, setting in
+                ForEach(Array(section.settings.enumerated()), id: \.element.id) { index, setting in
                     Group {
                         switch setting.type {
                         case .friendsCode:
@@ -128,6 +128,34 @@ struct SettingsCardView: View {
                                 .padding(.horizontal, 16)
                                 .frame(minHeight: 44)
                             }
+
+                        case .info:
+                            HStack(spacing: 14) {
+                                iconView(for: setting)
+
+                                Text(setting.title)
+                                    .font(.system(size: 17, weight: .regular))
+                                    .foregroundColor(.primary)
+                                    .lineLimit(1)
+
+                                Spacer()
+
+                                if let provider = setting.subtitle {
+                                    if provider == "apple" {
+                                        Image(systemName: "applelogo")
+                                            .font(.system(size: 16))
+                                            .foregroundColor(.primary)
+                                    } else if provider == "google" {
+                                        Image("icons8-google-48 copy")
+                                            .renderingMode(.original)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fit)
+                                            .frame(width: 20, height: 20)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 44)
 
                         case .action:
                             Button(action: { onAction(index) }) {

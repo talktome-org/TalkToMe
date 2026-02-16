@@ -3,7 +3,6 @@ import UIKit
 
 struct InputAreaView: View {
     let isVoiceRecording: Bool
-    let voiceModeEnabled: Bool
     let isSpeakModeActive: Bool
     let isSpeakMicMuted: Bool
     let speakModePhase: SpeakModePhase
@@ -477,7 +476,7 @@ private struct GhostVideoContentView: View {
     @FocusState var isFocused: Bool
     InputAreaView(
         isVoiceRecording: false,
-        voiceModeEnabled: false,
+
         isSpeakModeActive: false,
         isSpeakMicMuted: false,
         speakModePhase: .idle,
@@ -500,7 +499,7 @@ private struct GhostVideoContentView: View {
     @FocusState var isFocused: Bool
     InputAreaView(
         isVoiceRecording: false,
-        voiceModeEnabled: false,
+
         isSpeakModeActive: true,
         isSpeakMicMuted: false,
         speakModePhase: .listening,
@@ -523,7 +522,7 @@ private struct GhostVideoContentView: View {
     @FocusState var isFocused: Bool
     InputAreaView(
         isVoiceRecording: false,
-        voiceModeEnabled: false,
+
         isSpeakModeActive: true,
         isSpeakMicMuted: false,
         speakModePhase: .processing,
@@ -546,7 +545,7 @@ private struct GhostVideoContentView: View {
     @FocusState var isFocused: Bool
     InputAreaView(
         isVoiceRecording: false,
-        voiceModeEnabled: false,
+
         isSpeakModeActive: true,
         isSpeakMicMuted: false,
         speakModePhase: .answering,
