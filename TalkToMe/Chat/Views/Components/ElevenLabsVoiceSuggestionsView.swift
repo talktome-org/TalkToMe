@@ -79,7 +79,7 @@ final class VoicesCache {
     }
 }
 
-private struct BuddyDefinition: Identifiable {
+struct BuddyDefinition: Identifiable {
     let key: String
     let name: String
     let description: String
@@ -116,7 +116,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
 
     // Required buddy objects for MediaPickerPanelView. These are always shown even
     // when backend ElevenLabs voices are not configured in a dev environment.
-    private static let requiredBuddies: [BuddyDefinition] = [
+    static let requiredBuddies: [BuddyDefinition] = [
         BuddyDefinition(
             key: "mira",
             name: "Mira",

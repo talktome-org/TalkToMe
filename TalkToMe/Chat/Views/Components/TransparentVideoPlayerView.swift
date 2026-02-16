@@ -81,15 +81,22 @@ final class TransparentPlayerUIView: UIView {
 
     private static let preloadLock = NSLock()
     private static var preloadedPlayers: [String: (player: AVQueuePlayer, looper: AVPlayerLooper?)] = [:]
+    /// Remembers preload config so consumed entries can be auto-replenished.
+    private static var preloadConfigs: [String: (ext: String, loop: Bool, startTime: Double)] = [:]
 
     /// Pre-build an AVQueuePlayer on a background thread so it's ready instantly
     /// when `configure` is called later.
     static func preload(videoName: String, extension ext: String, loop: Bool, startTime: Double = 0) {
         preloadLock.lock()
+        preloadConfigs[videoName] = (ext: ext, loop: loop, startTime: startTime)
         let exists = preloadedPlayers[videoName] != nil
         preloadLock.unlock()
         if exists { return }
 
+        buildPreloadedPlayer(videoName: videoName, ext: ext, loop: loop, startTime: startTime)
+    }
+
+    private static func buildPreloadedPlayer(videoName: String, ext: String, loop: Bool, startTime: Double) {
         guard let url = Bundle.main.url(forResource: videoName, withExtension: ext) else { return }
 
         DispatchQueue.global(qos: .userInitiated).async {
@@ -121,8 +128,17 @@ final class TransparentPlayerUIView: UIView {
 
     private static func takePreloaded(for videoName: String) -> (player: AVQueuePlayer, looper: AVPlayerLooper?)? {
         preloadLock.lock()
-        defer { preloadLock.unlock() }
-        return preloadedPlayers.removeValue(forKey: videoName)
+        let entry = preloadedPlayers.removeValue(forKey: videoName)
+        let config = preloadConfigs[videoName]
+        preloadLock.unlock()
+
+        // Auto-replenish: immediately start rebuilding a replacement
+        // so the next consumer gets an instant player too.
+        if entry != nil, let config {
+            buildPreloadedPlayer(videoName: videoName, ext: config.ext, loop: config.loop, startTime: config.startTime)
+        }
+
+        return entry
     }
 
     // MARK: - Init

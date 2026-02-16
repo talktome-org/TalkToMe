@@ -58,7 +58,7 @@ struct FriendsAndContactsSectionView: View {
         .listStyle(.insetGrouped)
         .scrollDismissesKeyboard(.immediately)
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search")
-        .navigationTitle("Friends & Contacts")
+        .navigationTitle("Contacts")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             Task {

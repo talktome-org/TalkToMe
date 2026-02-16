@@ -65,8 +65,7 @@ class SettingsViewModel: ObservableObject {
                 icon: "",
                 gradient: [],
                 settings: [
-                    SettingItem(title: "Friends & Contacts", subtitle: nil, type: .navigation, icon: "person.2"),
-                    SettingItem(title: "Customize Buddies", subtitle: nil, type: .navigation, icon: "wand.and.stars")
+                    SettingItem(title: "Contacts", subtitle: nil, type: .navigation, icon: "person.2")
                 ]
             ),
             SettingsSection(
@@ -75,7 +74,8 @@ class SettingsViewModel: ObservableObject {
                 gradient: [],
                 settings: [
                     SettingItem(title: "Appearance", subtitle: nil, type: .navigation, icon: "circle.lefthalf.filled"),
-                    SettingItem(title: "Wallpapers", subtitle: nil, type: .navigation, icon: "photo")
+                    SettingItem(title: "Wallpapers", subtitle: nil, type: .navigation, icon: "photo"),
+                    SettingItem(title: "Customize Buddies", subtitle: nil, type: .navigation, icon: "wand.and.stars")
                 ]
             ),
             SettingsSection(

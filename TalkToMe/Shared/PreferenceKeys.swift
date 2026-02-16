@@ -19,6 +19,10 @@ enum PreferenceKeys {
     static let currentUserId = "current_user_id"
     static let didExplicitSignOut = "did_explicit_sign_out"
 
+    static func buddyCustomPromptKey(_ buddyKey: String) -> String {
+        "buddy_custom_prompt_\(buddyKey)"
+    }
+
     static func getPartnerDisplayName() -> String {
         if let displayName = UserDefaults.standard.string(forKey: PreferenceKeys.partnerDisplayName),
            !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

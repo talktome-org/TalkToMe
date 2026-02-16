@@ -30,6 +30,7 @@ class ChatRequest(BaseModel):
     voice_agent: Optional[str] = None
     ghost_name: Optional[str] = None
     delete_before: Optional[UUID] = None
+    custom_instructions: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

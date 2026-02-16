@@ -431,6 +431,14 @@ final class ChatStreamingController {
                 let trimmed = (self.activeVoiceAgentName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 return trimmed.isEmpty ? nil : trimmed
             }()
+            let customInstructionsToSend: String? = {
+                guard let agentName = voiceAgentToSend else { return nil }
+                let key = agentName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !key.isEmpty else { return nil }
+                let prompt = UserDefaults.standard.string(forKey: PreferenceKeys.buddyCustomPromptKey(key)) ?? ""
+                let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }()
 
             let streamToken = UUID()
             let onEvent: (BackendService.StreamEvent) -> Void = { [weak self, weak delegate] event in
@@ -910,7 +918,8 @@ final class ChatStreamingController {
                     messageId: clientMessageId,
                     voiceAgent: voiceAgentToSend,
                     ghostName: ghostNameToSend,
-                    deleteBefore: deleteBeforeId
+                    deleteBefore: deleteBeforeId,
+                    customInstructions: customInstructionsToSend
                 )
                 for await event in stream {
                     onEvent(event)
