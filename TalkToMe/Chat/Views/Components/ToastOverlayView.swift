@@ -32,7 +32,7 @@ struct ToastOverlayView: View {
             if #available(iOS 26.0, *) {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(.clear)
-                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             } else {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(.thinMaterial)
