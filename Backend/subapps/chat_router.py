@@ -516,6 +516,11 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                     # don't fall back to chat_prompt.txt.
                     system_prompt_override = voice_agent_prompts.get_prompt(chat_request.voice_agent) or ""
 
+                    # Append user-defined custom instructions for this buddy (if any).
+                    ci = (chat_request.custom_instructions or "").strip()
+                    if ci:
+                        system_prompt_override = (system_prompt_override or "") + "\n\n" + ci
+
                 # Use Gemini for voice-agent mode, OpenAI otherwise.
                 if use_gemini:
                     # Convert chat_history to list of dicts for Gemini

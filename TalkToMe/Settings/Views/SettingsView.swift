@@ -14,6 +14,8 @@ struct SettingsView: View {
     @Binding var isPresented: Bool
 
     @State private var avatarRefreshKey = UUID()
+    @State private var toastMessage: String? = nil
+    @State private var toastWorkItem: DispatchWorkItem? = nil
 
     private var avatarPlaceholder: AnyView { AnyView(Color.clear) }
 
@@ -60,7 +62,7 @@ struct SettingsView: View {
                 VStack(spacing: 10) {
                     avatarView
 
-                    Text(preferredName)
+                    Text(preferredName.components(separatedBy: " ").first ?? preferredName)
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundColor(.primary)
                         .lineLimit(1)
@@ -123,6 +125,13 @@ struct SettingsView: View {
                 }
                 .scrollIndicators(.hidden)
             }
+            .overlay(alignment: .top) {
+                if let toastMessage {
+                    ToastOverlayView(message: toastMessage, onDismiss: dismissToast)
+                        .padding(.top, 8)
+                }
+            }
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -130,6 +139,30 @@ struct SettingsView: View {
                         viewModel.showPersonalizationEdit = true
                     } label: {
                         Text("Edit")
+                    }
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        if let code = friendsVM.myCode {
+                            Button {
+                                UIPasteboard.general.string = code
+                                Haptics.impact(.light)
+                                showToast("Add a Friend code copied to clipboard!")
+                            } label: {
+                                Label(code, systemImage: "square.on.square")
+                            }
+                        } else {
+                            Button {
+                                Task { await friendsVM.refreshMyCode(force: true) }
+                            } label: {
+                                Label("Load Code", systemImage: "arrow.clockwise")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "textformat.123")
+                            .font(.system(size: 16))
+                            .foregroundStyle(.primary)
                     }
                 }
             }
@@ -160,6 +193,9 @@ struct SettingsView: View {
             }
 
             Task { await friendsVM.refreshMyCode() }
+
+            // Pre-warm ghost video players for Customize Buddies
+            ElevenLabsVoiceSuggestionsView.preloadGhostVideos()
         }
         .onReceive(NotificationCenter.default.publisher(for: .profileChanged)) { _ in
             viewModel.loadProfileInfo()
@@ -167,6 +203,20 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .avatarChanged)) { _ in
             avatarRefreshKey = UUID()
         }
+    }
+
+    private func showToast(_ message: String) {
+        toastWorkItem?.cancel()
+        toastMessage = message
+        let item = DispatchWorkItem { dismissToast() }
+        toastWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: item)
+    }
+
+    private func dismissToast() {
+        toastWorkItem?.cancel()
+        toastWorkItem = nil
+        toastMessage = nil
     }
 
 }

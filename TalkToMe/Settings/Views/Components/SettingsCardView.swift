@@ -272,15 +272,10 @@ private struct FriendCodeInlineRow: View {
 @ViewBuilder
 private func viewForTitle(_ title: String) -> some View {
     switch title {
-    case "Friends & Contacts":
+    case "Contacts":
         FriendsAndContactsSectionView()
     case "Customize Buddies":
-        Text("Coming soon")
-            .font(.system(size: 16))
-            .foregroundColor(.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("Customize Buddies")
+        CustomizeBuddiesView()
     case "Contact Support":
         ContactSupportView()
     case "Privacy Policy":
