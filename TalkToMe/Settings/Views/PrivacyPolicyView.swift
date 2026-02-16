@@ -137,10 +137,10 @@ private struct PolicySectionCard: View {
                     }
                 }
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         }
     }
 
@@ -149,17 +149,15 @@ private struct PolicySectionCard: View {
             Image(systemName: "circle.fill")
                 .font(.system(size: 5))
                 .foregroundStyle(Color(.tertiaryLabel))
-                .frame(width: 30)
-                .padding(.top, 8)
+                .frame(width: 30, height: 30)
 
             styledText(text)
-                .font(.system(size: 15))
-                .lineSpacing(4)
+                .font(.system(size: 17))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .frame(minHeight: 44)
     }
 
     private func styledText(_ text: String) -> Text {
