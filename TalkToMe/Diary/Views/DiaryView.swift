@@ -15,6 +15,7 @@ struct DiaryView: View {
     @State private var tab: JournalTab = .overview
     @State private var showNewEntry: Bool = false
     @State private var showDiaryEditor: Bool = false
+    @State private var entryToEdit: JournalEntry? = nil
     @State private var entryDateForNewNote: Date = Date()
     @State private var draftTitle: String = ""
     @State private var draftBody: String = ""
@@ -44,6 +45,9 @@ struct DiaryView: View {
                         onAddEntryForDate: { date in
                             entryDateForNewNote = date
                             showNewEntry = true
+                        },
+                        onSelectEntry: { entry in
+                            entryToEdit = entry
                         }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -69,17 +73,6 @@ struct DiaryView: View {
                         showDiaryEditor = true
                     }
                     .font(.system(size: 17, weight: .semibold))
-                }
-            }
-            .navigationDestination(for: UUID.self) { entryId in
-                if let idx = viewModel.entries.firstIndex(where: { $0.id == entryId }) {
-                    DiaryNoteEditorView(
-                        entry: $viewModel.entries[idx],
-                        accentColor: viewModel.diaryColor,
-                        onDeleteEntry: { viewModel.entries.removeAll { $0.id == entryId } }
-                    )
-                } else {
-                    ContentUnavailableView("Note not found", systemImage: "exclamationmark.triangle", description: Text("This note may have been deleted."))
                 }
             }
         }
@@ -109,6 +102,24 @@ struct DiaryView: View {
                 onSaveDraft: { title, body in
                     draftTitle = title
                     draftBody = body
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $entryToEdit) { entry in
+            EditDiaryNoteSheet(
+                entry: entry,
+                accentColor: viewModel.diaryColor,
+                onSave: { updated in
+                    if let idx = viewModel.entries.firstIndex(where: { $0.id == updated.id }) {
+                        viewModel.entries[idx] = updated
+                    }
+                    entryToEdit = nil
+                },
+                onDelete: {
+                    viewModel.entries.removeAll { $0.id == entry.id }
+                    entryToEdit = nil
                 }
             )
             .presentationDetents([.large])
@@ -157,6 +168,7 @@ private enum JournalTab: Hashable {
     case overview
     case list
     case calendar
+    case todo
 }
 
 private struct JournalEntry: Identifiable, Hashable {
@@ -166,6 +178,8 @@ private struct JournalEntry: Identifiable, Hashable {
     var body: String
     var createdAt: Date
     var timezoneAbbreviation: String
+    /// Number of photo blocks in this entry (from body_blocks).
+    var photoCount: Int
 
     var excerpt: String {
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -180,8 +194,21 @@ private struct JournalEntry: Identifiable, Hashable {
 private struct JournalStats: Hashable {
     var streakDays: Int
     var entriesCount: Int
+    var mediaCount: Int
     var uniqueDaysCount: Int
     var onThisDayCount: Int
+}
+
+private struct DiaryTodoItem: Identifiable, Codable, Hashable {
+    var id: UUID
+    var title: String
+    var isCompleted: Bool
+
+    init(id: UUID = UUID(), title: String, isCompleted: Bool = false) {
+        self.id = id
+        self.title = title
+        self.isCompleted = isCompleted
+    }
 }
 
 @MainActor
@@ -228,13 +255,15 @@ private final class DiaryViewModel: ObservableObject {
                 guard let date = DiaryService.date(from: row.date) else { return nil }
                 let body = DiaryService.textContentFromBodyBlocks(row.body_blocks)
                 let createdAt = (row.created_at).flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date()
+                let photoCount = row.body_blocks.filter { $0["type"] == "image" }.count
                 return JournalEntry(
                     id: row.id,
                     date: date,
                     title: row.title,
                     body: body,
                     createdAt: createdAt,
-                    timezoneAbbreviation: row.timezone_abbreviation
+                    timezoneAbbreviation: row.timezone_abbreviation,
+                    photoCount: photoCount
                 )
             }
             await MainActor.run { entries = list; loadError = nil }
@@ -294,9 +323,12 @@ private final class DiaryViewModel: ObservableObject {
             cursor = prev
         }
 
+        let mediaCount = entries.reduce(0) { $0 + $1.photoCount }
+
         return JournalStats(
             streakDays: streak,
             entriesCount: entriesCount,
+            mediaCount: mediaCount,
             uniqueDaysCount: uniqueDays.count,
             onThisDayCount: onThisDayCount
         )
@@ -315,7 +347,8 @@ private final class DiaryViewModel: ObservableObject {
                 title: title,
                 body: draft.body,
                 createdAt: Date(),
-                timezoneAbbreviation: tz
+                timezoneAbbreviation: tz,
+                photoCount: 0
             )
             entries.insert(entry, at: 0)
             return
@@ -339,7 +372,8 @@ private final class DiaryViewModel: ObservableObject {
                     title: title,
                     body: draft.body,
                     createdAt: Date(),
-                    timezoneAbbreviation: tz
+                    timezoneAbbreviation: tz,
+                    photoCount: 0
                 )
                 await MainActor.run { entries.insert(entry, at: 0) }
             } catch {
@@ -359,6 +393,7 @@ private struct JournalSheetView: View {
     let accentColor: Color
     let onEditDiary: () -> Void
     let onAddEntryForDate: (Date) -> Void
+    let onSelectEntry: (JournalEntry) -> Void
 
     @State private var selectedCalendarDay: Date? = Calendar.current.startOfDay(for: Date())
 
@@ -381,14 +416,17 @@ private struct JournalSheetView: View {
                         onEditDiary: onEditDiary
                     )
                 case .list:
-                    JournalListTab(entries: entries)
+                    JournalListTab(entries: entries, onSelectEntry: onSelectEntry)
                 case .calendar:
                     JournalCalendarTab(
                         entries: $entries,
                         accentColor: accentColor,
                         selectedDay: $selectedCalendarDay,
-                        onAddEntryForDate: onAddEntryForDate
+                        onAddEntryForDate: onAddEntryForDate,
+                        onSelectEntry: onSelectEntry
                     )
+                case .todo:
+                    JournalTodoTab()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -424,6 +462,7 @@ private struct JournalTabBar: View {
             tabButton(.overview, label: AnyView(Image(systemName: "book")))
             tabButton(.list, label: AnyView(Text("List")))
             tabButton(.calendar, label: AnyView(Text("Calendar")))
+            tabButton(.todo, label: AnyView(Text("ToDo")))
 
             Spacer(minLength: 0)
         }
@@ -475,7 +514,7 @@ private struct JournalOverviewTab: View {
                         .font(.system(size: 15, weight: .regular))
                         .foregroundStyle(description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : .primary)
                         .opacity(description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 1.0 : 0.9)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
                         .contentShape(Rectangle())
                         .onTapGesture {
                             Haptics.impact(.light)
@@ -490,7 +529,7 @@ private struct JournalOverviewTab: View {
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(.primary)
 
-                    // Bring back the previous (better) proportions: big streak + 2x2 small cards.
+                    // First big card: Streak (number centered). Then Entries, Media, Days, On this day.
                     HStack(alignment: .top, spacing: 12) {
                         GlassStatBigCard(
                             title: "STREAK",
@@ -502,11 +541,11 @@ private struct JournalOverviewTab: View {
                         VStack(spacing: 12) {
                             HStack(spacing: 12) {
                                 GlassStatSmallCard(title: "ENTRIES", value: "\(stats.entriesCount)", accentColor: accentColor)
-                                GlassStatSmallCard(title: "DAYS", value: "\(stats.uniqueDaysCount)", accentColor: accentColor)
+                                GlassStatSmallCard(title: "MEDIA", value: "\(stats.mediaCount)", accentColor: accentColor)
                             }
                             HStack(spacing: 12) {
+                                GlassStatSmallCard(title: "DAYS", value: "\(stats.uniqueDaysCount)", accentColor: accentColor)
                                 GlassStatSmallCard(title: "ON THIS DAY", value: "\(stats.onThisDayCount)", accentColor: accentColor)
-                                GlassStatSmallCard(title: "WORDS", value: "—", accentColor: accentColor)
                             }
                         }
                     }
@@ -520,6 +559,15 @@ private struct JournalOverviewTab: View {
     }
 }
 
+private struct StatCardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+            .opacity(configuration.isPressed ? 0.92 : 1.0)
+            .animation(.easeInOut(duration: 0.2), value: configuration.isPressed)
+    }
+}
+
 private struct GlassStatBigCard: View {
     let title: String
     let value: String
@@ -528,27 +576,32 @@ private struct GlassStatBigCard: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-        VStack(spacing: 10) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        Button {} label: {
+            VStack(spacing: 0) {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
-            Text(value)
-                .font(.system(size: 44, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(.primary)
+                Text(value)
+                    .font(.system(size: 44, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
 
-            Text(subtitle)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.secondary)
+                Text(subtitle)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(16)
+            .frame(width: 150, height: 160)
+            .background { GlassCardBackground(shape: shape, interactive: true) }
+            .overlay { shape.stroke(accentColor.opacity(0.16), lineWidth: 1) }
         }
-        .padding(16)
-        .frame(width: 150, height: 160)
-        .background { GlassCardBackground(shape: shape) }
-        .overlay { shape.stroke(accentColor.opacity(0.16), lineWidth: 1) }
+        .buttonStyle(StatCardButtonStyle())
     }
 }
 
@@ -559,34 +612,37 @@ private struct GlassStatSmallCard: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
+        Button {} label: {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
 
-            Text(value)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(.primary)
+                Text(value)
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity)
+            .frame(height: 74)
+            .background { GlassCardBackground(shape: shape, interactive: true) }
+            .overlay { shape.stroke(accentColor.opacity(0.14), lineWidth: 1) }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity)
-        .frame(height: 74)
-        .background { GlassCardBackground(shape: shape) }
-        .overlay { shape.stroke(accentColor.opacity(0.14), lineWidth: 1) }
+        .buttonStyle(StatCardButtonStyle())
     }
 }
 
 private struct GlassCardBackground<S: Shape>: View {
     let shape: S
+    var interactive: Bool = false
 
     var body: some View {
         if #available(iOS 26.0, *) {
-            // Render the glass inside the given shape.
             Color.clear
-                .glassEffect(.regular, in: shape)
+                .glassEffect(interactive ? .regular.interactive() : .regular, in: shape)
         } else {
             shape
                 .fill(.ultraThinMaterial)
@@ -598,6 +654,7 @@ private struct GlassCardBackground<S: Shape>: View {
 
 private struct JournalListTab: View {
     let entries: [JournalEntry]
+    let onSelectEntry: (JournalEntry) -> Void
 
     private var grouped: [(key: String, value: [JournalEntry])] {
         let formatter = DateFormatter()
@@ -640,7 +697,7 @@ private struct JournalListTab: View {
                             .padding(.top, 16)
 
                         ForEach(section.value) { entry in
-                            JournalEntryRowLink(entry: entry)
+                            JournalEntryRowLink(entry: entry, onSelect: onSelectEntry)
                                 .padding(.horizontal, 18)
                         }
                     }
@@ -652,11 +709,170 @@ private struct JournalListTab: View {
     }
 }
 
-private struct JournalEntryRowLink: View {
-    let entry: JournalEntry
+// MARK: - ToDo list tab
+
+private let diaryTodoStorageKey = "diary_todo_items"
+
+private struct JournalTodoTab: View {
+    @State private var todoItems: [DiaryTodoItem] = []
+    @State private var newTodoTitle: String = ""
+    @FocusState private var isAddFieldFocused: Bool
 
     var body: some View {
-        NavigationLink(value: entry.id) {
+        VStack(spacing: 0) {
+            // Add row: text field + plus button on the right
+            HStack(spacing: 12) {
+                TextField("New task", text: $newTodoTitle)
+                    .font(.system(size: 16, weight: .regular))
+                    .focused($isAddFieldFocused)
+                    .submitLabel(.done)
+                    .onSubmit { addTodo() }
+                    .padding(.vertical, 12)
+                    .padding(.leading, 16)
+                    .padding(.trailing, 8)
+                    .background(Color(.secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                Button {
+                    addTodo()
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 32))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary.opacity(0.6) : Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                .disabled(newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .background(Color(.systemBackground))
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Color(.separator)).opacity(0.5).frame(height: 0.5)
+            }
+
+            if todoItems.isEmpty {
+                VStack(spacing: 8) {
+                    Spacer().frame(height: 48)
+                    Image(systemName: "checklist")
+                        .font(.system(size: 24, weight: .light))
+                        .foregroundStyle(.tertiary)
+                    Text("Nothing yet")
+                        .font(.system(size: 15, weight: .regular))
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity)
+                Spacer(minLength: 0)
+            } else {
+                List {
+                    ForEach($todoItems) { $item in
+                        TodoRowView(item: $item, onDelete: {
+                            todoItems.removeAll { $0.id == item.id }
+                            saveTodos()
+                        })
+                            .listRowInsets(EdgeInsets(top: 10, leading: 18, bottom: 10, trailing: 18))
+                            .listRowSeparator(.visible)
+                            .listRowBackground(Color.clear)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    Haptics.impact(.light)
+                                    todoItems.removeAll { $0.id == item.id }
+                                    saveTodos()
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                    }
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onAppear { loadTodos() }
+        .onChange(of: todoItems) { _, _ in saveTodos() }
+    }
+
+    private func addTodo() {
+        let trimmed = newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        Haptics.impact(.light)
+        todoItems.insert(DiaryTodoItem(title: trimmed), at: 0)
+        newTodoTitle = ""
+    }
+
+    private func loadTodos() {
+        guard let data = UserDefaults.standard.data(forKey: diaryTodoStorageKey),
+              let decoded = try? JSONDecoder().decode([DiaryTodoItem].self, from: data) else { return }
+        todoItems = decoded
+    }
+
+    private func saveTodos() {
+        guard let data = try? JSONEncoder().encode(todoItems) else { return }
+        UserDefaults.standard.set(data, forKey: diaryTodoStorageKey)
+    }
+}
+
+private struct TodoRowView: View {
+    @Binding var item: DiaryTodoItem
+    var onDelete: (() -> Void)?
+
+    @State private var isSlidingOut: Bool = false
+    private let slideOutDuration: Double = 0.28
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Button {
+                Haptics.impact(.light)
+                item.isCompleted.toggle()
+            } label: {
+                Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20, weight: .light))
+                    .foregroundStyle(item.isCompleted ? Color.primary.opacity(0.6) : Color.primary.opacity(0.25))
+            }
+            .buttonStyle(.plain)
+
+            Text(item.title)
+                .font(.system(size: 16, weight: .regular))
+                .strikethrough(item.isCompleted, color: item.isCompleted ? Color.secondary : nil)
+                .foregroundStyle(item.isCompleted ? .secondary : .primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .multilineTextAlignment(.leading)
+
+            if item.isCompleted, let onDelete = onDelete {
+                Button {
+                    Haptics.impact(.light)
+                    withAnimation(.easeIn(duration: slideOutDuration)) {
+                        isSlidingOut = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + slideOutDuration) {
+                        onDelete()
+                    }
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .symbolRenderingMode(.hierarchical)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .contentShape(Rectangle())
+        .offset(x: isSlidingOut ? -UIScreen.main.bounds.width : 0)
+        .opacity(isSlidingOut ? 0 : 1)
+        .animation(.easeIn(duration: slideOutDuration), value: isSlidingOut)
+    }
+}
+
+private struct JournalEntryRowLink: View {
+    let entry: JournalEntry
+    let onSelect: (JournalEntry) -> Void
+
+    var body: some View {
+        Button {
+            Haptics.impact(.light)
+            onSelect(entry)
+        } label: {
             JournalListRowContent(entry: entry)
         }
         .buttonStyle(.plain)
@@ -732,6 +948,7 @@ private struct JournalCalendarTab: View {
     let accentColor: Color
     @Binding var selectedDay: Date?
     let onAddEntryForDate: (Date) -> Void
+    let onSelectEntry: (JournalEntry) -> Void
 
     @State private var showDaySheet: Bool = false
     @State private var sheetDay: Date?
@@ -779,7 +996,7 @@ private struct JournalCalendarTab: View {
                                 .padding(.horizontal, 18)
 
                             ForEach(dayEntries) { entry in
-                                JournalEntryRowLink(entry: entry)
+                                JournalEntryRowLink(entry: entry, onSelect: onSelectEntry)
                                     .padding(.horizontal, 18)
                             }
                         }
@@ -801,7 +1018,8 @@ private struct JournalCalendarTab: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                             onAddEntryForDate(day)
                         }
-                    }
+                    },
+                    onSelectEntry: onSelectEntry
                 )
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
@@ -1000,6 +1218,7 @@ private struct CalendarDaySheet: View {
     @Binding var entries: [JournalEntry]
     let accentColor: Color
     let onAddEntry: () -> Void
+    let onSelectEntry: (JournalEntry) -> Void
 
     private let cal = Calendar.current
 
@@ -1053,8 +1272,8 @@ private struct CalendarDaySheet: View {
                             ForEach(dayEntries) { entry in
                                 CalendarDayEntryRow(
                                     entry: entry,
-                                    entries: $entries,
-                                    accentColor: accentColor
+                                    accentColor: accentColor,
+                                    onSelect: onSelectEntry
                                 )
                             }
                         }
@@ -1098,39 +1317,19 @@ private struct CalendarDaySheet: View {
 
 private struct CalendarDayEntryRow: View {
     let entry: JournalEntry
-    @Binding var entries: [JournalEntry]
     let accentColor: Color
-
-    @State private var showEditor: Bool = false
-
-    private var entryIndex: Int? {
-        entries.firstIndex(where: { $0.id == entry.id })
-    }
+    let onSelect: (JournalEntry) -> Void
 
     var body: some View {
         Button {
             Haptics.impact(.light)
-            showEditor = true
+            onSelect(entry)
         } label: {
             JournalListRowContent(entry: entry)
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
-        .fullScreenCover(isPresented: $showEditor) {
-            if let idx = entryIndex {
-                NavigationStack {
-                    DiaryNoteEditorView(
-                        entry: $entries[idx],
-                        accentColor: accentColor,
-                        onDeleteEntry: {
-                            entries.removeAll { $0.id == entry.id }
-                            showEditor = false
-                        }
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -1376,6 +1575,10 @@ private extension Array where Element == DiaryBlock {
             return ""
         }.joined(separator: "\n\n")
     }
+
+    var photoCount: Int {
+        filter { if case .image = $0.content { return true }; return false }.count
+    }
 }
 
 private struct DiaryBlockListView: View {
@@ -1605,6 +1808,7 @@ private struct DiaryNoteEditorView: View {
     var onDeleteEntry: (() -> Void)?
     @State private var blocks: [DiaryBlock] = []
     @State private var didLoadBlocksFromApi: Bool = false
+    @State private var isLoadingBlocksFromApi: Bool = false
     @State private var isVoiceRecording: Bool = false
     @State private var bodyBeforeRecording: String = ""
     @State private var voiceErrorMessage: String?
@@ -1639,7 +1843,7 @@ private struct DiaryNoteEditorView: View {
     private var toolbarDateText: String {
         let f = DateFormatter()
         f.dateFormat = "EEE, MMM d, yyyy"
-        return f.string(from: entry.createdAt)
+        return f.string(from: entry.date)
     }
 
     private var editorContent: some View {
@@ -1662,20 +1866,32 @@ private struct DiaryNoteEditorView: View {
                 .disabled(isVoiceRecording)
 
             ScrollView {
-                DiaryBlockListView(
-                    blocks: $blocks,
-                    insertImageAfterBlockId: focusedBlockId,
-                    imagesToInsert: imagesToInsert,
-                    isVoiceRecording: isVoiceRecording,
-                    displayedRecordingText: displayedTextForRecording,
-                    onImagesInserted: { imagesToInsert = [] },
-                    onBodyChanged: { entry.body = blocks.textContent },
+                if isLoadingBlocksFromApi && blocks.isEmpty {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .scaleEffect(1.1)
+                            .padding(.top, 40)
+                        Text("Loading note…")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    DiaryBlockListView(
+                        blocks: $blocks,
+                        insertImageAfterBlockId: focusedBlockId,
+                        imagesToInsert: imagesToInsert,
+                        isVoiceRecording: isVoiceRecording,
+                        displayedRecordingText: displayedTextForRecording,
+                        onImagesInserted: { imagesToInsert = [] },
+                        onBodyChanged: { entry.body = blocks.textContent },
                         onFocusBlock: { focusedBlockId = $0 },
                         imageForViewer: $imageForViewer,
                         blockIdForViewer: $blockIdForViewer
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 2)
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 2)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .fullScreenCover(isPresented: Binding(get: { imageForViewer != nil }, set: { if !$0 { imageForViewer = nil; blockIdForViewer = nil } })) {
@@ -1858,28 +2074,48 @@ private struct DiaryNoteEditorView: View {
         .onAppear {
             if blocks.isEmpty, !didLoadBlocksFromApi {
                 didLoadBlocksFromApi = true
-                blocks = entry.body.isEmpty ? [.text("")] : [.text(entry.body)]
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                    focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id
+                isLoadingBlocksFromApi = true
+                guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else {
+                    blocks = entry.body.isEmpty ? [.text("")] : [.text(entry.body)]
+                    isLoadingBlocksFromApi = false
+                    return
                 }
-                guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else { return }
                 Task {
-                    guard let row = try? await DiaryService.shared.fetchEntry(userId: uid, entryId: entry.id), !row.body_blocks.isEmpty else { return }
-                    let decoded = DiaryService.decodeBodyBlocks(row.body_blocks)
-                    var loaded: [DiaryBlock] = []
-                    for d in decoded {
-                        switch d.content {
-                        case .text(let s):
-                            loaded.append(DiaryBlock(id: d.id, content: .text(s)))
-                        case .imageStoragePath(let path):
-                            let img = await DiaryService.shared.loadImage(storagePath: path)
-                            loaded.append(DiaryBlock(id: d.id, content: .image(img, storagePath: path)))
+                    defer { Task { @MainActor in isLoadingBlocksFromApi = false } }
+                    do {
+                        guard let row = try await DiaryService.shared.fetchEntry(userId: uid, entryId: entry.id), !row.body_blocks.isEmpty else {
+                            await MainActor.run {
+                                blocks = entry.body.isEmpty ? [.text("")] : [.text(entry.body)]
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                    focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id
+                                }
+                            }
+                            return
                         }
-                    }
-                    if !loaded.isEmpty {
+                        let decoded = DiaryService.decodeBodyBlocks(row.body_blocks)
+                        var loaded: [DiaryBlock] = []
+                        for d in decoded {
+                            switch d.content {
+                            case .text(let s):
+                                loaded.append(DiaryBlock(id: d.id, content: .text(s)))
+                            case .imageStoragePath(let path):
+                                let img = await DiaryService.shared.loadImage(storagePath: path)
+                                loaded.append(DiaryBlock(id: d.id, content: .image(img, storagePath: path)))
+                            }
+                        }
                         await MainActor.run {
-                            blocks = loaded
-                            focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id
+                            blocks = loaded.isEmpty ? (entry.body.isEmpty ? [.text("")] : [.text(entry.body)]) : loaded
+                            entry.body = blocks.textContent
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id
+                            }
+                        }
+                    } catch {
+                        await MainActor.run {
+                            blocks = entry.body.isEmpty ? [.text("")] : [.text(entry.body)]
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id
+                            }
                         }
                     }
                 }
@@ -1902,16 +2138,18 @@ private struct DiaryNoteEditorView: View {
             await MainActor.run { saveErrorMessage = "Sign in to save this note." }
             return false
         }
-        let payload: [DiaryBlockPayload] = blocks.compactMap { block in
-            switch block.content {
-            case .text(let s):
-                return .text(id: block.id, content: s)
-            case .image(_, let path?) where path.isEmpty == false:
-                return .imageRemote(id: block.id, storagePath: path)
-            case .image(let img?, _):
-                return .imageLocal(id: block.id, image: img)
-            case .image(nil, _):
-                return nil
+        let payload: [DiaryBlockPayload] = await MainActor.run {
+            blocks.compactMap { block in
+                switch block.content {
+                case .text(let s):
+                    return .text(id: block.id, content: s)
+                case .image(_, let path?) where path.isEmpty == false:
+                    return .imageRemote(id: block.id, storagePath: path)
+                case .image(let img?, _):
+                    return .imageLocal(id: block.id, image: img)
+                case .image(nil, _):
+                    return nil
+                }
             }
         }
         let tz = TimeZone.current.abbreviation() ?? "UTC"
@@ -2364,6 +2602,484 @@ private struct NewDiaryNoteSheet: View {
     }
 
     private func flushPendingImagesIntoBlocksNewNote() {
+        guard !imagesToInsert.isEmpty else { return }
+        var insertIndex = blocks.count
+        if let id = focusedBlockId, let idx = blocks.firstIndex(where: { $0.id == id }) {
+            insertIndex = idx + 1
+        }
+        for image in imagesToInsert.reversed() {
+            blocks.insert(.text(""), at: min(insertIndex + 1, blocks.count))
+            blocks.insert(.image(image, storagePath: nil), at: min(insertIndex, blocks.count))
+        }
+        imagesToInsert = []
+    }
+
+    private func startVoiceRecording() {
+        guard !diarySTTService.isRecording else { return }
+        if !NetworkMonitor.shared.isOnline {
+            voiceErrorMessage = "Voice input requires internet."
+            return
+        }
+        Task { @MainActor in
+            guard await AuthService.shared.getAccessToken() != nil else {
+                voiceErrorMessage = "Sign in to use the microphone."
+                return
+            }
+            if !diarySTTService.isConnected {
+                await diarySTTService.connect()
+            }
+            guard diarySTTService.isConnected else {
+                voiceErrorMessage = diarySTTService.lastError ?? "Could not connect. Try again."
+                return
+            }
+            bodyBeforeRecording = blocks.textContent
+            diarySTTService.startRecording()
+            if diarySTTService.lastError != nil {
+                voiceErrorMessage = diarySTTService.lastError
+                return
+            }
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
+                isVoiceRecording = true
+            }
+        }
+    }
+
+    private func endVoiceRecording() {
+        diarySTTService.stopRecording()
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            let finalText = diarySTTService.userTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            let newText = finalText.isEmpty ? bodyBeforeRecording : bodyBeforeRecording + (bodyBeforeRecording.isEmpty ? "" : " ") + finalText
+            if let lastIdx = blocks.indices.reversed().first(where: { if case .text = blocks[$0].content { return true }; return false }) {
+                blocks[lastIdx].content = .text(newText)
+            } else {
+                blocks.append(.text(newText))
+            }
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
+                isVoiceRecording = false
+                bodyBeforeRecording = ""
+            }
+            diarySTTService.disconnect()
+        }
+    }
+}
+
+// MARK: - Edit existing note (same sheet format as new note)
+
+private struct EditDiaryNoteSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let entry: JournalEntry
+    let accentColor: Color
+    let onSave: (JournalEntry) -> Void
+    let onDelete: () -> Void
+
+    @State private var title: String
+    @State private var blocks: [DiaryBlock] = []
+    @State private var imagesToInsert: [UIImage] = []
+    @State private var attachedFileURLs: [URL] = []
+    @State private var imageForViewer: UIImage?
+    @State private var blockIdForViewer: UUID?
+    @State private var isVoiceRecording: Bool = false
+    @State private var bodyBeforeRecording: String = ""
+    @State private var voiceErrorMessage: String?
+    @State private var showPhotoLibrarySheet: Bool = false
+    @State private var photoLibrarySelection: [PhotosPickerItem] = []
+    @State private var showCamera: Bool = false
+    @State private var showFileImporter: Bool = false
+    @State private var isSavingEntry: Bool = false
+    @State private var saveErrorMessage: String?
+    @State private var didLoadBlocksFromApi: Bool = false
+    @State private var isLoadingBlocksFromApi: Bool = false
+    @StateObject private var diarySTTService = DeepgramStreamingSTTService()
+    @FocusState private var focusedField: EditSheetField?
+    @FocusState private var focusedBlockId: UUID?
+
+    private enum EditSheetField: Hashable {
+        case title
+        case body
+    }
+
+    private var displayedTextForRecording: String {
+        if isVoiceRecording {
+            let transcript = diarySTTService.userTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            return transcript.isEmpty ? bodyBeforeRecording : bodyBeforeRecording + (bodyBeforeRecording.isEmpty ? "" : " ") + transcript
+        }
+        return blocks.textContent
+    }
+
+    init(entry: JournalEntry, accentColor: Color, onSave: @escaping (JournalEntry) -> Void, onDelete: @escaping () -> Void) {
+        self.entry = entry
+        self.accentColor = accentColor
+        self.onSave = onSave
+        self.onDelete = onDelete
+        _title = State(initialValue: entry.title)
+    }
+
+    private var toolbarDateText: String {
+        let f = DateFormatter()
+        f.dateFormat = "EEE, MMM d, yyyy"
+        return f.string(from: entry.date)
+    }
+
+    private var editSheetContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(toolbarDateText)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+
+            TextField("Title", text: $title)
+                .textFieldStyle(.plain)
+                .font(.system(size: 34, weight: .bold))
+                .textInputAutocapitalization(.sentences)
+                .disableAutocorrection(false)
+                .focused($focusedField, equals: .title)
+                .submitLabel(.next)
+                .onSubmit { focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id }
+                .disabled(isVoiceRecording)
+
+            DiaryBlockListView(
+                blocks: $blocks,
+                insertImageAfterBlockId: focusedBlockId,
+                imagesToInsert: imagesToInsert,
+                isVoiceRecording: isVoiceRecording,
+                displayedRecordingText: displayedTextForRecording,
+                onImagesInserted: { imagesToInsert = [] },
+                onBodyChanged: nil,
+                onFocusBlock: { focusedBlockId = $0 },
+                imageForViewer: $imageForViewer,
+                blockIdForViewer: $blockIdForViewer
+            )
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.top, 2)
+            .fullScreenCover(isPresented: Binding(get: { imageForViewer != nil }, set: { if !$0 { imageForViewer = nil; blockIdForViewer = nil } })) {
+                if let img = imageForViewer {
+                    DiaryImageViewer(
+                        image: img,
+                        onDismiss: { imageForViewer = nil; blockIdForViewer = nil },
+                        onDelete: {
+                            if let id = blockIdForViewer {
+                                blocks.removeAll { $0.id == id }
+                            }
+                            blockIdForViewer = nil
+                            imageForViewer = nil
+                        }
+                    )
+                }
+            }
+
+            if !attachedFileURLs.isEmpty {
+                editSheetFileList
+            }
+
+            Spacer(minLength: 120)
+        }
+        .padding(.horizontal, 18)
+        .padding(.bottom, 20)
+    }
+
+    private var editSheetFileList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(attachedFileURLs.enumerated()), id: \.offset) { idx, url in
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                    Text(url.lastPathComponent)
+                        .font(.system(size: 15))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    Button {
+                        Haptics.impact(.light)
+                        attachedFileURLs.remove(at: idx)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 20))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                if isLoadingBlocksFromApi && blocks.isEmpty {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .scaleEffect(1.1)
+                            .padding(.top, 40)
+                        Text("Loading note…")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    editSheetContent
+                }
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .background(Color(.systemBackground))
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        Haptics.impact(.light)
+                        dismiss()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 17, weight: .semibold))
+                    }
+                    .accessibilityLabel("Close")
+                    .disabled(isVoiceRecording || isSavingEntry)
+                }
+
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            let text = [title, blocks.textContent].joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !text.isEmpty { UIPasteboard.general.string = text }
+                        } label: {
+                            Label("Copy", systemImage: "doc.on.doc")
+                        }
+                        Button {
+                            title = ""
+                        } label: {
+                            Label("Remove Title", systemImage: "character.cursor.ibeam")
+                        }
+                        Divider()
+                        Button(role: .destructive) {
+                            Haptics.impact(.light)
+                            Task {
+                                if let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) {
+                                    try? await DiaryService.shared.deleteEntry(userId: uid, entryId: entry.id)
+                                }
+                                await MainActor.run {
+                                    onDelete()
+                                    dismiss()
+                                }
+                            }
+                        } label: {
+                            Label("Move to Trash", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.system(size: 18, weight: .semibold))
+                    }
+                    .accessibilityLabel("More")
+                    .disabled(isVoiceRecording || isSavingEntry)
+
+                    Button("Save") {
+                        Haptics.impact(.light)
+                        Task {
+                            await MainActor.run { isSavingEntry = true }
+                            let didSave = await saveEntryToSupabase()
+                            await MainActor.run {
+                                isSavingEntry = false
+                                if didSave {
+                                    let updated = JournalEntry(
+                                        id: entry.id,
+                                        date: entry.date,
+                                        title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+                                        body: blocks.textContent,
+                                        createdAt: entry.createdAt,
+                                        timezoneAbbreviation: entry.timezoneAbbreviation,
+                                        photoCount: blocks.photoCount
+                                    )
+                                    onSave(updated)
+                                    dismiss()
+                                }
+                            }
+                        }
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(isVoiceRecording || isSavingEntry)
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                NoteAccessoryTray(
+                    accentColor: accentColor,
+                    isVoiceRecording: isVoiceRecording,
+                    onAudioTap: { startVoiceRecording() },
+                    onEndRecording: { endVoiceRecording() },
+                    onPhotoLibrary: { showPhotoLibrarySheet = true },
+                    onCamera: {
+                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                            showCamera = true
+                        }
+                    },
+                    onFiles: { showFileImporter = true }
+                )
+            }
+        }
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item, .pdf, .plainText, .image], allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls):
+                attachedFileURLs.append(contentsOf: urls)
+            case .failure:
+                break
+            }
+        }
+        .photosPicker(isPresented: $showPhotoLibrarySheet, selection: $photoLibrarySelection, maxSelectionCount: 5, matching: .images)
+        .onChange(of: photoLibrarySelection) { _, new in
+            guard !new.isEmpty else { return }
+            Task {
+                let images = await loadImagesFromPickerItems(new)
+                await MainActor.run {
+                    imagesToInsert.append(contentsOf: images)
+                    photoLibrarySelection = []
+                }
+            }
+        }
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraPickerView(
+                onImage: { image in
+                    imagesToInsert.append(image)
+                    showCamera = false
+                },
+                onCancel: { showCamera = false }
+            )
+            .ignoresSafeArea()
+        }
+        .alert("Voice input", isPresented: Binding(
+            get: { voiceErrorMessage != nil },
+            set: { if !$0 { voiceErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { voiceErrorMessage = nil }
+        } message: {
+            if let msg = voiceErrorMessage { Text(msg) }
+        }
+        .alert("Couldn't save note", isPresented: Binding(
+            get: { saveErrorMessage != nil },
+            set: { if !$0 { saveErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { saveErrorMessage = nil }
+        } message: {
+            if let msg = saveErrorMessage { Text(msg) }
+        }
+        .onAppear {
+            if blocks.isEmpty, !didLoadBlocksFromApi {
+                didLoadBlocksFromApi = true
+                isLoadingBlocksFromApi = true
+                guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else {
+                    blocks = entry.body.isEmpty ? [.text("")] : [.text(entry.body)]
+                    isLoadingBlocksFromApi = false
+                    return
+                }
+                Task {
+                    defer { Task { @MainActor in isLoadingBlocksFromApi = false } }
+                    do {
+                        guard let row = try await DiaryService.shared.fetchEntry(userId: uid, entryId: entry.id), !row.body_blocks.isEmpty else {
+                            await MainActor.run {
+                                blocks = entry.body.isEmpty ? [.text("")] : [.text(entry.body)]
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                    focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id
+                                }
+                            }
+                            return
+                        }
+                        let decoded = DiaryService.decodeBodyBlocks(row.body_blocks)
+                        var loaded: [DiaryBlock] = []
+                        for d in decoded {
+                            switch d.content {
+                            case .text(let s):
+                                loaded.append(DiaryBlock(id: d.id, content: .text(s)))
+                            case .imageStoragePath(let path):
+                                let img = await DiaryService.shared.loadImage(storagePath: path)
+                                loaded.append(DiaryBlock(id: d.id, content: .image(img, storagePath: path)))
+                            }
+                        }
+                        await MainActor.run {
+                            blocks = loaded.isEmpty ? (entry.body.isEmpty ? [.text("")] : [.text(entry.body)]) : loaded
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id
+                            }
+                        }
+                    } catch {
+                        await MainActor.run {
+                            blocks = entry.body.isEmpty ? [.text("")] : [.text(entry.body)]
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func loadImagesFromPickerItems(_ items: [PhotosPickerItem]) async -> [UIImage] {
+        var result: [UIImage] = []
+        for item in items {
+            do {
+                if let data = try await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
+                    result.append(image)
+                }
+            } catch {}
+        }
+        return result
+    }
+
+    private func saveEntryToSupabase() async -> Bool {
+        let pendingSelection = await MainActor.run { photoLibrarySelection }
+        if !pendingSelection.isEmpty {
+            let images = await loadImagesFromPickerItems(pendingSelection)
+            await MainActor.run {
+                imagesToInsert.append(contentsOf: images)
+                photoLibrarySelection = []
+            }
+        }
+        await MainActor.run { flushPendingImagesIntoBlocks() }
+
+        guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else {
+            await MainActor.run { saveErrorMessage = "Sign in to save this note." }
+            return false
+        }
+        let payload: [DiaryBlockPayload] = await MainActor.run {
+            blocks.compactMap { block in
+                switch block.content {
+                case .text(let s):
+                    return .text(id: block.id, content: s)
+                case .image(_, let path?) where path.isEmpty == false:
+                    return .imageRemote(id: block.id, storagePath: path)
+                case .image(let img?, _):
+                    return .imageLocal(id: block.id, image: img)
+                case .image(nil, _):
+                    return nil
+                }
+            }
+        }
+        let tz = TimeZone.current.abbreviation() ?? "UTC"
+        let titleText = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalTitle = titleText.isEmpty ? "Untitled" : titleText
+        do {
+            _ = try await DiaryService.shared.saveEntry(
+                userId: uid,
+                entryId: entry.id,
+                date: entry.date,
+                title: finalTitle,
+                bodyBlocks: payload,
+                timezoneAbbreviation: tz
+            )
+            await MainActor.run { saveErrorMessage = nil }
+            return true
+        } catch {
+            await MainActor.run { saveErrorMessage = DiaryService.userFacingMessage(from: error) }
+            return false
+        }
+    }
+
+    private func flushPendingImagesIntoBlocks() {
         guard !imagesToInsert.isEmpty else { return }
         var insertIndex = blocks.count
         if let id = focusedBlockId, let idx = blocks.firstIndex(where: { $0.id == id }) {

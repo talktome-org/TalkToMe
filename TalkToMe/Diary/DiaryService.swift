@@ -30,6 +30,16 @@ struct DiaryEntryRow: Codable {
   var timezone_abbreviation: String
 }
 
+/// Payload for direct Supabase upsert when backend fails (e.g. 42P01).
+private struct DiaryEntryUpsertPayload: Encodable {
+  let id: String
+  let user_id: String
+  let date: String
+  let title: String
+  let body_blocks: [[String: String]]
+  let timezone_abbreviation: String
+}
+
 // MARK: - Service
 
 final class DiaryService {
@@ -171,15 +181,60 @@ final class DiaryService {
     }
 
     let token = try await accessToken()
-    _ = try await BackendService.shared.saveDiaryEntry(
-      id: resolvedEntryId,
+    do {
+      _ = try await BackendService.shared.saveDiaryEntry(
+        id: resolvedEntryId,
+        date: dateStr,
+        title: title,
+        bodyBlocks: bodyBlocksJson,
+        timezoneAbbreviation: timezoneAbbreviation,
+        accessToken: token
+      )
+      return resolvedEntryId
+    } catch {
+      if Self.isBackendDiaryTableMissing(error) {
+        try await saveEntryDirectToSupabase(
+          id: resolvedEntryId,
+          userId: userId,
+          dateStr: dateStr,
+          title: title,
+          bodyBlocksJson: bodyBlocksJson,
+          timezoneAbbreviation: timezoneAbbreviation
+        )
+        return resolvedEntryId
+      }
+      throw error
+    }
+  }
+
+  private static func isBackendDiaryTableMissing(_ error: Error) -> Bool {
+    let ns = error as NSError
+    guard ns.domain == "Backend" else { return false }
+    let msg = (ns.userInfo["message"] as? String ?? "") + (ns.userInfo[NSLocalizedDescriptionKey] as? String ?? "")
+    let isTableMissing = msg.contains("42P01") || msg.contains("Diary table missing") || msg.contains("undefined table")
+    return ns.code == 503 || isTableMissing
+  }
+
+  private func saveEntryDirectToSupabase(
+    id: UUID,
+    userId: UUID,
+    dateStr: String,
+    title: String,
+    bodyBlocksJson: [[String: String]],
+    timezoneAbbreviation: String
+  ) async throws {
+    let payload = DiaryEntryUpsertPayload(
+      id: id.uuidString.lowercased(),
+      user_id: userId.uuidString.lowercased(),
       date: dateStr,
       title: title,
-      bodyBlocks: bodyBlocksJson,
-      timezoneAbbreviation: timezoneAbbreviation,
-      accessToken: token
+      body_blocks: bodyBlocksJson,
+      timezone_abbreviation: timezoneAbbreviation
     )
-    return resolvedEntryId
+    try await client
+      .from("diary_entries")
+      .upsert(payload)
+      .execute()
   }
 
   func deleteEntry(userId: UUID, entryId: UUID) async throws {
