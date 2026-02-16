@@ -45,21 +45,21 @@ struct FriendSummary: Codable, Hashable, Identifiable {
         guard let date = parsedLastSeenAt else { return nil }
         let elapsed = Date().timeIntervalSince(date)
         if elapsed < 60 {
-            return "Just now"
+            return "Last active just now"
         }
         if elapsed < 60 * 60 {
             let minutes = max(1, Int(elapsed / 60))
-            return "\(minutes)m ago"
+            return "Last active \(minutes)m ago"
         }
         if elapsed < 24 * 60 * 60 {
             let hours = Int(elapsed / 3600)
-            return "\(hours)h ago"
+            return "Last active \(hours)h ago"
         }
         if elapsed < 48 * 60 * 60 {
-            return "Yesterday"
+            return "Last active yesterday"
         }
         let days = Int(elapsed / 86400)
-        return "\(days)d ago"
+        return "Last active \(days)d ago"
     }
 
     private var parsedLastSeenAt: Date? {
