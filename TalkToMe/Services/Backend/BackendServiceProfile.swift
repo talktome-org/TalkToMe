@@ -210,4 +210,21 @@ extension BackendService {
         }
         return (try? jsonDecoder.decode(SimpleSuccess.self, from: data).success) ?? true
     }
+
+    // MARK: - Presence
+
+    func updatePresence(online: Bool, accessToken: String) async throws {
+        let url = baseURL
+            .appendingPathComponent("profile")
+            .appendingPathComponent("presence")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 10
+        struct Body: Codable { let online: Bool }
+        request.httpBody = try jsonEncoder.encode(Body(online: online))
+        let (_, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return }
+    }
 }

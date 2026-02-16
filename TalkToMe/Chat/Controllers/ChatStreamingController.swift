@@ -202,6 +202,8 @@ final class ChatStreamingController {
         }
 
         let clientMessageId: UUID
+        let pendingUpsertDto: BackendService.ChatMessageDTO
+        let pendingVoiceMetadata: (ghostName: String, messageId: UUID)?
 
         if !isRegeneration {
             let persistedContent: String = {
@@ -220,14 +222,21 @@ final class ChatStreamingController {
                 created_at: ISO8601DateFormatter().string(from: Date())
             )
             clientMessageId = dto.id
+            pendingUpsertDto = dto
 
-            let localMessage = ChatMessage(dto: dto, currentUserId: userId)
+            var localMessage = ChatMessage(dto: dto, currentUserId: userId)
+            let voiceGhostName: String? = {
+                let trimmed = (self.activeVoiceAgentName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }()
+            if let ghostName = voiceGhostName {
+                localMessage.isFromVoiceMode = true
+                localMessage.ghostName = ghostName
+            }
+            pendingVoiceMetadata = voiceGhostName.map { (ghostName: $0, messageId: dto.id) }
             delegate.messages.append(localMessage)
             delegate.pendingOutgoingUserMessageId = clientMessageId
             onCacheUpdate?()
-            Task.detached {
-                await ChatStore.shared.upsertMessages([dto])
-            }
 
             NotificationCenter.default.post(name: .chatMessageSent, object: nil, userInfo: [
                 "sessionId": sid,
@@ -251,13 +260,13 @@ final class ChatStreamingController {
                 created_at: ISO8601DateFormatter().string(from: Date())
             )
             clientMessageId = dto.id
-            Task.detached {
-                await ChatStore.shared.upsertMessages([dto])
-            }
+            pendingUpsertDto = dto
+            pendingVoiceMetadata = nil
         }
 
         if NetworkMonitor.shared.isOnline == false {
             Task.detached {
+                await ChatStore.shared.upsertMessages([pendingUpsertDto], voiceMetadata: pendingVoiceMetadata)
                 await ChatOutboxProcessor.shared.enqueueChatMessage(
                     sessionId: sid,
                     serverSessionId: nil,
@@ -319,6 +328,11 @@ final class ChatStreamingController {
 
         Task { [weak self, weak delegate] in
             guard let self = self, let delegate = delegate else { return }
+
+            // Persist user message to DB before streaming starts so it's available
+            // when the session rekey triggers a DB reload (prevents race condition).
+            await ChatStore.shared.upsertMessages([pendingUpsertDto], voiceMetadata: pendingVoiceMetadata)
+
             guard let accessToken = await delegate.getAccessToken() else { return }
 
             let localSessionIdForSend = sid
@@ -609,7 +623,7 @@ final class ChatStreamingController {
                                 return newMessages.count - 1
                             }()
                             let last = newMessages[idx]
-                            let updated = ChatMessage(
+                            var updated = ChatMessage(
                                 id: last.id,
                                 segments: currentSegments,
                                 isFromUser: false,
@@ -617,6 +631,9 @@ final class ChatStreamingController {
                                 isToolLoading: last.isToolLoading,
                                 isFromVoiceMode: last.isFromVoiceMode
                             )
+                            if isVoiceModeMessage {
+                                updated.ghostName = self.ghostNameBySession[sid]
+                            }
                             newMessages[idx] = updated
                             delegate.messages = newMessages
                             if let id = self.currentAssistantMessageId { delegate.assistantScrollTargetId = id }
@@ -632,7 +649,7 @@ final class ChatStreamingController {
                                 return newMessages.count - 1
                             }()
                             let last = newMessages[idx]
-                            let updated = ChatMessage(
+                            var updated = ChatMessage(
                                 id: last.id,
                                 segments: currentSegments,
                                 isFromUser: false,
@@ -640,6 +657,9 @@ final class ChatStreamingController {
                                 isToolLoading: last.isToolLoading,
                                 isFromVoiceMode: last.isFromVoiceMode
                             )
+                            if isVoiceModeMessage {
+                                updated.ghostName = self.ghostNameBySession[sid]
+                            }
                             newMessages[idx] = updated
                             delegate.setCachedMessages(newMessages, for: sid)
                         }
@@ -785,6 +805,9 @@ final class ChatStreamingController {
                                     }
                                     if let ghostName = capturedGhostName {
                                         await ChatStore.shared.setGhostNameForPartnerDrafts(sessionId: sid, ghostName: ghostName)
+                                        if isVoiceModeMessage {
+                                            await ChatStore.shared.setGhostNameForLastAssistant(sessionId: sid, ghostName: ghostName)
+                                        }
                                     }
                                     if !capturedThinkingSummary.isEmpty {
                                         await ChatStore.shared.setThinkingSummaryForLastAssistant(sessionId: sid, summary: capturedThinkingSummary)
@@ -794,6 +817,9 @@ final class ChatStreamingController {
                                     }
                                     if isVoiceModeMessage {
                                         await ChatStore.shared.setVoiceModeForLastAssistant(sessionId: sid)
+                                        if let ghostName = capturedGhostName {
+                                            await ChatStore.shared.setVoiceMetadataForLastUserMessage(sessionId: sid, ghostName: ghostName)
+                                        }
                                     }
                                 }
                             }
@@ -882,7 +908,6 @@ final class ChatStreamingController {
                     previousResponseId: prevId,
                     friendUserId: friendToUse,
                     messageId: clientMessageId,
-                    ephemeral: false,
                     voiceAgent: voiceAgentToSend,
                     ghostName: ghostNameToSend,
                     deleteBefore: deleteBeforeId

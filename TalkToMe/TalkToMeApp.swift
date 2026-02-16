@@ -44,6 +44,7 @@ struct TalkToMeApp: App {
     @StateObject private var navigationViewModel = SidebarNavigationViewModel()
     @StateObject private var sessionsViewModel = ChatSessionsViewModel()
     @StateObject private var settingsViewModel = SettingsViewModel()
+    @StateObject private var contactsVM = ContactsViewModel()
 
     @AppStorage(PreferenceKeys.appearancePreference) private var appearance: String = "System"
     @Environment(\.scenePhase) private var scenePhase
@@ -62,6 +63,7 @@ struct TalkToMeApp: App {
                 .environmentObject(navigationViewModel)
                 .environmentObject(sessionsViewModel)
                 .environmentObject(settingsViewModel)
+                .environmentObject(contactsVM)
                 .preferredColorScheme(
                     appearance == "Light" ? .light : appearance == "Dark" ? .dark : nil
                 )
@@ -120,6 +122,10 @@ struct TalkToMeApp: App {
                                 // Warm avatar URL + image cache so Settings opens with the picture already loaded.
                                 await sessionsViewModel.ensureProfilePictureCached()
                             }
+                            group.addTask {
+                                // Pre-warm device contacts so Friends and Contacts opens instantly.
+                                await contactsVM.preloadIfAuthorized()
+                            }
                         }
 
                         // All initial data loaded, hide loading screen
@@ -161,6 +167,9 @@ struct TalkToMeApp: App {
                                 group.addTask {
                                     await sessionsViewModel.ensureProfilePictureCached()
                                 }
+                                group.addTask {
+                                    await contactsVM.preloadIfAuthorized()
+                                }
                             }
                             APNSService.shared.tryUploadIfAuthenticated()
                             APNSService.shared.consumePendingIfReady()
@@ -189,6 +198,21 @@ struct TalkToMeApp: App {
                     if phase == .active {
                         DispatchQueue.main.async {
                             APNSService.shared.consumePendingIfReady()
+                        }
+                        if auth.isAuthenticated {
+                            Task {
+                                guard let token = try? await AuthService.shared.client.auth.session.accessToken else { return }
+                                try? await BackendService.shared.updatePresence(online: true, accessToken: token)
+                            }
+                        }
+                    } else if phase == .background {
+                        if auth.isAuthenticated {
+                            let bgTaskId = UIApplication.shared.beginBackgroundTask(expirationHandler: nil)
+                            Task {
+                                defer { UIApplication.shared.endBackgroundTask(bgTaskId) }
+                                guard let token = try? await AuthService.shared.client.auth.session.accessToken else { return }
+                                try? await BackendService.shared.updatePresence(online: false, accessToken: token)
+                            }
                         }
                     }
                 }

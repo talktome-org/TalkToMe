@@ -5,6 +5,8 @@ struct ChatScreenView: View {
     @ObservedObject var chatViewModel: ChatViewModel
 
     @AppStorage(PreferenceKeys.voiceModeEnabled) private var voiceModeEnabled: Bool = false
+    @AppStorage(PreferenceKeys.chatWallpaperType) private var wallpaperType: String = "default"
+    @AppStorage(PreferenceKeys.chatWallpaperValue) private var wallpaperValue: String = ""
 
     let onSend: () -> Void
     let isInputFocused: FocusState<Bool>.Binding
@@ -14,7 +16,7 @@ struct ChatScreenView: View {
     }
 
     private var inputAreaYOffset: CGFloat {
-        isInputFocused.wrappedValue ? 8 : 14
+        isInputFocused.wrappedValue ? 8 : 6
     }
 
     private var focusedBottomInset: CGFloat {
@@ -73,7 +75,41 @@ struct ChatScreenView: View {
             .padding(.bottom, focusedBottomInset)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
-        .background(Color(.systemBackground))
+        .background {
+            chatBackground
+                .ignoresSafeArea()
+        }
+    }
+
+    @ViewBuilder
+    private var chatBackground: some View {
+        switch wallpaperType {
+        case "gradient":
+            if let preset = wallpaperPresets.first(where: { $0.id == wallpaperValue }) {
+                preset.gradient
+            } else {
+                Color(.systemBackground)
+            }
+        case "color":
+            WallpapersSettingsView.colorFromHex(wallpaperValue)
+        case "photo":
+            if let image = loadWallpaperPhoto() {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Color(.systemBackground)
+            }
+        default:
+            Color(.systemBackground)
+        }
+    }
+
+    private func loadWallpaperPhoto() -> UIImage? {
+        guard !wallpaperValue.isEmpty else { return nil }
+        let url = WallpapersSettingsView.wallpaperFileURL(filename: wallpaperValue)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return UIImage(data: data)
     }
 }
 

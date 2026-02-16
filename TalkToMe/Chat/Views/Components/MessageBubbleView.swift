@@ -3,8 +3,11 @@ import UIKit
 
 struct UserMessageBubbleView: View {
     let segments: [MessageSegment]
+    var isFromVoiceMode: Bool = false
 
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(PreferenceKeys.fontSizePreference) private var fontSizeScale: Double = 1.0
+    @State private var fullScreenImage: UIImage?
 
     var body: some View {
         let text = plainText(from: segments)
@@ -17,7 +20,8 @@ struct UserMessageBubbleView: View {
             }
             if hasText {
                 Text(text)
-                    .font(.system(size: 17, weight: .regular))
+                    .font(.system(size: 17 * fontSizeScale, weight: .regular))
+                    .italic(isFromVoiceMode)
                     .lineSpacing(2)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
@@ -29,6 +33,12 @@ struct UserMessageBubbleView: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: 320, alignment: .trailing)
             }
+        }
+        .fullScreenCover(item: Binding(
+            get: { fullScreenImage.map { IdentifiableImage(image: $0) } },
+            set: { fullScreenImage = $0?.image }
+        )) { item in
+            ChatImageViewer(image: item.image) { fullScreenImage = nil }
         }
     }
 
@@ -60,66 +70,209 @@ struct UserMessageBubbleView: View {
         return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
+    private let chatThumbCornerRadius: CGFloat = 16
+    private let gridSpacing: CGFloat = 8
+    private let maxContainerWidth: CGFloat = 320
+
+    private func thumbSize(for count: Int) -> CGFloat {
+        switch count {
+        case 1: return 200
+        case 2: return floor((maxContainerWidth - gridSpacing) / 2)
+        case 3: return floor((maxContainerWidth - gridSpacing * 2) / 3)
+        case 4: return floor((maxContainerWidth - gridSpacing) / 2)
+        default:
+            if count <= 6 {
+                return floor((maxContainerWidth - gridSpacing) / 2 * 0.78)
+            } else {
+                return floor((maxContainerWidth - gridSpacing * 2) / 3)
+            }
+        }
+    }
+
+    private func columns(for count: Int) -> Int {
+        switch count {
+        case 1: return 1
+        case 3: return 3
+        case 2, 4: return 2
+        default: return count > 6 ? 3 : 2
+        }
+    }
+
     @ViewBuilder
     private func attachmentsView(segments: [MessageSegment], alignment: HorizontalAlignment) -> some View {
         let isTrailing = (alignment == .trailing)
+        let imageSegments = segments.filter { isImageSegment($0) }
+        let fileSegments = segments.filter { !isImageSegment($0) }
+        let count = imageSegments.count
+        let size = thumbSize(for: count)
+        let cols = columns(for: count)
 
-        Group {
-            if segments.count == 1, let seg = segments.first {
-                // Special-case single attachment so it can be truly right/left aligned (ScrollView tends to "center-ish" single items).
-                attachmentView(seg)
-                    .frame(maxWidth: 320, alignment: isTrailing ? .trailing : .leading)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
-                            attachmentView(seg)
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-                .frame(maxWidth: 320, alignment: isTrailing ? .trailing : .leading)
+        VStack(alignment: isTrailing ? .trailing : .leading, spacing: gridSpacing) {
+            if count == 1, let seg = imageSegments.first {
+                singleImageView(seg)
+                    .frame(maxWidth: maxContainerWidth, alignment: isTrailing ? .trailing : .leading)
+            } else if !imageSegments.isEmpty {
+                imageGrid(segments: imageSegments, size: size, cols: cols, isTrailing: isTrailing)
+                    .frame(maxWidth: maxContainerWidth, alignment: isTrailing ? .trailing : .leading)
+            }
+            ForEach(Array(fileSegments.enumerated()), id: \.offset) { _, seg in
+                attachmentView(seg, size: size)
             }
         }
     }
 
     @ViewBuilder
-    private func attachmentView(_ seg: MessageSegment) -> some View {
+    private func imageGrid(segments: [MessageSegment], size: CGFloat, cols: Int, isTrailing: Bool) -> some View {
+        let rows = stride(from: 0, to: segments.count, by: cols).map { start in
+            Array(segments[start..<min(start + cols, segments.count)])
+        }
+        VStack(alignment: isTrailing ? .trailing : .leading, spacing: gridSpacing) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                HStack(spacing: gridSpacing) {
+                    if isTrailing && row.count < cols {
+                        ForEach(0..<(cols - row.count), id: \.self) { _ in
+                            Color.clear.frame(width: size, height: size)
+                        }
+                    }
+                    ForEach(Array(row.enumerated()), id: \.offset) { _, seg in
+                        attachmentView(seg, size: size)
+                    }
+                    if !isTrailing && row.count < cols {
+                        ForEach(0..<(cols - row.count), id: \.self) { _ in
+                            Color.clear.frame(width: size, height: size)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func isImageSegment(_ seg: MessageSegment) -> Bool {
+        switch seg {
+        case .imageData(_), .imageURL(_): return true
+        default: return false
+        }
+    }
+
+    private func singleImageFrame(for uiImage: UIImage) -> (width: CGFloat, height: CGFloat) {
+        let aspect = uiImage.size.width / max(uiImage.size.height, 1)
+        let maxW: CGFloat = 160
+        let maxH: CGFloat = 200
+        var w = maxW
+        var h = w / aspect
+        if h > maxH {
+            h = maxH
+            w = maxH * aspect
+        }
+        return (w, h)
+    }
+
+    @ViewBuilder
+    private func singleImageView(_ seg: MessageSegment) -> some View {
         switch seg {
         case .imageData(let data):
             if let uiImage = UIImage(data: data) {
+                let frame = singleImageFrame(for: uiImage)
                 Image(uiImage: uiImage)
                     .resizable()
-                    .scaledToFill()
-                    .frame(width: 220, height: 160)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .scaledToFit()
+                    .frame(width: frame.width, height: frame.height)
+                    .clipShape(RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous))
+                    .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
+                    .contentShape(Rectangle())
+                    .onTapGesture { fullScreenImage = uiImage }
             }
         case .imageURL(let urlString):
             if let url = URL(string: urlString) {
                 if url.isFileURL, let uiImage = ChatImageCacheManager.shared.image(fileURL: url) {
+                    let frame = singleImageFrame(for: uiImage)
                     Image(uiImage: uiImage)
                         .resizable()
-                        .scaledToFill()
-                        .frame(width: 220, height: 160)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .scaledToFit()
+                        .frame(width: frame.width, height: frame.height)
+                        .clipShape(RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous))
+                        .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
+                        .contentShape(Rectangle())
+                        .onTapGesture { fullScreenImage = uiImage }
                 } else {
                     AsyncImage(url: url) { phase in
                         switch phase {
                         case .empty:
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous)
                                 .fill(.thinMaterial)
-                                .frame(width: 220, height: 160)
+                                .aspectRatio(4/3, contentMode: .fit)
+                                .frame(maxWidth: 160)
+                                .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
+                                .overlay(ProgressView().progressViewStyle(.circular))
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: 160, maxHeight: 200)
+                                .clipShape(RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous))
+                                .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    Task {
+                                        if let (data, _) = try? await URLSession.shared.data(from: url),
+                                           let uiImage = UIImage(data: data) {
+                                            fullScreenImage = uiImage
+                                        }
+                                    }
+                                }
+                        case .failure:
+                            RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous)
+                                .fill(.thinMaterial)
+                                .aspectRatio(4/3, contentMode: .fit)
+                                .frame(maxWidth: 160)
+                                .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
+                                .overlay(Image(systemName: "photo").foregroundColor(.secondary))
+                        @unknown default:
+                            EmptyView()
+                        }
+                    }
+                }
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func attachmentView(_ seg: MessageSegment, size: CGFloat) -> some View {
+        switch seg {
+        case .imageData(let data):
+            if let uiImage = UIImage(data: data) {
+                imageThumb(uiImage: uiImage, size: size)
+            }
+        case .imageURL(let urlString):
+            if let url = URL(string: urlString) {
+                if url.isFileURL, let uiImage = ChatImageCacheManager.shared.image(fileURL: url) {
+                    imageThumb(uiImage: uiImage, size: size)
+                } else {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            imagePlaceholder(size: size)
                                 .overlay(ProgressView().progressViewStyle(.circular))
                         case .success(let image):
                             image
                                 .resizable()
                                 .scaledToFill()
-                                .frame(width: 220, height: 160)
-                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .frame(width: size, height: size)
+                                .clipShape(RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous))
+                                .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    Task {
+                                        if let (data, _) = try? await URLSession.shared.data(from: url),
+                                           let uiImage = UIImage(data: data) {
+                                            fullScreenImage = uiImage
+                                        }
+                                    }
+                                }
                         case .failure:
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(.thinMaterial)
-                                .frame(width: 220, height: 160)
+                            imagePlaceholder(size: size)
                                 .overlay(Image(systemName: "photo").foregroundColor(.secondary))
                         @unknown default:
                             EmptyView()
@@ -134,6 +287,26 @@ struct UserMessageBubbleView: View {
         default:
             EmptyView()
         }
+    }
+
+    @ViewBuilder
+    private func imageThumb(uiImage: UIImage, size: CGFloat) -> some View {
+        Image(uiImage: uiImage)
+            .resizable()
+            .scaledToFill()
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous))
+            .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
+            .contentShape(Rectangle())
+            .onTapGesture { fullScreenImage = uiImage }
+    }
+
+    @ViewBuilder
+    private func imagePlaceholder(size: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous)
+            .fill(.thinMaterial)
+            .frame(width: size, height: size)
+            .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
     }
 
     @ViewBuilder
@@ -155,6 +328,16 @@ struct UserMessageBubbleView: View {
     }
 }
 
+private extension View {
+    func chatImageOuterBorder(cornerRadius: CGFloat) -> some View {
+        self.overlay(
+            RoundedRectangle(cornerRadius: cornerRadius + 1, style: .continuous)
+                .strokeBorder(Color.gray.opacity(0.4), lineWidth: 1)
+                .padding(-1)
+        )
+    }
+}
+
 struct MessageBubbleView: View {
 
     @ObservedObject var chatViewModel: ChatViewModel
@@ -170,6 +353,7 @@ struct MessageBubbleView: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var isThinkingExpanded: Bool = false
+    @State private var fullScreenImage: UIImage?
 
     /// True for the streaming placeholder row where generation starts.
     private var shouldShowThinkingIndicator: Bool {
@@ -249,16 +433,58 @@ struct MessageBubbleView: View {
         return hasRegularContent
     }
 
+    /// Whether to show the "Snow responded at HH:mm" label for voice mode assistant messages
+    private var shouldShowVoiceRespondedLabel: Bool {
+        guard !message.isFromUser else { return false }
+        guard !message.isFromPartnerUser else { return false }
+        guard message.isFromVoiceMode else { return false }
+        guard !message.isToolLoading else { return false }
+        // Don't show on error messages
+        let isError = message.segments.contains { seg in
+            if case .text(let t) = seg { return t.hasPrefix("Error:") }
+            return false
+        }
+        if isError { return false }
+        let isLastAssistant = chatViewModel.messages.last { !$0.isFromUser }?.id == message.id
+        if isLastAssistant {
+            if chatViewModel.isLoading { return false }
+            if chatViewModel.isTTSSpeaking { return false }
+            // Only check hasSpokenCurrentResponse during an active streaming cycle
+            // (prevents flash at response start). For history-loaded messages, skip this check.
+            if chatViewModel.hasActiveStreamingCycle && !chatViewModel.hasSpokenCurrentResponse { return false }
+        }
+        return hasRenderableAssistantContent
+    }
+
+    /// Resolves the ghost name for a voice mode assistant message
+    private var voiceGhostDisplayName: String {
+        if let name = message.ghostName, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return name
+        }
+        // Fall back to the preceding user message's ghost name
+        if let idx = chatViewModel.messages.firstIndex(where: { $0.id == message.id }) {
+            for i in stride(from: idx - 1, through: 0, by: -1) {
+                if chatViewModel.messages[i].isFromUser,
+                   let name = chatViewModel.messages[i].ghostName,
+                   !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return name
+                }
+            }
+        }
+        return UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? "Voice"
+    }
+
     @MainActor
     var body: some View {
         VStack(alignment: message.isFromUser ? .trailing : .leading, spacing: 4) {
             if message.isFromUser {
                 let isSendAnimationTarget = message.id == outgoingAnimatingMessageId
+
                 if isSendAnimationTarget, let ns = sendAnimationNamespace {
-                    UserMessageBubbleView(segments: message.segments)
+                    UserMessageBubbleView(segments: message.segments, isFromVoiceMode: message.isFromVoiceMode)
                         .matchedGeometryEffect(id: message.id, in: ns, properties: .position, isSource: false)
                 } else {
-                    UserMessageBubbleView(segments: message.segments)
+                    UserMessageBubbleView(segments: message.segments, isFromVoiceMode: message.isFromVoiceMode)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 8) {
@@ -351,11 +577,26 @@ struct MessageBubbleView: View {
                             )
                             .transition(.opacity.animation(.easeIn(duration: 0.2)))
                         }
+
+                        // "Snow responded at HH:mm" for voice mode messages
+                        if shouldShowVoiceRespondedLabel {
+                            Text("\(voiceGhostDisplayName) responded at \(message.timestamp.formatted(date: .omitted, time: .shortened))")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 4)
+                                .transition(.opacity.animation(.easeIn(duration: 0.2)))
+                        }
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: message.isFromUser ? .trailing : .leading)
+        .fullScreenCover(item: Binding(
+            get: { fullScreenImage.map { IdentifiableImage(image: $0) } },
+            set: { fullScreenImage = $0?.image }
+        )) { item in
+            ChatImageViewer(image: item.image) { fullScreenImage = nil }
+        }
     }
 
     private func plainText(from segments: [MessageSegment]) -> String {
@@ -415,6 +656,13 @@ struct MessageBubbleView: View {
                     }
                 }
                 .padding(.horizontal, 4)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard !alwaysExpanded else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isThinkingExpanded = false
+                    }
+                }
                 .transition(.opacity)
             }
         }
@@ -443,80 +691,243 @@ struct MessageBubbleView: View {
         return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
+    private let chatThumbCornerRadius: CGFloat = 16
+    private let gridSpacing: CGFloat = 8
+    private let maxContainerWidth: CGFloat = 320
+
+    private func thumbSize(for count: Int) -> CGFloat {
+        switch count {
+        case 1: return 200
+        case 2: return floor((maxContainerWidth - gridSpacing) / 2)
+        case 3: return floor((maxContainerWidth - gridSpacing * 2) / 3)
+        case 4: return floor((maxContainerWidth - gridSpacing) / 2)
+        default:
+            if count <= 6 {
+                return floor((maxContainerWidth - gridSpacing) / 2 * 0.78)
+            } else {
+                return floor((maxContainerWidth - gridSpacing * 2) / 3)
+            }
+        }
+    }
+
+    private func columns(for count: Int) -> Int {
+        switch count {
+        case 1: return 1
+        case 3: return 3
+        case 2, 4: return 2
+        default: return count > 6 ? 3 : 2
+        }
+    }
+
     @ViewBuilder
     private func attachmentsView(segments: [MessageSegment], alignment: HorizontalAlignment) -> some View {
         let isTrailing = (alignment == .trailing)
+        let imageSegments = segments.filter { isImageSegment($0) }
+        let fileSegments = segments.filter { !isImageSegment($0) }
+        let count = imageSegments.count
+        let size = thumbSize(for: count)
+        let cols = columns(for: count)
 
-        Group {
-            if segments.count == 1, let seg = segments.first {
-                // Special-case single attachment so it can be truly right/left aligned (ScrollView tends to "center-ish" single items).
-                attachmentView(seg)
-                    .frame(maxWidth: 320, alignment: isTrailing ? .trailing : .leading)
-            } else {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
-                            attachmentView(seg)
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-                .frame(maxWidth: 320, alignment: isTrailing ? .trailing : .leading)
+        VStack(alignment: isTrailing ? .trailing : .leading, spacing: gridSpacing) {
+            if count == 1, let seg = imageSegments.first {
+                singleImageView(seg)
+                    .frame(maxWidth: maxContainerWidth, alignment: isTrailing ? .trailing : .leading)
+            } else if !imageSegments.isEmpty {
+                imageGrid(segments: imageSegments, size: size, cols: cols, isTrailing: isTrailing)
+                    .frame(maxWidth: maxContainerWidth, alignment: isTrailing ? .trailing : .leading)
+            }
+            ForEach(Array(fileSegments.enumerated()), id: \.offset) { _, seg in
+                attachmentView(seg, size: size)
             }
         }
     }
 
     @ViewBuilder
-    private func attachmentView(_ seg: MessageSegment) -> some View {
-                    switch seg {
-                    case .imageData(let data):
-                        if let uiImage = UIImage(data: data) {
-                            Image(uiImage: uiImage)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 220, height: 160)
-                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    private func imageGrid(segments: [MessageSegment], size: CGFloat, cols: Int, isTrailing: Bool) -> some View {
+        let rows = stride(from: 0, to: segments.count, by: cols).map { start in
+            Array(segments[start..<min(start + cols, segments.count)])
+        }
+        VStack(alignment: isTrailing ? .trailing : .leading, spacing: gridSpacing) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                HStack(spacing: gridSpacing) {
+                    if isTrailing && row.count < cols {
+                        ForEach(0..<(cols - row.count), id: \.self) { _ in
+                            Color.clear.frame(width: size, height: size)
                         }
-                    case .imageURL(let urlString):
-                        if let url = URL(string: urlString) {
-                            if url.isFileURL, let uiImage = ChatImageCacheManager.shared.image(fileURL: url) {
-                                Image(uiImage: uiImage)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 220, height: 160)
-                                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                            } else {
-                                AsyncImage(url: url) { phase in
-                                    switch phase {
-                                    case .empty:
-                                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                            .fill(.thinMaterial)
-                                            .frame(width: 220, height: 160)
-                                            .overlay(ProgressView().progressViewStyle(.circular))
-                                    case .success(let image):
-                                        image
-                                            .resizable()
-                                            .scaledToFill()
-                                            .frame(width: 220, height: 160)
-                                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                    case .failure:
-                                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                            .fill(.thinMaterial)
-                                            .frame(width: 220, height: 160)
-                                            .overlay(Image(systemName: "photo").foregroundColor(.secondary))
-                                    @unknown default:
-                                        EmptyView()
+                    }
+                    ForEach(Array(row.enumerated()), id: \.offset) { _, seg in
+                        attachmentView(seg, size: size)
+                    }
+                    if !isTrailing && row.count < cols {
+                        ForEach(0..<(cols - row.count), id: \.self) { _ in
+                            Color.clear.frame(width: size, height: size)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func isImageSegment(_ seg: MessageSegment) -> Bool {
+        switch seg {
+        case .imageData(_), .imageURL(_): return true
+        default: return false
+        }
+    }
+
+    private func singleImageFrame(for uiImage: UIImage) -> (width: CGFloat, height: CGFloat) {
+        let aspect = uiImage.size.width / max(uiImage.size.height, 1)
+        let maxW: CGFloat = 160
+        let maxH: CGFloat = 200
+        var w = maxW
+        var h = w / aspect
+        if h > maxH {
+            h = maxH
+            w = maxH * aspect
+        }
+        return (w, h)
+    }
+
+    @ViewBuilder
+    private func singleImageView(_ seg: MessageSegment) -> some View {
+        switch seg {
+        case .imageData(let data):
+            if let uiImage = UIImage(data: data) {
+                let frame = singleImageFrame(for: uiImage)
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: frame.width, height: frame.height)
+                    .clipShape(RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous))
+                    .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
+                    .contentShape(Rectangle())
+                    .onTapGesture { fullScreenImage = uiImage }
+            }
+        case .imageURL(let urlString):
+            if let url = URL(string: urlString) {
+                if url.isFileURL, let uiImage = ChatImageCacheManager.shared.image(fileURL: url) {
+                    let frame = singleImageFrame(for: uiImage)
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: frame.width, height: frame.height)
+                        .clipShape(RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous))
+                        .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
+                        .contentShape(Rectangle())
+                        .onTapGesture { fullScreenImage = uiImage }
+                } else {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous)
+                                .fill(.thinMaterial)
+                                .aspectRatio(4/3, contentMode: .fit)
+                                .frame(maxWidth: 160)
+                                .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
+                                .overlay(ProgressView().progressViewStyle(.circular))
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: 160, maxHeight: 200)
+                                .clipShape(RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous))
+                                .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    Task {
+                                        if let (data, _) = try? await URLSession.shared.data(from: url),
+                                           let uiImage = UIImage(data: data) {
+                                            fullScreenImage = uiImage
+                                        }
                                     }
                                 }
-                            }
+                        case .failure:
+                            RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous)
+                                .fill(.thinMaterial)
+                                .aspectRatio(4/3, contentMode: .fit)
+                                .frame(maxWidth: 160)
+                                .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
+                                .overlay(Image(systemName: "photo").foregroundColor(.secondary))
+                        @unknown default:
+                            EmptyView()
                         }
-                    case .fileData(let name, _):
-                        fileChip(title: name)
-                    case .fileURL(let name, _):
-                        fileChip(title: name)
-                    default:
-                        EmptyView()
                     }
+                }
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func attachmentView(_ seg: MessageSegment, size: CGFloat) -> some View {
+        switch seg {
+        case .imageData(let data):
+            if let uiImage = UIImage(data: data) {
+                imageThumb(uiImage: uiImage, size: size)
+            }
+        case .imageURL(let urlString):
+            if let url = URL(string: urlString) {
+                if url.isFileURL, let uiImage = ChatImageCacheManager.shared.image(fileURL: url) {
+                    imageThumb(uiImage: uiImage, size: size)
+                } else {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            imagePlaceholder(size: size)
+                                .overlay(ProgressView().progressViewStyle(.circular))
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: size, height: size)
+                                .clipShape(RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous))
+                                .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    Task {
+                                        if let (data, _) = try? await URLSession.shared.data(from: url),
+                                           let uiImage = UIImage(data: data) {
+                                            fullScreenImage = uiImage
+                                        }
+                                    }
+                                }
+                        case .failure:
+                            imagePlaceholder(size: size)
+                                .overlay(Image(systemName: "photo").foregroundColor(.secondary))
+                        @unknown default:
+                            EmptyView()
+                        }
+                    }
+                }
+            }
+        case .fileData(let name, _):
+            fileChip(title: name)
+        case .fileURL(let name, _):
+            fileChip(title: name)
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func imageThumb(uiImage: UIImage, size: CGFloat) -> some View {
+        Image(uiImage: uiImage)
+            .resizable()
+            .scaledToFill()
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous))
+            .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
+            .contentShape(Rectangle())
+            .onTapGesture { fullScreenImage = uiImage }
+    }
+
+    @ViewBuilder
+    private func imagePlaceholder(size: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous)
+            .fill(.thinMaterial)
+            .frame(width: size, height: size)
+            .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
     }
 
     @ViewBuilder
@@ -535,6 +946,33 @@ struct MessageBubbleView: View {
         .padding(.vertical, 12)
         .frame(width: 220)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+private struct IdentifiableImage: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
+
+
+private struct ChatImageViewer: View {
+    let image: UIImage
+    var onDismiss: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+        }
+        .onTapGesture { onDismiss() }
+        .overlay(alignment: .topTrailing) {
+            Button("Done") { onDismiss() }
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding()
+        }
     }
 }
 

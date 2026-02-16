@@ -3,6 +3,7 @@ import SwiftUI
 struct PartnerMessageBlockView: View {
 
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
+    @AppStorage(PreferenceKeys.fontSizePreference) private var fontSizeScale: Double = 1.0
 
     let text: String
     let senderUserId: UUID?
@@ -44,7 +45,7 @@ struct PartnerMessageBlockView: View {
                     .foregroundColor(.teal)
 
                 Text(text.isEmpty ? " " : text)
-                    .font(.system(size: 17))
+                    .font(.system(size: 17 * fontSizeScale))
                     .lineSpacing(2)
                     .foregroundColor(.primary)
             }

@@ -120,7 +120,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "mira",
             name: "Mira",
-            description: "Bright, bubbly, and joyful",
+            description: "Bright & joyful",
             imageName: "mira",
             videoName: "mira",
             aliases: ["mira"]
@@ -128,7 +128,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "pax",
             name: "Pax",
-            description: "Calm, clear, and wise",
+            description: "Calm & wise",
             imageName: "pax",
             videoName: "pax",
             aliases: ["pax"]
@@ -136,7 +136,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "luma",
             name: "Luma",
-            description: "Soft, warm, and caring",
+            description: "Soft & warm",
             imageName: "luma",
             videoName: "luma",
             aliases: ["luma"]
@@ -144,7 +144,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "snow",
             name: "Snow",
-            description: "Regal, poised, and grand",
+            description: "Regal & grand",
             imageName: "snow",
             videoName: "snow",
             aliases: ["snow"]
@@ -152,7 +152,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "jay",
             name: "Jay",
-            description: "Bold, quick, and driven",
+            description: "Bold & driven",
             imageName: "jay",
             videoName: "jay",
             aliases: ["jay"]
@@ -160,7 +160,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
         BuddyDefinition(
             key: "hex",
             name: "Hex",
-            description: "Bookish, arcane, and curious",
+            description: "Arcane & curious",
             imageName: "hex",
             videoName: "hex",
             aliases: ["hex"]
@@ -217,6 +217,10 @@ struct ElevenLabsVoiceSuggestionsView: View {
         }
         let fallback = normalizedGhostKey(voiceName)
         return fallback.isEmpty ? nil : fallback
+    }
+
+    static func ghostDescription(for voiceName: String) -> String? {
+        mappedBuddy(for: voiceName)?.description
     }
 
     private var selectedBuddyKey: String {

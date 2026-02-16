@@ -12,13 +12,17 @@ from Backend.crud.chat.chat_crud import delete_partner_message, save_message, up
 from Backend.crud.chat.chat_session_crud import (
     ensure_linked_session_for_friendship,
     get_session_by_id,
+    increment_unread_count,
     touch_session,
     update_session_title,
 )
 from Backend.crud.friends.friends_crud import get_friendship_id_for_pair
 from Backend.database import SessionLocal
 from Backend.models.friends.friendship_model import Friendship
+from Backend.models.profile.profile_model import Profile
 from Backend.services.apns_service import send_partner_message_notification_to_user
+from sqlalchemy import text as sa_text
+from starlette.concurrency import run_in_threadpool
 
 
 router = APIRouter(prefix="/partner", tags=["partner"])
@@ -37,6 +41,28 @@ class SendPartnerMessageResponse(BaseModel):
 
 async def _get_friendship_id_for_pair(*, user_id: uuid.UUID, friend_user_id: uuid.UUID) -> Optional[uuid.UUID]:
     return await get_friendship_id_for_pair(user_id=user_id, friend_user_id=friend_user_id)
+
+
+async def _resolve_display_name(*, user_id: uuid.UUID) -> Optional[str]:
+    def _select():
+        db = SessionLocal()
+        try:
+            prof = db.get(Profile, user_id)
+            if prof is not None:
+                n = (getattr(prof, "full_name", None) or "").strip()
+                if n:
+                    return n
+            row = db.execute(sa_text("select raw_user_meta_data from auth.users where id = :id"), {"id": str(user_id)}).first()
+            meta = row[0] if row and isinstance(row[0], dict) else {}
+            if isinstance(meta, dict):
+                n = (meta.get("full_name") or meta.get("name") or "").strip()
+                if n:
+                    return n
+            return None
+        finally:
+            db.close()
+
+    return await run_in_threadpool(_select)
 
 
 @router.post("/send-message", response_model=SendPartnerMessageResponse)
@@ -102,8 +128,6 @@ async def send_message(request: SendPartnerMessageRequest, current_user: dict = 
         finally:
             db.close()
 
-    from starlette.concurrency import run_in_threadpool
-
     recipient_user_id = await run_in_threadpool(_get_other_user)
     if not recipient_user_id or recipient_user_id == user_id:
         raise HTTPException(status_code=400, detail="Invalid friendship")
@@ -138,6 +162,14 @@ async def send_message(request: SendPartnerMessageRequest, current_user: dict = 
     # Keep the sidebar preview human-readable.
     await update_session_last_message(session_id=recipient_session_id, content=message[:120])
     await touch_session(session_id=recipient_session_id)
+    await increment_unread_count(session_id=recipient_session_id)
+
+    # Resolve sender display name for push notification.
+    sender_name: Optional[str] = None
+    try:
+        sender_name = await _resolve_display_name(user_id=user_id)
+    except Exception:
+        pass
 
     # Push notify recipient.
     try:
@@ -145,7 +177,7 @@ async def send_message(request: SendPartnerMessageRequest, current_user: dict = 
             recipient_user_id=recipient_user_id,
             session_id=recipient_session_id,
             preview=message[:120],
-            sender_name=None,
+            sender_name=sender_name,
         )
     except Exception:
         # Push failures should not block sending.

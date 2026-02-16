@@ -38,6 +38,7 @@ class UserChatSession(Base):
         unique=True,
         index=True,
     )
+    unread_count: Mapped[int] = mapped_column(default=0, server_default=text("0"))
 
 
 class UserChatMessage(Base):

@@ -2,6 +2,9 @@ import Foundation
 
 enum PreferenceKeys {
     static let appearancePreference = "appearance_preference"
+    static let fontSizePreference = "font_size_preference"
+    static let chatWallpaperType = "chat_wallpaper_type"
+    static let chatWallpaperValue = "chat_wallpaper_value"
     static let hapticsEnabled = "haptics_enabled"
     static let voiceModeEnabled = "voice_mode_enabled"
     static let elevenLabsVoiceId = "eleven_labs_voice_id"

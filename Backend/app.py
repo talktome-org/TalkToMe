@@ -11,6 +11,11 @@ from .subapps.partner_router import router as partner_router
 from .subapps.user_profile_router import router as profile_router
 
 app = FastAPI()
+
+from Backend.middleware.presence import PresenceMiddleware  # noqa: E402
+
+app.add_middleware(PresenceMiddleware)
+
 # Main FastAPI application instance.
 # This entrypoint intentionally keeps startup wiring lightweight.
 

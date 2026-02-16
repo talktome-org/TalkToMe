@@ -20,6 +20,7 @@ extension BackendService {
         let title: String?
         let last_message_at: String?
         let last_message_content: String?
+        let unread_count: Int?
     }
 }
 
@@ -35,7 +36,6 @@ extension BackendService {
         previousResponseId: String? = nil,
         friendUserId: UUID? = nil,
         messageId: UUID? = nil,
-        ephemeral: Bool = false,
         voiceAgent: String? = nil,
         ghostName: String? = nil,
         deleteBefore: UUID? = nil
@@ -57,34 +57,12 @@ extension BackendService {
             previous_response_id: previousResponseId,
             attachments: attachments,
             friend_user_id: friendUserId,
-            ephemeral: ephemeral ? true : nil,
             voice_agent: (voiceAgent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : voiceAgent,
             ghost_name: (ghostName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : ghostName,
             delete_before: deleteBefore
         )
         request.httpBody = try? jsonEncoder.encode(payload)
         return SSEService.shared.stream(request: request)
-    }
-
-    /// Ephemeral streaming for speak mode - no persistence, just AI response
-    func streamEphemeralMessage(
-        _ message: String,
-        chatHistory: [ChatHistoryMessage]?,
-        accessToken: String,
-        voiceAgent: String?
-    ) -> AsyncStream<StreamEvent> {
-        return streamChatMessage(
-            message,
-            sessionId: nil,
-            chatHistory: chatHistory,
-            attachments: nil,
-            accessToken: accessToken,
-            previousResponseId: nil,
-            friendUserId: nil,
-            messageId: nil,
-            ephemeral: true,
-            voiceAgent: voiceAgent
-        )
     }
 
     func fetchMessages(sessionId: UUID, accessToken: String) async throws -> [ChatMessageDTO] {
@@ -273,6 +251,21 @@ extension BackendService {
         return false
     }
 
+    func markSessionRead(sessionId: UUID, accessToken: String) async throws {
+        let url = baseURL
+            .appendingPathComponent("chat")
+            .appendingPathComponent("sessions")
+            .appendingPathComponent(sessionId.uuidString)
+            .appendingPathComponent("mark-read")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = BackendService.coreRequestTimeoutSeconds
+
+        let (_, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return }
+    }
+
     // Chat attachments
     func uploadChatAttachment(fileData: Data, filename: String, contentType: String, accessToken: String) async throws -> (path: String, url: String?) {
         let url = baseURL
@@ -314,7 +307,6 @@ private struct ChatRequestBody: Codable {
     let previous_response_id: String?
     let attachments: [BackendService.ChatAttachment]?
     let friend_user_id: UUID?
-    let ephemeral: Bool?
     let voice_agent: String?
     let ghost_name: String?
     let delete_before: UUID?

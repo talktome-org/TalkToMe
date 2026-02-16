@@ -48,11 +48,21 @@ struct ChatView: View {
             .toolbar {
                 if let onBack {
                     ToolbarItem(placement: .topBarLeading) {
+                        let totalUnread = sessionsViewModel.sessions
+                            .filter { $0.id != sessionsViewModel.activeSessionId }
+                            .reduce(0) { $0 + $1.unreadCount }
                         Button {
                             onBack()
                         } label: {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 17, weight: .semibold))
+                            HStack(spacing: 4) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 17, weight: .semibold))
+                                if totalUnread > 0 {
+                                    Text("\(totalUnread)")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundStyle(.blue)
+                                }
+                            }
                         }
                     }
                 }

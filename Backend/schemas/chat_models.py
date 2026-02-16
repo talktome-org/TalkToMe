@@ -27,7 +27,6 @@ class ChatRequest(BaseModel):
     previous_response_id: Optional[str] = None
     attachments: Optional[list[ChatAttachment]] = None
     friend_user_id: Optional[UUID] = None
-    ephemeral: bool = False
     voice_agent: Optional[str] = None
     ghost_name: Optional[str] = None
     delete_before: Optional[UUID] = None
@@ -58,6 +57,7 @@ class SessionDTO(BaseModel):
     title: Optional[str] = None
     last_message_at: Optional[str] = None
     last_message_content: Optional[str] = None
+    unread_count: int = 0
 
 
 class SessionsResponse(BaseModel):

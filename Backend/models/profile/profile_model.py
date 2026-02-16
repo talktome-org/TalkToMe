@@ -39,3 +39,5 @@ class Profile(Base):
     date_of_birth: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     # JSON array of strings (e.g. ["Work","Family"])
     relationship_topics: Mapped[Optional[list[str]]] = mapped_column(JSONB, nullable=True)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    is_online: Mapped[bool] = mapped_column(default=False, server_default=text("false"))

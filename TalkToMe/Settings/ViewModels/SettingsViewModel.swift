@@ -65,7 +65,16 @@ class SettingsViewModel: ObservableObject {
                 icon: "",
                 gradient: [],
                 settings: [
-                    SettingItem(title: "Appearance", subtitle: nil, type: .picker(["Light", "Dark", "System"]), icon: "circle.lefthalf.filled"),
+                    SettingItem(title: "Friends & Contacts", subtitle: nil, type: .navigation, icon: "person.2"),
+                    SettingItem(title: "Customize Buddies", subtitle: nil, type: .navigation, icon: "wand.and.stars")
+                ]
+            ),
+            SettingsSection(
+                title: "",
+                icon: "",
+                gradient: [],
+                settings: [
+                    SettingItem(title: "Appearance", subtitle: nil, type: .navigation, icon: "circle.lefthalf.filled"),
                     SettingItem(title: "Wallpapers", subtitle: nil, type: .navigation, icon: "photo")
                 ]
             ),
@@ -85,7 +94,7 @@ class SettingsViewModel: ObservableObject {
                 gradient: [],
                 settings: [
                     SettingItem(title: "Contact Support", subtitle: nil, type: .navigation, icon: "envelope"),
-                    SettingItem(title: "Privacy Policy", subtitle: nil, type: .navigation, icon: "hand.raised")
+                    SettingItem(title: "Privacy Policy", subtitle: nil, type: .navigation, icon: "lock")
                 ]
             ),
             SettingsSection(

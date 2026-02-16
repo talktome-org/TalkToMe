@@ -26,6 +26,8 @@ class FriendSummary(BaseModel):
     full_name: str
     auth_provider: str
     avatar_url: str | None = None
+    last_seen_at: str | None = None
+    is_online: bool = False
 
 
 class FriendsListResponse(BaseModel):

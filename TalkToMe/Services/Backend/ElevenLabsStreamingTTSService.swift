@@ -257,8 +257,9 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
             isConnected = false
             if let vid = voiceId {
                 let cfg = config
+                let vname = voiceName
                 Task { @MainActor in
-                    await self.preconnect(voiceId: vid, config: cfg)
+                    await self.preconnect(voiceId: vid, voiceName: vname, config: cfg)
                 }
             }
         }
