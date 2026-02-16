@@ -639,7 +639,7 @@ private struct ConnectionStatusPillView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .glassEffect(.regular, in: capsule)
+        .glassEffect(.regular.interactive(), in: capsule)
         }
     }
 

@@ -335,7 +335,7 @@ struct PersonalizationEditView: View {
                     if #available(iOS 26.0, *) {
                         // iOS 26+ Glass effect
                         Color.clear
-                            .glassEffect(.regular)
+                            .glassEffect(.regular.interactive(), in: Circle())
                     } else {
                         // Fallback for older iOS versions
                         Color(.systemGray6)
@@ -376,7 +376,7 @@ struct PersonalizationEditView: View {
                 Group {
                     if #available(iOS 26.0, *) {
                         Color.clear
-                            .glassEffect(.regular)
+                            .glassEffect(.regular.interactive(), in: Capsule())
                     } else {
                         Color(.systemGray6)
                             .opacity(0.8)
