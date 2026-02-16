@@ -1,6 +1,6 @@
 import json
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator, List, Optional
@@ -245,21 +245,36 @@ class VoiceChatService:
                 )
 
                 # Use async streaming with multi-turn contents
+                chunk_count = 0
                 async for chunk in await self.client.aio.models.generate_content_stream(
                     model=self.model_name,
                     contents=contents,
                     config=config,
                 ):
+                    chunk_count += 1
                     if chunk.text:
                         yield GeminiStreamEvent(
                             type="response.output_text.delta",
                             delta=chunk.text,
                         )
+                    else:
+                        # Log why this chunk had no text (safety filter, empty candidates, etc.)
+                        finish_reason = None
+                        safety_ratings = None
+                        with suppress(Exception):
+                            if chunk.candidates:
+                                finish_reason = chunk.candidates[0].finish_reason
+                                safety_ratings = chunk.candidates[0].safety_ratings
+                        print(f"[Gemini] Empty chunk #{chunk_count}: finish_reason={finish_reason} safety={safety_ratings}")
+
+                if chunk_count == 0:
+                    print("[Gemini] WARNING: Stream returned zero chunks")
 
                 # Emit response.completed event
                 yield GeminiStreamEvent(type="response.completed")
 
             except Exception as e:
+                print(f"[Gemini] Stream error: {e}")
                 yield GeminiStreamEvent(type="response.error", error=str(e))
 
         yield event_generator()

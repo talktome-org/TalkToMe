@@ -1,145 +1,174 @@
 import SwiftUI
 
 struct ContactSupportView: View {
-    @State private var showingMailComposer = false
     @State private var isCopied: Bool = false
-    
+
+    private let supportEmail = "team.talktome@gmail.com"
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Header section
-            VStack(spacing: 16) {
-                Image(systemName: "envelope.circle.fill")
-                    .font(.system(size: 60))
-                    .foregroundColor(Color(red: 0.4, green: 0.2, blue: 0.6))
-                
-                Text("Need Help?")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.primary)
-                
-                Text("We're here to help! Reach out to our support team for any questions or assistance.")
-                    .font(.body)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(nil)
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 40)
-            
-            Spacer()
-            
-            // Email section
-            VStack(spacing: 20) {
-                let accent = Color(red: 0.4, green: 0.2, blue: 0.6)
-                Button(action: {
-                    Haptics.impact(.medium)
-                    if let url = URL(string: "mailto:team.talktome@gmail.com") {
-                        UIApplication.shared.open(url)
-                    }
-                }) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "envelope.fill")
-                            .font(.system(size: 18))
-                            .foregroundColor(.white)
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Email Support")
-                                .font(.headline)
-                                .fontWeight(.medium)
-                                .foregroundColor(.white)
-                        }
-                        
-                        Spacer()
-                        
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.white.opacity(0.8))
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Have a question, found a bug, or just want to say hi? We'd love to hear from you.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        LinearGradient(
-                            gradient: Gradient(colors: [accent, accent.opacity(0.9)]),
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .cornerRadius(12)
-                    .shadow(color: accent.opacity(0.25), radius: 10, x: 0, y: 6)
-                }
-                .buttonStyle(PlainButtonStyle())
-                
-                Text("Tap to open your email app")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .padding(.top, 8)
+                    .padding(.bottom, 24)
 
-                // Copyable email card
-                MinimalCardView {
-                    HStack(spacing: 12) {
-                        IconButtonLabelView(systemName: "envelope")
+                // Get in Touch section
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Get in Touch")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 2)
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Support Email")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.secondary)
-                            Text("team.talktome@gmail.com")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.primary)
-                                .textSelection(.enabled)
+                    VStack(spacing: 0) {
+                        // Send email row
+                        Button {
+                            Haptics.impact(.medium)
+                            if let url = URL(string: "mailto:\(supportEmail)") {
+                                UIApplication.shared.open(url)
+                            }
+                        } label: {
+                            supportRow(
+                                icon: "paperplane",
+                                title: "Send Email",
+                                subtitle: "Opens your default mail app",
+                                trailing: AnyView(
+                                    Image(systemName: "arrow.up.right")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(Color(.tertiaryLabel))
+                                )
+                            )
                         }
+                        .buttonStyle(.plain)
 
-                        Spacer()
+                        Divider()
+                            .padding(.leading, 60)
 
-                        Button(action: {
-                            UIPasteboard.general.string = "team.talktome@gmail.com"
+                        // Copy email row
+                        Button {
+                            UIPasteboard.general.string = supportEmail
                             Haptics.notification(.success)
                             withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) { isCopied = true }
                             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                                 withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) { isCopied = false }
                             }
-                        }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: isCopied ? "checkmark.circle.fill" : "doc.on.doc")
-                                Text(isCopied ? "Copied" : "Copy")
-                            }
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(accent)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color(.systemGray6))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .stroke(Color.primary.opacity(0.15), lineWidth: 1)
-                                    )
+                        } label: {
+                            supportRow(
+                                icon: isCopied ? "checkmark" : "doc.on.doc",
+                                title: isCopied ? "Copied!" : "Copy Email Address",
+                                subtitle: supportEmail,
+                                trailing: nil
                             )
                         }
-                        .buttonStyle(PlainButtonStyle())
+                        .buttonStyle(.plain)
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        UIPasteboard.general.string = "team.talktome@gmail.com"
-                        Haptics.notification(.success)
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) { isCopied = true }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) { isCopied = false }
-                        }
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .padding(.bottom, 20)
+
+                // Tips section
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Helpful Tips")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 2)
+
+                    VStack(spacing: 0) {
+                        tipRow("Include your device model and iOS version so we can reproduce issues faster.")
+
+                        Divider()
+                            .padding(.leading, 60)
+
+                        tipRow("If something looks wrong, a screenshot goes a long way.")
+
+                        Divider()
+                            .padding(.leading, 60)
+
+                        tipRow("For account or data deletion requests, use the email address linked to your account.")
                     }
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                    Text("We typically respond within 24 hours.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 6)
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 40)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
         }
+        .scrollIndicators(.hidden)
         .navigationTitle("Contact Support")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
     }
+
+    private func supportRow(icon: String, title: String, subtitle: String, trailing: AnyView?) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 18))
+                .foregroundStyle(.secondary)
+                .frame(width: 30)
+                .padding(.top, 8)
+                .contentTransition(.symbolEffect(.replace))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color(.label))
+                    .contentTransition(.numericText())
+
+                Text(subtitle)
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .lineSpacing(4)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let trailing {
+                trailing
+                    .padding(.top, 10)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func tipRow(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "circle.fill")
+                .font(.system(size: 5))
+                .foregroundStyle(Color(.tertiaryLabel))
+                .frame(width: 30)
+                .padding(.top, 8)
+
+            Text(text)
+                .font(.system(size: 15))
+                .foregroundStyle(Color(.label))
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
 }
 
 #Preview {
-    ContactSupportView()
+    NavigationStack {
+        ContactSupportView()
+    }
 }
-
-

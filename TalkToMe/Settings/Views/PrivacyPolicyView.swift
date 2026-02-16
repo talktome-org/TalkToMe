@@ -1,86 +1,184 @@
 import SwiftUI
 
+private struct PolicySection: Identifiable {
+    let id = UUID()
+    let title: String
+    let items: [String]
+}
+
+private let policySections: [PolicySection] = [
+    PolicySection(
+        title: "Information We Collect",
+        items: [
+            "Account and Authentication: We use Supabase for authentication via Apple Sign-in, Google Sign-in, or email and password. We process your user ID, basic profile metadata from your identity provider (e.g., name, email), and session tokens stored securely in Keychain.",
+            "Profile: You can set a display name and a short bio. If you upload an avatar, the image is stored in Supabase Storage and accessed via signed URLs.",
+            "Chat: Your messages and AI-generated responses are stored so you can view history and continue conversations. This includes session titles, message previews, and any images or files you attach.",
+            "Diary: If you use the diary, your entries (including text, titles, and photos) are stored. Diary photos are uploaded to Supabase Storage.",
+            "Friends and Partner Linking: If you link with a partner using friend codes, we store relationship mappings, partner message drafts, and delivery statuses. You can assign display names to partners for a personalized experience.",
+            "Notifications: If you enable push notifications, we store your device token, platform, and bundle identifier to deliver notifications for partner messages and chat updates. You can disable this at any time in Settings.",
+            "Voice: If you use voice input, your audio is streamed to Deepgram for real-time transcription. If you enable voice playback, assistant text is sent to ElevenLabs for text-to-speech. Audio is used only to provide these features and is not stored permanently.",
+            "Local Cache: We cache profile data, chat sessions, and messages locally on your device using a local database to provide fast, offline-ready access."
+        ]
+    ),
+    PolicySection(
+        title: "How We Use Information",
+        items: [
+            "To provide and improve core features including AI chat, diary, partner messaging, voice, and notifications.",
+            "To maintain security, prevent abuse, and ensure reliable delivery of messages and notifications.",
+            "To personalize your experience, such as displaying your and your partner's avatars and names."
+        ]
+    ),
+    PolicySection(
+        title: "Third-Party Services",
+        items: [
+            "Supabase: Authentication, database, and file storage.",
+            "Deepgram: Real-time speech-to-text transcription for voice input.",
+            "ElevenLabs: Text-to-speech audio generation for voice playback.",
+            "Apple Push Notification service (APNs): Delivering push notifications to your device.",
+            "Each provider only receives data necessary to perform its service. We do not sell your personal information."
+        ]
+    ),
+    PolicySection(
+        title: "Data Retention",
+        items: [
+            "We retain your profile, chat messages, diary entries, and linking data for as long as your account is active.",
+            "You can delete individual chat sessions and diary entries from within the app.",
+            "You can request full account and data deletion by contacting support."
+        ]
+    ),
+    PolicySection(
+        title: "Your Choices",
+        items: [
+            "Notifications: Enable or disable push notifications in Settings at any time.",
+            "Partner Linking: Link or unlink a partner. Unlinking stops future partner message deliveries.",
+            "Voice: Enable or disable voice input and voice playback independently in Settings.",
+            "Profile: Update your display name, bio, and avatar at any time.",
+            "Appearance: Choose between light, dark, or system theme."
+        ]
+    ),
+    PolicySection(
+        title: "Security",
+        items: [
+            "We use HTTPS/TLS for all data in transit, signed URLs for secure file access, and Keychain for credential storage. We continually work to protect your information, though no method is completely infallible."
+        ]
+    ),
+    PolicySection(
+        title: "Children's Privacy",
+        items: [
+            "TalkToMe is not intended for children under 13. If you believe a child has provided us personal information, please contact us so we can take appropriate action."
+        ]
+    ),
+    PolicySection(
+        title: "Changes to This Policy",
+        items: [
+            "We may update this Policy to reflect changes to our practices. Continued use of the app after updates means you accept the revised Policy."
+        ]
+    ),
+    PolicySection(
+        title: "Contact Us",
+        items: [
+            "For privacy questions or requests (including data deletion), contact: sgzrov@gmail.com, muhammad84044@gmail.com"
+        ]
+    )
+]
+
 struct PrivacyPolicyView: View {
-    private let policyText: String = """
-    Privacy Policy
-    Effective: October 14, 2025
-
-    This Privacy Policy explains how TalkToMe ("we", "us", or "our") collects, uses, and shares information when you use the TalkToMe iOS application (the "App"). By using the App, you agree to this Policy.
-
-    1) Information We Collect
-    - Account and Authentication: We use Supabase for authentication (Apple/Google sign-in). We process your Supabase user ID, basic profile metadata provided by your identity provider (e.g., name, picture), and session tokens.
-    - Profile: If you choose, you can set a display name (full name) and a short bio. We store these in our database.
-    - Avatars: If you upload an avatar, the image is stored in Supabase Storage and referenced by a signed URL. We may also use provider profile images if available.
-    - Chats and Sessions: When you chat, your messages and session information (including optional generated titles and the most recent message preview) are stored so you can view history and continue conversations.
-    - Partner Linking: If you link with a partner, we store relationship mappings and, when you send partner drafts/requests, their content and status (pending/delivered/accepted) to deliver messages and maintain history for both sides.
-    - Notifications: If you enable push notifications, we store your device push token, platform (iOS), and app bundle identifier to send notifications (e.g., partner messages/requests). You can disable push at any time in Settings.
-    - Diagnostics and App Events: We may log limited technical information (e.g., request status codes, streaming state, minimal debug logs) to operate the service and troubleshoot issues. These logs are not used for advertising.
-    - Voice: If you use voice features, microphone permission is requested. Your audio may be sent to our backend for transcription using third-party AI services (e.g., OpenAI). If you enable voice playback, assistant text may be sent to a text-to-speech provider (e.g., ElevenLabs) to generate audio. Transcribed text and generated audio are used only to provide the voice features.
-
-    2) How We Use Information
-    - To provide and improve core features (chat, session history, partner linking, notifications, profile/avatars).
-    - To maintain security, prevent abuse, and ensure reliable delivery of messages and notifications.
-    - To personalize your experience (e.g., showing your and your partner’s avatars and names).
-
-    3) Sharing and Disclosure
-    - Service Providers: We use trusted service providers to operate the App, including Supabase (authentication, database, storage) and Apple Push Notification service (APNs). Providers only receive data necessary to perform their services.
-    - Legal and Safety: We may disclose information if required by law or to protect rights, safety, and the integrity of the service.
-    - We do not sell your personal information.
-
-    4) Data Retention
-    - We retain profile information, chat messages, sessions, and linking data for as long as your account is active or as needed to provide the service.
-    - You can delete individual chat sessions from within the App. You can also request account/data deletion by contacting support.
-
-    5) Your Choices
-    - Notifications: Enable or disable push notifications in Settings at any time.
-    - Partner Linking: You may link/unlink a partner. Unlinking stops new partner deliveries and removes the link mapping going forward.
-    - Profile: You can update your display name/bio and avatar.
-
-    6) Security
-    - We use industry-standard protections such as HTTPS/TLS in transit and signed URLs for avatar access. No security method is perfect, but we continually work to protect your information.
-
-    7) Children’s Privacy
-    - The App is not intended for children under 13. If you believe a child has provided us personal information, please contact us so we can take appropriate action.
-
-    8) Changes to This Policy
-    - We may update this Policy to reflect changes to our practices. Continued use of the App after updates means you accept the revised Policy.
-
-    9) Contact Us
-    - For privacy questions or requests (including deletion), contact: sgzrov@gmail.com, muhammad84044@gmail.com
-    """
-
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Privacy Policy")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(.primary)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Effective: February 15, 2026")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
 
-                    Text(policyText)
-                        .font(.system(size: 16, weight: .regular))
-                        .foregroundColor(.primary)
-                        .multilineTextAlignment(.leading)
+                Text("This Privacy Policy explains how TalkToMe collects, uses, and shares information when you use the TalkToMe iOS application. By using the app, you agree to this Policy.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 24)
+
+                ForEach(Array(policySections.enumerated()), id: \.element.id) { index, section in
+                    PolicySectionCard(index: index + 1, section: section)
+                        .padding(.bottom, 20)
                 }
-                .padding(16)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(.systemBackground))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.black.opacity(0.1), lineWidth: 1)
-                        )
-                )
             }
-            .padding(20)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
         }
         .scrollIndicators(.hidden)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .navigationTitle("Privacy Policy")
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(.systemGroupedBackground))
+    }
+}
+
+private struct PolicySectionCard: View {
+    let index: Int
+    let section: PolicySection
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(index). \(section.title)")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 2)
+
+            VStack(spacing: 0) {
+                ForEach(Array(section.items.enumerated()), id: \.offset) { itemIndex, item in
+                    policyRow(item)
+
+                    if itemIndex < section.items.count - 1 {
+                        Divider()
+                            .padding(.leading, 60)
+                    }
+                }
+            }
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+    }
+
+    private func policyRow(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "circle.fill")
+                .font(.system(size: 5))
+                .foregroundStyle(Color(.tertiaryLabel))
+                .frame(width: 30)
+                .padding(.top, 8)
+
+            styledText(text)
+                .font(.system(size: 15))
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func styledText(_ text: String) -> Text {
+        guard let colonRange = text.range(of: ": ") else {
+            return Text(text)
+                .foregroundColor(Color(.label))
+        }
+        let label = String(text[text.startIndex..<colonRange.lowerBound])
+        let rest = String(text[colonRange.upperBound...])
+        return Text(label + ": ")
+            .fontWeight(.semibold)
+            .foregroundColor(Color(.label))
+        + Text(rest)
+            .foregroundColor(Color(.secondaryLabel))
     }
 }
 
 #Preview {
-    PrivacyPolicyView()
+    NavigationStack {
+        PrivacyPolicyView()
+    }
 }
-
-
