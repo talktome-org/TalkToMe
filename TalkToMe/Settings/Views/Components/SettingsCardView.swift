@@ -274,17 +274,21 @@ private func viewForTitle(_ title: String) -> some View {
     switch title {
     case "Friends & Contacts":
         FriendsAndContactsSectionView()
-    case "Contact Support":
-        ContactSupportView()
-    case "Privacy Policy":
-        PrivacyPolicyView()
-    case "Wallpapers":
+    case "Customize Buddies":
         Text("Coming soon")
             .font(.system(size: 16))
             .foregroundColor(.secondary)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Wallpapers")
+            .navigationTitle("Customize Buddies")
+    case "Contact Support":
+        ContactSupportView()
+    case "Privacy Policy":
+        PrivacyPolicyView()
+    case "Wallpapers":
+        WallpapersSettingsView()
+    case "Appearance":
+        AppearanceSettingsView()
     default:
         EmptyView()
     }

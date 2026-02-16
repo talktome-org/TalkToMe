@@ -12,7 +12,7 @@ struct FriendsAndContactsSectionView: View {
     @State private var toastMessage: String? = nil
     @State private var toastWorkItem: DispatchWorkItem? = nil
     @FocusState private var isCodeFieldFocused: Bool
-    @StateObject private var contactsVM = ContactsViewModel()
+    @EnvironmentObject private var contactsVM: ContactsViewModel
     @State private var shakeOffset: CGFloat = 0
 
     private var cleanedCodeToAdd: String {
@@ -419,8 +419,16 @@ struct ContactRow: Identifiable {
 @MainActor
 final class ContactsViewModel: ObservableObject {
     @Published var contacts: [ContactRow] = []
-    @Published var isLoading: Bool = true
+    @Published var isLoading: Bool = false
     @Published var errorMessage: String? = nil
+
+    /// Preload contacts silently if permission is already granted.
+    /// Does NOT prompt the user for permission — safe to call on app launch.
+    func preloadIfAuthorized() async {
+        let status = CNContactStore.authorizationStatus(for: .contacts)
+        guard status == .authorized else { return }
+        await fetchContacts()
+    }
 
     func load() async {
         isLoading = true
@@ -441,6 +449,13 @@ final class ContactsViewModel: ObservableObject {
             errorMessage = "Contacts permission is off. Enable it in Settings to invite people."
             return
         }
+
+        await fetchContacts()
+    }
+
+    private func fetchContacts() async {
+        isLoading = true
+        errorMessage = nil
 
         do {
             let result = try await Task.detached(priority: .userInitiated) { () throws -> [ContactRow] in
