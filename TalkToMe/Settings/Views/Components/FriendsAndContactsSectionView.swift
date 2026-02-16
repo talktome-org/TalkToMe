@@ -277,9 +277,17 @@ struct FriendsAndContactsSectionView: View {
             } else {
                 ForEach(friendsViewModel.friends) { friend in
                     HStack(spacing: 14) {
-                        SidebarAvatarView(avatarURL: friend.avatarURL)
-                            .frame(width: 40, height: 40)
-                            .clipShape(Circle())
+                        ZStack(alignment: .bottomTrailing) {
+                            SidebarAvatarView(avatarURL: friend.avatarURL)
+                                .frame(width: 44, height: 44)
+                                .clipShape(Circle())
+
+                            Circle()
+                                .fill(friend.isOnline ? Color.green : Color.gray)
+                                .frame(width: 12, height: 12)
+                                .overlay(Circle().strokeBorder(Color(.systemBackground), lineWidth: 2))
+                                .offset(x: 2, y: 2)
+                        }
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(friend.fullName)
@@ -287,7 +295,12 @@ struct FriendsAndContactsSectionView: View {
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
 
-                            if let voice = friend.voiceName, !voice.isEmpty {
+                            if let presence = friend.presenceText {
+                                Text(presence)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(friend.isOnline ? .green : .gray)
+                                    .lineLimit(1)
+                            } else if let voice = friend.voiceName, !voice.isEmpty {
                                 Text(voice)
                                     .font(.system(size: 13))
                                     .foregroundStyle(.tertiary)
@@ -297,6 +310,7 @@ struct FriendsAndContactsSectionView: View {
 
                         Spacer()
                     }
+                    .padding(.vertical, 2)
                 }
             }
         }

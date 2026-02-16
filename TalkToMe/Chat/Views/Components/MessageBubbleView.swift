@@ -438,6 +438,12 @@ struct MessageBubbleView: View {
         guard !message.isFromPartnerUser else { return false }
         guard message.isFromVoiceMode else { return false }
         guard !message.isToolLoading else { return false }
+        // Don't show on error messages
+        let isError = message.segments.contains { seg in
+            if case .text(let t) = seg { return t.hasPrefix("Error:") }
+            return false
+        }
+        if isError { return false }
         let isLastAssistant = chatViewModel.messages.last { !$0.isFromUser }?.id == message.id
         if isLastAssistant {
             if chatViewModel.isLoading { return false }
