@@ -48,6 +48,8 @@ struct WallpapersSettingsView: View {
     @State private var photoSelection: PhotosPickerItem?
     @State private var selectedColor: Color = .black
     @State private var showColorPicker = false
+    @State private var toastMessage: String? = nil
+    @State private var toastWorkItem: DispatchWorkItem? = nil
 
     private let columns = [
         GridItem(.flexible(), spacing: 10),
@@ -70,6 +72,13 @@ struct WallpapersSettingsView: View {
         .navigationTitle("Wallpapers")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
+        .overlay(alignment: .top) {
+            if let toastMessage {
+                ToastOverlayView(message: toastMessage, onDismiss: dismissToast)
+                    .padding(.top, 8)
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
         .onChange(of: photoSelection) { _, item in
             guard let item else { return }
             Task {
@@ -165,6 +174,7 @@ struct WallpapersSettingsView: View {
                         wallpaperValue = Self.hexFromColor(selectedColor)
                         Haptics.selection()
                         showColorPicker = false
+                        showToast("Background color applied")
                     }
                     .fontWeight(.semibold)
                 }
@@ -192,6 +202,7 @@ struct WallpapersSettingsView: View {
                             wallpaperType = "gradient"
                             wallpaperValue = preset.id
                         }
+                        showToast("\(preset.name) wallpaper applied")
                     } label: {
                         gradientThumbnail(preset)
                     }
@@ -239,6 +250,7 @@ struct WallpapersSettingsView: View {
                 wallpaperValue = ""
             }
             removePhotoWallpaper()
+            showToast("Wallpaper reset to default")
         } label: {
             HStack {
                 Image(systemName: "arrow.counterclockwise")
@@ -256,6 +268,23 @@ struct WallpapersSettingsView: View {
         .disabled(wallpaperType == "default")
     }
 
+    // MARK: - Toast Helpers
+
+    private func showToast(_ message: String) {
+        toastWorkItem?.cancel()
+        withAnimation { toastMessage = message }
+        let work = DispatchWorkItem {
+            withAnimation { toastMessage = nil }
+        }
+        toastWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: work)
+    }
+
+    private func dismissToast() {
+        toastWorkItem?.cancel()
+        withAnimation { toastMessage = nil }
+    }
+
     // MARK: - Photo Helpers
 
     private func savePhotoWallpaper(_ data: Data) {
@@ -269,6 +298,7 @@ struct WallpapersSettingsView: View {
         wallpaperType = "photo"
         wallpaperValue = filename
         Haptics.selection()
+        showToast("Photo wallpaper applied")
     }
 
     private func removePhotoWallpaper() {
