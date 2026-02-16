@@ -14,8 +14,8 @@ from __future__ import annotations
 from alembic import op
 
 
-revision = "20260215_0011"
-down_revision = "20260203_0010"
+revision = "20260215_0011b"
+down_revision = "20260215_0011"
 branch_labels = None
 depends_on = None
 
@@ -168,21 +168,29 @@ def upgrade() -> None:
     )
 
     # Ensure diary photo bucket exists and can hold modern photos.
+    # Wrapped in DO block: if storage schema does not exist (e.g. non-Supabase Postgres),
+    # migration still succeeds and diary_entries is created; otherwise 42P01 would roll back the whole migration.
     op.execute(
         """
-        INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-        VALUES (
-            'diary-photos',
-            'diary-photos',
-            true,
-            20971520,
-            ARRAY['image/jpeg','image/png','image/heic','image/heif','image/webp']::text[]
-        )
-        ON CONFLICT (id) DO UPDATE
-        SET
-            public = EXCLUDED.public,
-            file_size_limit = EXCLUDED.file_size_limit,
-            allowed_mime_types = EXCLUDED.allowed_mime_types;
+        DO $$
+        BEGIN
+            INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+            VALUES (
+                'diary-photos',
+                'diary-photos',
+                true,
+                20971520,
+                ARRAY['image/jpeg','image/png','image/heic','image/heif','image/webp']::text[]
+            )
+            ON CONFLICT (id) DO UPDATE
+            SET
+                public = EXCLUDED.public,
+                file_size_limit = EXCLUDED.file_size_limit,
+                allowed_mime_types = EXCLUDED.allowed_mime_types;
+        EXCEPTION
+            WHEN undefined_table THEN NULL;
+            WHEN insufficient_privilege THEN NULL;
+        END $$;
         """
     )
 

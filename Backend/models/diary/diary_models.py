@@ -24,6 +24,7 @@ class DiarySettings(Base):
     """Per-user diary customization (name, description, header color)."""
 
     __tablename__ = "diary_settings"
+    __table_args__ = {"schema": "public"}
 
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -41,6 +42,7 @@ class DiaryEntry(Base):
     """Diary/journal entry with body blocks (text + image storage paths)."""
 
     __tablename__ = "diary_entries"
+    __table_args__ = {"schema": "public"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

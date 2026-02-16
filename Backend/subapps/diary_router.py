@@ -24,6 +24,17 @@ def _user_id(current_user: dict) -> uuid.UUID:
         raise HTTPException(status_code=401, detail="Invalid user ID in token")
 
 
+def _is_undefined_table(exc: BaseException) -> bool:
+    """True if this is PostgreSQL 42P01 (undefined_table)."""
+    if "42P01" in str(exc):
+        return True
+    code = getattr(exc, "sqlstate", None) or getattr(exc, "pgcode", None)
+    if code == "42P01":
+        return True
+    cause = getattr(exc, "__cause__", None)
+    return cause is not None and _is_undefined_table(cause)
+
+
 # --- Settings ---
 
 
@@ -98,6 +109,15 @@ async def save_entry(payload: dict, current_user: dict = Depends(get_current_use
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
+        if _is_undefined_table(e):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Diary table missing (database error 42P01). "
+                    "Ensure DATABASE_URL points to your Supabase project and run migrations there: "
+                    "cd Backend && PYTHONPATH=.. ./venv/bin/python -m alembic upgrade head"
+                ),
+            )
         raise HTTPException(status_code=500, detail=str(e))
 
 
