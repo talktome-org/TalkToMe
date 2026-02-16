@@ -21,10 +21,10 @@ struct SettingsView: View {
         AnyView(
             Circle()
                 .fill(Color(.tertiarySystemFill))
-                .frame(width: 72, height: 72)
+                .frame(width: 100, height: 100)
                 .overlay(
                     Text(preferredName.prefix(1).uppercased())
-                        .font(.system(size: 28, weight: .semibold, design: .rounded))
+                        .font(.system(size: 36, weight: .semibold, design: .rounded))
                         .foregroundColor(.secondary)
                 )
         )
@@ -47,28 +47,47 @@ struct SettingsView: View {
             placeholder: { avatarPlaceholder },
             fallback: { avatarFallback }
         )
-        .frame(width: 72, height: 72)
+        .frame(width: 100, height: 100)
         .clipShape(Circle())
         .overlay(Circle().stroke(Color(.separator).opacity(0.3), lineWidth: 0.5))
         .id(avatarRefreshKey)
     }
 
     private var profileHeader: some View {
-        VStack(spacing: 6) {
-            avatarView
-                .padding(.bottom, 6)
+        VStack(spacing: 16) {
+            HStack(alignment: .top, spacing: 0) {
+                // You
+                VStack(spacing: 10) {
+                    avatarView
 
-            Text(preferredName)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundColor(.primary)
+                    Text(preferredName)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+
+                    Text("You")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .frame(maxWidth: .infinity)
+
+                // Buddy
+                SettingsBuddyDisplayView()
+                    .frame(maxWidth: .infinity)
+            }
+            .padding(.horizontal, 16)
 
             if let email = AuthService.shared.currentUser?.email, !email.isEmpty {
                 Text(email)
-                    .font(.system(size: 15, weight: .regular))
+                    .font(.system(size: 14, weight: .regular))
                     .foregroundColor(.secondary)
             }
         }
-        .padding(.top, 12)
+        .padding(.top, 20)
         .padding(.bottom, 24)
     }
 

@@ -6,6 +6,7 @@ struct UserMessageBubbleView: View {
     var isFromVoiceMode: Bool = false
 
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(PreferenceKeys.fontSizePreference) private var fontSizeScale: Double = 1.0
     @State private var fullScreenImage: UIImage?
 
     var body: some View {
@@ -19,7 +20,7 @@ struct UserMessageBubbleView: View {
             }
             if hasText {
                 Text(text)
-                    .font(.system(size: 17, weight: .regular))
+                    .font(.system(size: 17 * fontSizeScale, weight: .regular))
                     .italic(isFromVoiceMode)
                     .lineSpacing(2)
                     .padding(.horizontal, 16)

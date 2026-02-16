@@ -19,6 +19,8 @@ struct MarkdownRendererView: View {
         case quote(String)
     }
 
+    @AppStorage(PreferenceKeys.fontSizePreference) private var fontSizeScale: Double = 1.0
+
     private let blocks: [Block]
     private let firstHeadingIndex: Int?
     private let isStreaming: Bool
@@ -58,7 +60,7 @@ struct MarkdownRendererView: View {
                             ForEach(items.indices, id: \.self) { i in
                                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                                     Text("•")
-                                        .font(.body.weight(.bold))
+                                        .font(.system(size: 17 * fontSizeScale, weight: .bold))
                                         .baselineOffset(2)
                                     inlineText(items[i])
                                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -73,7 +75,7 @@ struct MarkdownRendererView: View {
                             ForEach(items.indices, id: \.self) { i in
                                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                                     Text("\(i + 1).")
-                                        .font(.body.weight(.semibold))
+                                        .font(.system(size: 17 * fontSizeScale, weight: .semibold))
                                     inlineText(items[i])
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
@@ -126,7 +128,7 @@ struct MarkdownRendererView: View {
         }
 
         return rendered
-            .font(.body)
+            .font(.system(size: 17 * fontSizeScale))
             .lineSpacing(2)
             .fixedSize(horizontal: false, vertical: true)
             .layoutPriority(1)
@@ -144,7 +146,7 @@ struct MarkdownRendererView: View {
         }
 
         return rendered
-            .font(.system(size: Layout.headingFontSize, weight: .semibold))
+            .font(.system(size: Layout.headingFontSize * fontSizeScale, weight: .semibold))
             .fixedSize(horizontal: false, vertical: true)
     }
 

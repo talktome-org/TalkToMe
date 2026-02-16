@@ -6,6 +6,7 @@ struct PartnerDraftBlockView: View {
 
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
     @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var currentBuddyName: String = ""
+    @AppStorage(PreferenceKeys.fontSizePreference) private var fontSizeScale: Double = 1.0
 
     @State private var text: String
     @State private var isConfirmingNormalSend: Bool = false
@@ -103,7 +104,7 @@ struct PartnerDraftBlockView: View {
 
             // Message body
             Text(text.isEmpty ? " " : text)
-                .font(.system(size: 16.5))
+                .font(.system(size: 16.5 * fontSizeScale))
                 .foregroundColor(.primary)
                 .multilineTextAlignment(.leading)
                 .lineSpacing(3)

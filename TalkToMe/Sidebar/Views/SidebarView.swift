@@ -303,7 +303,7 @@ struct FriendsSheetView: View {
         ScrollView {
             VStack(spacing: 0) {
                 // Title
-                Text("Friends")
+                Text("Friends and Contacts")
                     .font(.system(size: 20, weight: .bold))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 20)
