@@ -524,7 +524,7 @@ async def deepgram_stt_stream(websocket: WebSocket):
 
     # Safe tuning via query params (dictation defaults).
     model = (websocket.query_params.get("model") or "nova-3").strip() or "nova-3"
-    language = (websocket.query_params.get("language") or "en-US").strip() or "en-US"
+    language = (websocket.query_params.get("language") or "multi").strip() or "multi"
     endpointing = (websocket.query_params.get("endpointing") or "400").strip() or "400"
     sample_rate = (websocket.query_params.get("sample_rate") or "24000").strip() or "24000"
 
