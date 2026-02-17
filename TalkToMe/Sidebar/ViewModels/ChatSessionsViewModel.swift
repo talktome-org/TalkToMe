@@ -322,9 +322,19 @@ final class ChatSessionsViewModel: ObservableObject {
         let parsed = iso1.date(from: raw) ?? iso2.date(from: raw)
         guard let date = parsed else { return "" }
 
+        let interval = Date().timeIntervalSince(date)
+        let minutes = Int(interval / 60)
+        if minutes < 1 { return "now" }
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h" }
+        let days = hours / 24
+        if days == 1 { return "Yesterday" }
+        if days < 7 { return "\(days)d" }
+
         let out = DateFormatter()
         out.locale = Locale.current
-        out.dateFormat = "dd.MM.yyyy"
+        out.dateFormat = "MMM d"
         return out.string(from: date)
     }
 

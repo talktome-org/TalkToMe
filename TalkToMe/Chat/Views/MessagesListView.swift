@@ -324,7 +324,7 @@ struct MessagesListView: View {
 
     @ViewBuilder
     private var chatEmptyState: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 24) {
             // Static domino of ghost buddies
             Button {
                 Haptics.impact(.light)
@@ -345,7 +345,7 @@ struct MessagesListView: View {
                 }
             }
             .buttonStyle(GhostCardPressStyle())
-            .frame(height: 140)
+            .frame(height: 120)
 
             VStack(spacing: 14) {
                 Button {
@@ -354,22 +354,13 @@ struct MessagesListView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text("Choose your ghost")
-                            .font(.system(size: 19, weight: .bold))
+                            .font(.system(size: 17, weight: .bold))
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 12, weight: .semibold))
                     }
                     .foregroundStyle(.primary)
                 }
                 .buttonStyle(.plain)
-
-                (Text("Tap ")
-                + Text(Image(systemName: "plus.rectangle.on.rectangle"))
-                    .font(.system(size: 13, weight: .semibold))
-                + Text(" to pick a ghost with its own custom voice. Share your relationship or personal problems — they're here to listen."))
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
             }
         }
     }

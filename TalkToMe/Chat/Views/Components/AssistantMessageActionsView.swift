@@ -77,6 +77,14 @@ struct AssistantMessageActionsView: View {
                 .buttonStyle(.plain)
             }
 
+            // Share
+            Button(action: shareMessage) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+
             // Thumbs up
             Button(action: { giveFeedback(.positive) }) {
                 Image(systemName: feedbackGiven == .positive ? "hand.thumbsup.fill" : "hand.thumbsup")
@@ -99,6 +107,15 @@ struct AssistantMessageActionsView: View {
         onToast?("Message copied to clipboard.")
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             showCopyCheck = false
+        }
+    }
+
+    private func shareMessage() {
+        Haptics.impact(.light)
+        let activityVC = UIActivityViewController(activityItems: [messageText], applicationActivities: nil)
+        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let rootVC = windowScene.windows.first?.rootViewController {
+            rootVC.present(activityVC, animated: true)
         }
     }
 

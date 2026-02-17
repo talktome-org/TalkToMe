@@ -36,7 +36,8 @@ struct ChatScreenView: View {
       }
     )
     .safeAreaInset(edge: .bottom, spacing: 0) {
-      InputAreaView(
+      VStack(spacing: 0) {
+        InputAreaView(
         isVoiceRecording: chatViewModel.dictationSTTService.isRecording,
         isSpeakModeActive: chatViewModel.isSpeakModeActive,
         isSpeakMicMuted: chatViewModel.voiceController.isSpeakMicMuted,
@@ -89,6 +90,7 @@ struct ChatScreenView: View {
       .offset(y: inputAreaYOffset)
       .padding(.bottom, focusedBottomInset)
       .transition(.move(edge: .bottom).combined(with: .opacity))
+      } // VStack (reply bar + input)
     }
     .overlay(alignment: .top) {
       if let toastMessage {
@@ -148,6 +150,7 @@ struct ChatScreenView: View {
     guard let data = try? Data(contentsOf: url) else { return nil }
     return UIImage(data: data)
   }
+
 }
 
 #Preview("Chat Screen") {

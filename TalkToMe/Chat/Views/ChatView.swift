@@ -13,7 +13,6 @@ struct ChatView: View {
     @State private var isFriendPickerLoading: Bool = false
     @State private var friendPickerErrorMessage: String? = nil
     @State private var showAddFriendSheet: Bool = false
-
     @FocusState private var isInputFocused: Bool
 
     let onBack: (() -> Void)?
@@ -76,6 +75,14 @@ struct ChatView: View {
                             }
                         }
                     }
+                }
+
+                ToolbarItem(placement: .principal) {
+                    BuddyHeaderView(
+                        isSpeakModeActive: viewModel.isSpeakModeActive,
+                        speakModePhase: viewModel.voiceController.speakModePhase,
+                        onTap: {}
+                    )
                 }
 
                 ToolbarItemGroup(placement: .topBarTrailing) {
