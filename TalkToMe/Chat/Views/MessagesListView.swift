@@ -32,6 +32,7 @@ struct MessagesListView: View {
     @State private var enforcedOffsetY: CGFloat? = nil
     @State private var scrollToTopTargetId: UUID? = nil
     @State private var isAnimatingToTop: Bool = false
+    @State private var isContentReady: Bool = false
 
     private var messages: [ChatMessage] { chatViewModel.messages }
     private var initialJumpToken: Int { chatViewModel.initialJumpToken }
@@ -228,10 +229,13 @@ struct MessagesListView: View {
                 }, onAttach: { scrollView in
                     underlyingScrollView = scrollView
                     scrollView.clipsToBounds = true
-                    if !messages.isEmpty {
+                    if chatViewModel.sessionId == nil {
+                        isContentReady = true
+                    } else if !messages.isEmpty {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                             scrollView.layoutIfNeeded()
                             scrollToBottomUIKit(scrollView, animated: false)
+                            if !isContentReady { isContentReady = true }
                         }
                     }
                 })
@@ -296,6 +300,7 @@ struct MessagesListView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 sv.layoutIfNeeded()
                 scrollToBottomUIKit(sv, animated: false)
+                if !isContentReady { isContentReady = true }
             }
         }
         .onChange(of: isInputFocused, initial: false) { _, focused in
@@ -306,6 +311,17 @@ struct MessagesListView: View {
                 scrollToBottomUIKit(sv, animated: true)
             }
         }
+        .onChange(of: chatViewModel.isLoadingHistory, initial: false) { _, loading in
+            if !loading && !isContentReady {
+                if let sv = underlyingScrollView, !messages.isEmpty {
+                    sv.layoutIfNeeded()
+                    scrollToBottomUIKit(sv, animated: false)
+                }
+                isContentReady = true
+            }
+        }
+        .opacity(isContentReady ? 1 : 0)
+        .animation(nil, value: isContentReady)
         .onChange(of: chatViewModel.pendingOutgoingUserMessageId, initial: false) { _, newId in
             guard let id = newId else { return }
             chatViewModel.pendingOutgoingUserMessageId = nil
