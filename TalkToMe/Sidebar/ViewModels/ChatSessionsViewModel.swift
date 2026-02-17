@@ -13,6 +13,7 @@ final class ChatSessionsViewModel: ObservableObject {
     @Published var isBootstrapping: Bool = false
     @Published var lastSessionsSyncSucceeded: Bool? = nil
     @Published var lastSessionsSyncAt: Date? = nil
+    @Published var shouldStartInVoiceMode: Bool = false
 
     private var notificationTokens: [NSObjectProtocol] = []
     private var observedUserId: String? = nil

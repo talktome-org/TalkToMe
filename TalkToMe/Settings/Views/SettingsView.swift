@@ -16,6 +16,7 @@ struct SettingsView: View {
   @State private var avatarRefreshKey = UUID()
   @State private var toastMessage: String? = nil
   @State private var toastWorkItem: DispatchWorkItem? = nil
+  @State private var customizationHighlightOpacity: CGFloat = 0
 
   private var avatarPlaceholder: AnyView { AnyView(Color.clear) }
 
@@ -87,7 +88,7 @@ struct SettingsView: View {
           .foregroundColor(.primary)
           .lineLimit(1)
           .frame(height: 22)
-        Text("Your Buddy")
+        Text("Buddy")
           .font(.system(size: 13, weight: .medium))
           .foregroundColor(.secondary)
           .lineLimit(1)
@@ -119,6 +120,14 @@ struct SettingsView: View {
               viewModel.handleSettingAction(for: sectionIndex, settingIndex: settingIndex)
             }
           )
+          .id(section.id)
+          .overlay {
+            if section.id == "customization" {
+              RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .strokeBorder(AppTheme.accent, lineWidth: 2)
+                .opacity(customizationHighlightOpacity)
+            }
+          }
         }
       }
     }
@@ -195,13 +204,25 @@ struct SettingsView: View {
       ZStack {
         AppTheme.background.ignoresSafeArea()
 
-        ScrollView {
-          VStack(spacing: 0) {
-            profileHeader
-            sectionsListView
+        ScrollViewReader { proxy in
+          ScrollView {
+            VStack(spacing: 0) {
+              profileHeader
+              sectionsListView
+            }
+          }
+          .scrollIndicators(.hidden)
+          .onChange(of: viewModel.shouldHighlightCustomization) { _, shouldHighlight in
+            guard shouldHighlight else { return }
+            viewModel.shouldHighlightCustomization = false
+            withAnimation(.easeOut(duration: 0.3)) {
+              proxy.scrollTo("customization", anchor: .center)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+              animateCustomizationHighlight()
+            }
           }
         }
-        .scrollIndicators(.hidden)
       }
       .overlay(alignment: .top) {
         if let toastMessage {
@@ -212,6 +233,9 @@ struct SettingsView: View {
       .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
       .navigationDestination(isPresented: $viewModel.shouldNavigateToContacts) {
         FriendsAndContactsSectionView()
+      }
+      .navigationDestination(isPresented: $viewModel.shouldNavigateToAppearance) {
+        AppearanceSettingsView()
       }
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
@@ -298,6 +322,17 @@ struct SettingsView: View {
     toastWorkItem?.cancel()
     toastWorkItem = nil
     toastMessage = nil
+  }
+
+  private func animateCustomizationHighlight() {
+    withAnimation(.easeIn(duration: 0.2)) {
+      customizationHighlightOpacity = 1.0
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+      withAnimation(.easeOut(duration: 0.3)) {
+        customizationHighlightOpacity = 0
+      }
+    }
   }
 }
 

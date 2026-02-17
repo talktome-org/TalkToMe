@@ -10,71 +10,71 @@ import SwiftUI
 // MARK: - Feature Model
 
 private enum HomeFeature: Int, CaseIterable, Identifiable {
-  case talkToBuddy
-  case inviteFriend
-  case dailyDiary
-  case notesReminders
-  case shareStory
+  case voiceMode
+  case customize
+  case capturePhoto
+  case lateNight
+  case weekReview
 
   var id: Int { rawValue }
 
   var title: String {
     switch self {
-    case .talkToBuddy: return "Talk to AI Buddy"
-    case .inviteFriend: return "Invite a Friend"
-    case .dailyDiary: return "Daily Diary"
-    case .notesReminders: return "Notes & Reminders"
-    case .shareStory: return "Share Your Story"
+    case .voiceMode: return "Talk, Don\u{2019}t Type"
+    case .customize: return "Make It Yours"
+    case .capturePhoto: return "Capture Moments"
+    case .lateNight: return "Late Night Thoughts"
+    case .weekReview: return "Your Week in Review"
     }
   }
 
   var subtitle: String {
     switch self {
-    case .talkToBuddy:
-      return "Discuss any of your problems with AI Buddy — get advice, vent, or just talk."
-    case .inviteFriend:
-      return "Send a message from AI Buddy to anyone in your contacts."
-    case .dailyDiary:
-      return "Keep a daily diary with me. I'll help you remember and capture your day."
-    case .notesReminders:
-      return "Write down notes so you don't forget and can discuss them with me later."
-    case .shareStory:
-      return "Tell me more about yourself so we can grow together and celebrate wins."
+    case .voiceMode:
+      return "Have a real conversation using your voice. Your buddy speaks back — each one sounds different."
+    case .customize:
+      return "Wallpapers, themes, and colors — design your perfect chat space."
+    case .capturePhoto:
+      return "Add photos to your diary entries. Snap a moment, write a thought, look back anytime."
+    case .lateNight:
+      return "Can\u{2019}t sleep? Your buddy is always awake. No judgment, just good conversation at any hour."
+    case .weekReview:
+      return "Your buddy remembers everything you\u{2019}ve talked about. Ask for a recap of your week\u{2019}s highlights."
     }
   }
 
   var actionLabel: String {
     switch self {
-    case .talkToBuddy: return "Start Chat"
-    case .inviteFriend: return "Open Contacts"
-    case .dailyDiary: return "Open Diary"
-    case .notesReminders: return "Open Notes"
-    case .shareStory: return "Edit Profile"
+    case .voiceMode: return "Try Voice Mode"
+    case .customize: return "Customize"
+    case .capturePhoto: return "Open Diary"
+    case .lateNight: return "Start Chat"
+    case .weekReview: return "Open Diary"
     }
   }
 
   var iconName: String {
     switch self {
-    case .talkToBuddy: return "bubble.left.and.text.bubble.right"
-    case .inviteFriend: return "person.badge.plus"
-    case .dailyDiary: return "book.closed"
-    case .notesReminders: return "checklist"
-    case .shareStory: return "heart.text.clipboard"
+    case .voiceMode: return "waveform"
+    case .customize: return "paintpalette.fill"
+    case .capturePhoto: return "camera.fill"
+    case .lateNight: return "moon.stars.fill"
+    case .weekReview: return "calendar.badge.clock"
     }
   }
 
   var gradientColors: [Color] {
     switch self {
-    case .talkToBuddy:
-      return [Color(red: 0.26, green: 0.58, blue: 1.00), Color(red: 0.30, green: 0.78, blue: 0.95)]
-    case .inviteFriend:
+    case .voiceMode:
+      return [Color(red: 0.95, green: 0.45, blue: 0.25), Color(red: 0.98, green: 0.65, blue: 0.30)]
+    case .customize:
       return [Color(red: 0.63, green: 0.32, blue: 0.98), Color(red: 0.90, green: 0.40, blue: 0.65)]
-    case .dailyDiary:
+    case .capturePhoto:
       return [Color(red: 0.25, green: 0.72, blue: 0.68), Color(red: 0.40, green: 0.85, blue: 0.55)]
-    case .notesReminders:
-      return [Color(red: 0.95, green: 0.55, blue: 0.30), Color(red: 0.98, green: 0.75, blue: 0.35)]
-    case .shareStory:
-      return [Color(red: 0.45, green: 0.35, blue: 0.90), Color(red: 0.70, green: 0.50, blue: 0.85)]
+    case .lateNight:
+      return [Color(red: 0.20, green: 0.22, blue: 0.55), Color(red: 0.40, green: 0.30, blue: 0.75)]
+    case .weekReview:
+      return [Color(red: 0.26, green: 0.58, blue: 1.00), Color(red: 0.30, green: 0.78, blue: 0.95)]
     }
   }
 }
@@ -843,13 +843,10 @@ struct HomeView: View {
                 .foregroundStyle(.primary)
 
               if totalUnread > 0 {
-                Text("\(totalUnread)")
-                  .font(.system(size: 9, weight: .bold, design: .rounded))
-                  .foregroundStyle(.white)
-                  .frame(minWidth: 14, minHeight: 14)
-                  .background(Color.red)
-                  .clipShape(Circle())
-                  .offset(x: 6, y: -4)
+                Circle()
+                  .fill(Color.accentColor)
+                  .frame(width: 12, height: 12)
+                  .offset(x: 4, y: -4)
               }
             }
           }
@@ -859,22 +856,22 @@ struct HomeView: View {
   }
 
   private func handleCardTap(_ feature: HomeFeature) {
-    Haptics.impact(.light)
+    if feature != .customize { Haptics.impact(.light) }
     switch feature {
-    case .talkToBuddy:
+    case .voiceMode:
+      sessionsVM.shouldStartInVoiceMode = true
       onStartNewChat()
-    case .inviteFriend:
+    case .customize:
       selectedTab = .settings
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-        settingsViewModel.shouldNavigateToContacts = true
+        settingsViewModel.shouldHighlightCustomization = true
       }
-    case .dailyDiary, .notesReminders:
+    case .capturePhoto:
       selectedTab = .diary
-    case .shareStory:
-      selectedTab = .settings
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-        settingsViewModel.showPersonalizationEdit = true
-      }
+    case .lateNight:
+      onStartNewChat()
+    case .weekReview:
+      selectedTab = .diary
     }
   }
 

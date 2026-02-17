@@ -22,7 +22,7 @@ struct AppearanceSettingsView: View {
         .scrollIndicators(.hidden)
         .navigationTitle("Appearance")
         .navigationBarTitleDisplayMode(.inline)
-        .background(Color(.systemGroupedBackground))
+        .background(AppTheme.background)
     }
 
     // MARK: - Theme

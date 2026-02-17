@@ -44,6 +44,10 @@ struct ChatView: View {
                 async let dictationWarmup: Void = viewModel.voiceController.preconnectDictationSTTIfNeeded()
                 async let speakWarmup: Void = viewModel.voiceController.preconnectSpeakServicesIfNeeded()
                 _ = await (dictationWarmup, speakWarmup)
+                if sessionsViewModel.shouldStartInVoiceMode {
+                    sessionsViewModel.shouldStartInVoiceMode = false
+                    viewModel.voiceController.startSpeakMode()
+                }
             }
             .toolbar {
                 if let onBack {

@@ -54,7 +54,7 @@ struct CustomizeBuddiesView: View {
         .scrollDismissesKeyboard(.interactively)
         .navigationTitle("Customize Buddies")
         .navigationBarTitleDisplayMode(.inline)
-        .background(Color(.systemGroupedBackground))
+        .background(AppTheme.background)
         .overlay(alignment: .top) {
             if let toastMessage {
                 ToastOverlayView(message: toastMessage, onDismiss: {

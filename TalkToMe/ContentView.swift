@@ -26,7 +26,7 @@ struct ContentView: View {
                     MainTabView()
                         .transition(.opacity)
                 } else {
-                    Color(.systemBackground)
+                    AppTheme.background
                         .ignoresSafeArea()
                         .transition(.opacity)
                 }
