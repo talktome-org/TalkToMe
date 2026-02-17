@@ -9,7 +9,11 @@ final class ChatSessionsViewModel: ObservableObject {
     @Published var sessionsLoadError: String? = nil
     @Published var activeSessionId: UUID? = nil
     @Published var chatViewKey: UUID = UUID()
-    @Published var myAvatarURL: String? = nil
+    @Published var myAvatarURL: String? = {
+        let cached = UserDefaults.standard.string(forKey: PreferenceKeys.myAvatarURL)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (cached?.isEmpty ?? true) ? nil : cached
+    }()
     @Published var isBootstrapping: Bool = false
     @Published var lastSessionsSyncSucceeded: Bool? = nil
     @Published var lastSessionsSyncAt: Date? = nil

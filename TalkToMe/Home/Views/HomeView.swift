@@ -141,6 +141,7 @@ private struct GetStartedStepCardView: View {
   let buddyName: String
   var index: Int = 0
   var total: Int = 1
+  var isCompleted: Bool = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -208,6 +209,30 @@ private struct GetStartedStepCardView: View {
       RoundedRectangle(cornerRadius: 14, style: .continuous)
         .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
     )
+    .overlay {
+      if isCompleted {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+          .fill(Color(.systemBackground).opacity(0.55))
+
+        Circle()
+          .fill(
+            LinearGradient(
+              colors: step.gradientColors,
+              startPoint: .topLeading,
+              endPoint: .bottomTrailing
+            )
+          )
+          .frame(width: 28, height: 28)
+          .overlay(
+            Image(systemName: "checkmark")
+              .font(.system(size: 12, weight: .bold))
+              .foregroundStyle(.white)
+          )
+          .shadow(color: (step.gradientColors.first ?? .accentColor).opacity(0.4), radius: 6, x: 0, y: 2)
+          .transition(.scale.combined(with: .opacity))
+      }
+    }
+    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isCompleted)
   }
 }
 
@@ -259,35 +284,6 @@ struct HomeCardView: View {
   }
 }
 
-// MARK: - Quarter-fill Progress Ring
-
-private struct QuarterProgressRing: View {
-  let completed: Int
-  let total: Int
-
-  var body: some View {
-    ZStack {
-      Circle()
-        .stroke(Color(.separator).opacity(0.25), lineWidth: 2.5)
-
-      ForEach(0..<completed, id: \.self) { i in
-        Circle()
-          .trim(
-            from: CGFloat(i) / CGFloat(total),
-            to: CGFloat(i + 1) / CGFloat(total) - 0.02
-          )
-          .stroke(Color(.label), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-          .rotationEffect(.degrees(-90))
-      }
-
-      Text("\(completed)/\(total)")
-        .font(.system(size: 11, weight: .semibold, design: .rounded))
-        .foregroundStyle(Color(.label))
-    }
-    .frame(width: 34, height: 34)
-  }
-}
-
 // MARK: - Get Started Card
 
 private struct GetStartedCardView: View {
@@ -297,19 +293,129 @@ private struct GetStartedCardView: View {
   let steps: [GetStartedStep]
   let completedStepIds: Set<Int>
   let onStepTap: (GetStartedStep) -> Void
+  var onStepNavigate: ((GetStartedStep) -> Void)? = nil
   var onReset: (() -> Void)? = nil
+
+  @State private var dashPhase: CGFloat = 0
+  @State private var animatingStepId: Int? = nil
+  @State private var lineFillProgress: CGFloat = 0
+  @State private var checkpointVisible: Set<Int> = []
+
+  private func handleCardTap(_ step: GetStartedStep) {
+    guard !completedStepIds.contains(step.id) else { return }
+
+    // Phase 1: Start line fill animation (dot by dot, fast & smooth)
+    animatingStepId = step.id
+    lineFillProgress = 0
+    withAnimation(.easeInOut(duration: 0.5)) {
+      lineFillProgress = 1
+    }
+
+    // Phase 2: After line fills, reveal checkpoint + mark complete
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+      checkpointVisible.insert(step.id)
+      onStepTap(step)
+    }
+
+    // Phase 3: After checkpoint animates, navigate
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.95) {
+      animatingStepId = nil
+      lineFillProgress = 0
+      onStepNavigate?(step)
+    }
+  }
+
+  private let containerShape = RoundedRectangle(cornerRadius: 26, style: .continuous)
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      // Header
-      HStack(spacing: 10) {
-        QuarterProgressRing(completed: completedCount, total: totalCount)
+      // Milestone roadmap
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(spacing: 0) {
+          ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
+            let done = completedStepIds.contains(step.id)
+            let isAnimatingIn = animatingStepId == step.id
+            let showFilled = done || checkpointVisible.contains(step.id)
 
-        Text("Get started")
-          .font(.system(size: 18, weight: .bold))
-          .foregroundStyle(Color(.label))
+            // Milestone node
+            ZStack {
+              if showFilled {
+                Circle()
+                  .fill((step.gradientColors.first ?? .accentColor).opacity(0.2))
+                  .frame(width: 34, height: 34)
+                  .transition(.scale.combined(with: .opacity))
 
-        Spacer()
+                Circle()
+                  .fill(
+                    LinearGradient(
+                      colors: step.gradientColors,
+                      startPoint: .topLeading,
+                      endPoint: .bottomTrailing
+                    )
+                  )
+                  .frame(width: 24, height: 24)
+                  .transition(.scale.combined(with: .opacity))
+
+                Image(systemName: "checkmark")
+                  .font(.system(size: 11, weight: .bold))
+                  .foregroundStyle(.white)
+                  .transition(.scale.combined(with: .opacity))
+              } else {
+                Circle()
+                  .stroke(Color(.separator).opacity(0.5), lineWidth: 1.5)
+                  .frame(width: 24, height: 24)
+              }
+            }
+            .scaleEffect(isAnimatingIn && !showFilled ? 0.8 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.65), value: showFilled)
+            .frame(width: 34, height: 34)
+
+            // Connector line
+            if index < steps.count - 1 {
+              let nextStep = steps[index + 1]
+              let nextDone = completedStepIds.contains(nextStep.id)
+              let bothDone = done && nextDone
+              let isFillingToNext = animatingStepId == nextStep.id
+              let targetColor = nextStep.gradientColors.first ?? .accentColor
+
+              GeometryReader { geo in
+                let midY = geo.size.height / 2
+
+                // Base dotted line (always visible, dim)
+                Path { path in
+                  path.move(to: CGPoint(x: 0, y: midY))
+                  path.addLine(to: CGPoint(x: geo.size.width, y: midY))
+                }
+                .stroke(
+                  Color(.label).opacity(0.12),
+                  style: StrokeStyle(
+                    lineWidth: 2,
+                    lineCap: .round,
+                    dash: [2, 6],
+                    dashPhase: dashPhase
+                  )
+                )
+
+                // Colored dotted overlay, trimmed to reveal dot-by-dot
+                Path { path in
+                  path.move(to: CGPoint(x: 0, y: midY))
+                  path.addLine(to: CGPoint(x: geo.size.width, y: midY))
+                }
+                .trim(from: 0, to: bothDone ? 1 : (isFillingToNext ? lineFillProgress : 0))
+                .stroke(
+                  targetColor.opacity(bothDone || isFillingToNext ? 0.8 : 0),
+                  style: StrokeStyle(
+                    lineWidth: 2,
+                    lineCap: .round,
+                    dash: [2, 6],
+                    dashPhase: dashPhase
+                  )
+                )
+              }
+              .frame(height: 4)
+            }
+          }
+        }
       }
       .simultaneousGesture(
         LongPressGesture(minimumDuration: 1.0).onEnded { _ in
@@ -320,16 +426,46 @@ private struct GetStartedCardView: View {
         }
       )
       .padding(.horizontal, 14)
-      .padding(.top, 4)
-      .padding(.bottom, 10)
+      .padding(.top, 8)
+      .padding(.bottom, 12)
 
       // Arc carousel
       ArcCarouselView(
         steps: steps,
         completedStepIds: completedStepIds,
         buddyName: buddyName,
-        onStepTap: onStepTap
+        onStepTap: handleCardTap
       )
+      .padding(.bottom, 14)
+    }
+    .clipShape(containerShape)
+    .modifier(GlassContainerModifier(shape: containerShape))
+    .onAppear {
+      // Seed checkpointVisible with already-completed steps
+      checkpointVisible = completedStepIds
+      withAnimation(.linear(duration: 1.0).repeatForever(autoreverses: false)) {
+        dashPhase = -8
+      }
+    }
+  }
+}
+
+// MARK: - Glass Container Modifier
+
+private struct GlassContainerModifier<S: Shape>: ViewModifier {
+  let shape: S
+
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, *) {
+      content
+        .glassEffect(.regular.interactive(), in: shape)
+    } else {
+      content
+        .background(AppTheme.surface)
+        .overlay(
+          shape
+            .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+        )
     }
   }
 }
@@ -345,19 +481,17 @@ private struct ArcCarouselView: View {
   private let maxYDrop: CGFloat = 20
   private let maxRotation: Double = 5
 
-  private var visibleSteps: [GetStartedStep] {
-    steps.filter { !completedStepIds.contains($0.id) }
-  }
-
   var body: some View {
-    if !visibleSteps.isEmpty {
+    if !steps.isEmpty {
       ScrollView(.horizontal, showsIndicators: false) {
         HStack(alignment: .top, spacing: 12) {
-          ForEach(Array(visibleSteps.enumerated()), id: \.element.id) { index, step in
-            Button { onStepTap(step) } label: {
-              GetStartedStepCardView(step: step, buddyName: buddyName, index: index, total: visibleSteps.count)
+          ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
+            let done = completedStepIds.contains(step.id)
+            Button { if !done { onStepTap(step) } } label: {
+              GetStartedStepCardView(step: step, buddyName: buddyName, index: index, total: steps.count, isCompleted: done)
             }
             .buttonStyle(SpringPressStyle())
+            .disabled(done)
             .visualEffect { content, proxy in
               let scrollBounds = proxy.bounds(of: .scrollView(axis: .horizontal)) ?? .zero
               let scrollCenter = scrollBounds.width / 2
@@ -715,6 +849,10 @@ struct HomeView: View {
   @EnvironmentObject private var sessionsVM: ChatSessionsViewModel
 
   @State private var showNotifications: Bool = false
+  @State private var showContacts: Bool = false
+  @State private var showPersonalization: Bool = false
+  @State private var showDiary: Bool = false
+  @Namespace private var profileNamespace
 
   @AppStorage("get_started_dismissed") private var getStartedDismissed: Bool = false
   @AppStorage("get_started_say_hi") private var sayHiDone: Bool = false
@@ -798,7 +936,8 @@ struct HomeView: View {
                 totalCount: GetStartedStep.allCases.count,
                 steps: GetStartedStep.allCases,
                 completedStepIds: completedStepIds,
-                onStepTap: handleGetStartedTap,
+                onStepTap: markStepComplete,
+                onStepNavigate: navigateToStep,
                 onReset: resetGetStarted
               )
               .transition(.opacity.combined(with: .move(edge: .top)))
@@ -827,6 +966,20 @@ struct HomeView: View {
             onOpenChat?(sessionId)
           }
         )
+      }
+      .navigationDestination(isPresented: $showContacts) {
+        FriendsAndContactsSectionView()
+      }
+      .navigationDestination(isPresented: $showPersonalization) {
+        PersonalizationEditView(
+          isPresented: $showPersonalization,
+          profileNamespace: profileNamespace,
+          viewModel: settingsViewModel
+        )
+        .environmentObject(sessionsVM)
+      }
+      .navigationDestination(isPresented: $showDiary) {
+        DiaryView()
       }
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
@@ -911,29 +1064,10 @@ struct HomeView: View {
     getStartedDismissed = false
   }
 
-  private func handleGetStartedTap(_ step: GetStartedStep) {
+  private func markStepComplete(_ step: GetStartedStep) {
     Haptics.impact(.light)
 
-    // Navigate to the relevant feature
-    switch step {
-    case .sayHi:
-      onStartNewChat()
-    case .connectFriend:
-      selectedTab = .settings
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-        settingsViewModel.shouldNavigateToContacts = true
-      }
-    case .writeDiary:
-      selectedTab = .diary
-    case .tellStory:
-      selectedTab = .settings
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-        settingsViewModel.showPersonalizationEdit = true
-      }
-    }
-
-    // Mark step as completed
-    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
       switch step {
       case .sayHi: sayHiDone = true
       case .connectFriend: connectFriendDone = true
@@ -944,11 +1078,24 @@ struct HomeView: View {
 
     // Auto-dismiss card when all steps are done
     if sayHiDone && connectFriendDone && writeDiaryDone && tellStoryDone {
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
         withAnimation(.easeOut(duration: 0.3)) {
           getStartedDismissed = true
         }
       }
+    }
+  }
+
+  private func navigateToStep(_ step: GetStartedStep) {
+    switch step {
+    case .sayHi:
+      onStartNewChat()
+    case .connectFriend:
+      showContacts = true
+    case .writeDiary:
+      showDiary = true
+    case .tellStory:
+      showPersonalization = true
     }
   }
 }

@@ -13,10 +13,20 @@ struct SettingsView: View {
 
   @Binding var isPresented: Bool
 
+  @AppStorage("get_started_dismissed") private var getStartedDismissed: Bool = false
+  @AppStorage("get_started_say_hi") private var sayHiDone: Bool = false
+  @AppStorage("get_started_connect_friend") private var connectFriendDone: Bool = false
+  @AppStorage("get_started_write_diary") private var writeDiaryDone: Bool = false
+  @AppStorage("get_started_tell_story") private var tellStoryDone: Bool = false
+
   @State private var avatarRefreshKey = UUID()
   @State private var toastMessage: String? = nil
   @State private var toastWorkItem: DispatchWorkItem? = nil
   @State private var customizationHighlightOpacity: CGFloat = 0
+
+  private var getStartedHidden: Bool {
+    getStartedDismissed || [sayHiDone, connectFriendDone, writeDiaryDone, tellStoryDone].allSatisfy { $0 }
+  }
 
   private var avatarPlaceholder: AnyView { AnyView(Color.clear) }
 
@@ -107,6 +117,39 @@ struct SettingsView: View {
   @ViewBuilder
   private var sectionsListView: some View {
     VStack(spacing: 36) {
+      if getStartedHidden {
+        Button {
+          Haptics.impact(.light)
+          withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            sayHiDone = false
+            connectFriendDone = false
+            writeDiaryDone = false
+            tellStoryDone = false
+            getStartedDismissed = false
+          }
+          showToast("Get Started has been reset!")
+        } label: {
+          HStack(spacing: 14) {
+            Image(systemName: "arrow.counterclockwise")
+              .font(.system(size: 18))
+              .foregroundColor(.secondary)
+              .frame(width: 30, height: 30)
+
+            Text("Restart Get Started")
+              .font(.system(size: 17, weight: .regular))
+              .foregroundColor(.primary)
+
+            Spacer()
+          }
+          .padding(.horizontal, 16)
+          .frame(minHeight: 44)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .padding(.vertical, 6)
+        .background(AppTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+      }
+
       ForEach(Array(viewModel.settingsSections.enumerated()), id: \.element.id) { sectionIndex, section in
         if section.id == "account" {
           accountSectionView(sectionIndex: sectionIndex, section: section)
