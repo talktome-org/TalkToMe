@@ -301,6 +301,13 @@ final class ChatStreamingController {
 
         cancelCurrentStream()
 
+        // Create and register the stream token synchronously so the old
+        // stream's onFinish handler sees a non-nil currentStreamToken that
+        // differs from its captured value, preventing it from clobbering
+        // the new placeholder's currentAssistantMessageId.
+        let streamToken = UUID()
+        currentStreamToken = streamToken
+
         let isVoiceModeMessage = activeVoiceAgentName != nil
         let placeholderMessage = ChatMessage.text("", isFromUser: false, isFromVoiceMode: isVoiceModeMessage)
         delegate.messages.append(placeholderMessage)
@@ -440,7 +447,6 @@ final class ChatStreamingController {
                 return trimmed.isEmpty ? nil : trimmed
             }()
 
-            let streamToken = UUID()
             let onEvent: (BackendService.StreamEvent) -> Void = { [weak self, weak delegate] event in
                 guard let self = self, let delegate = delegate else { return }
                 switch event {
@@ -681,7 +687,7 @@ final class ChatStreamingController {
                             self.typingDelayTask?.cancel()
                             delegate.isAssistantTyping = false
                         }
-                        let currentGhostName = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName)
+                        let currentGhostName = self.ghostNameBySession[sid]
                         currentSegments.append(.partnerMessage(text: text, ghostName: currentGhostName))
                         if sid == delegate.sessionId {
                             var newMessages = delegate.messages
@@ -786,11 +792,9 @@ final class ChatStreamingController {
                             delegate.thinkingTextDone = false
                             self.isStreaming = false
                             delegate.streamingDidFinish()
-                        }
-                        Task { @MainActor in self.currentAssistantMessageId = nil }
-                        Task { @MainActor in self.currentStreamingSessionId = nil }
-                        if let sid = delegate.sessionId {
-                            Task { @MainActor in
+                            self.currentAssistantMessageId = nil
+                            self.currentStreamingSessionId = nil
+                            if let sid = delegate.sessionId {
                                 delegate.setCachedMessages(delegate.messages, for: sid)
                             }
                         }
@@ -889,17 +893,27 @@ final class ChatStreamingController {
                 }
             }
 
+            let capturedStreamToken = streamToken
             let onFinish: () -> Void = { [weak self, weak delegate] in
                 Task { @MainActor in
+                    guard let self else { return }
+                    // If a newer stream is already active, this is a stale
+                    // onFinish from a cancelled stream — do nothing.
+                    if self.currentStreamToken != nil && self.currentStreamToken != capturedStreamToken {
+                        return
+                    }
                     delegate?.isLoading = false
                     delegate?.isAssistantTyping = false
-                    self?.isStreaming = false
-                    self?.currentAssistantMessageId = nil
-                    self?.onCacheUpdate?()
+                    self.isStreaming = false
+                    self.currentAssistantMessageId = nil
+                    self.onCacheUpdate?()
                 }
             }
 
-            let ghostNameToSend = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName)
+            let ghostNameToSend: String? = {
+                let trimmed = (self.activeVoiceAgentName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }()
             let cleanedGhostName = ghostNameToSend?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !cleanedGhostName.isEmpty {
                 self.ghostNameBySession[localSessionIdForSend] = cleanedGhostName
@@ -938,7 +952,6 @@ final class ChatStreamingController {
 
             await MainActor.run {
                 self.currentStreamTask = task
-                self.currentStreamToken = streamToken
             }
         }
     }
@@ -950,6 +963,7 @@ final class ChatStreamingController {
         delegate?.thinkingText = ""
         delegate?.thinkingTextDone = false
         isStreaming = false
+        currentAssistantMessageId = nil
     }
 
     func regenerateResponse(forAssistantMessageId assistantMessageId: UUID) {

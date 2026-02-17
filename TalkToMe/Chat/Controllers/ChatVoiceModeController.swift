@@ -49,6 +49,10 @@ final class ChatVoiceModeController: ObservableObject {
     private var pendingSpeakAutoSendTask: Task<Void, Never>?
     private var isSpeakComposerLocked: Bool = false
     private var speakModeVoiceName: String?
+    private var speakModeVoiceId: String?
+
+    var capturedVoiceId: String? { speakModeVoiceId }
+    var capturedVoiceName: String? { speakModeVoiceName }
 
     init() {}
 
@@ -148,14 +152,11 @@ final class ChatVoiceModeController: ObservableObject {
                 guard let self else { return }
                 guard self.isSpeakModeActive else { return }
                 if speaking {
-                    // If TTS is playing and user starts speaking, cancel TTS immediately.
-                    // Don't wait for the final transcript — stop the audio now so the
-                    // user hears silence while they talk. The message will be sent later
-                    // when lastFinalUtterance fires.
-                    if self.elevenLabsStreamingTTS.isSpeaking || self.isStreamingCheck() {
-                        self.streamingController?.stopGeneration()
-                        self.elevenLabsStreamingTTS.cancel()
-                    }
+                    // During TTS playback, do NOT cancel TTS from interim
+                    // transcripts — AEC leakage can sustain isUserSpeaking
+                    // with the ghost's own speech. Only the lastFinalUtterance
+                    // handler (with its 8-char guard) triggers barge-in.
+                    // Just update the visual phase here.
                     self.updatePhase(.listening)
                 }
             }
@@ -315,6 +316,7 @@ final class ChatVoiceModeController: ObservableObject {
             name = (cached.first(where: { $0.voice_id == storedVoiceId })?.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         }
         speakModeVoiceName = name
+        speakModeVoiceId = storedVoiceId
         streamingController?.activeVoiceAgentName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : name
 
         isSpeakModeActive = true
@@ -398,6 +400,7 @@ final class ChatVoiceModeController: ObservableObject {
         elevenLabsStreamingTTS.cancel()
 
         speakModeVoiceName = nil
+        speakModeVoiceId = nil
 
         speakSTTService.stopRecording()
         speakSTTService.disconnect()
