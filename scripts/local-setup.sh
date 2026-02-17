@@ -19,13 +19,13 @@ BACKEND_ENV_SOURCE="${BACKEND_ENV_SOURCE:-$SCRIPT_ROOT/.env}"
 # Where your Python venv lives (default: Backend/venv)
 VENV_DIR="${VENV_DIR:-$SCRIPT_ROOT/Backend/venv}"
 
-# Optional: config dir for Secrets.plist and Resources (leave empty to skip checks)
-CONFIG_DIR="${CONFIG_DIR:-$HOME/.config/talktome}"
+# Optional: config dir for Secrets.plist and Resources (empty = skip; set to ~/.config/talktome if you use it)
+CONFIG_DIR="${CONFIG_DIR:-}"
 
 echo "🔧 Local setup (secrets + resources + python venv)"
 echo "   BACKEND_ENV_SOURCE=$BACKEND_ENV_SOURCE"
 echo "   VENV_DIR=$VENV_DIR"
-echo "   CONFIG_DIR=$CONFIG_DIR"
+echo "   CONFIG_DIR=${CONFIG_DIR:-(skipped)}"
 
 # -------------------------
 # Preconditions
