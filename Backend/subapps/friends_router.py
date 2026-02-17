@@ -17,6 +17,7 @@ from Backend.schemas.friend_models import (
     FriendsListResponse,
     MyCodeResponse,
 )
+from Backend.services.apns_service import send_friend_added_notification_to_user
 from Backend.services.file_signing_service import sign_upload_id
 import time
 from sqlalchemy import text
@@ -81,6 +82,15 @@ def _profile_fields_for_user(user_id: uuid.UUID) -> dict:
         db.close()
 
 
+def _resolve_display_name(user_id: uuid.UUID) -> str | None:
+    profile = _profile_fields_for_user(user_id)
+    name = (profile.get("full_name") or "").strip()
+    if name:
+        return name
+    user_meta, _ = _auth_meta_for_user(user_id)
+    return (user_meta.get("full_name") or user_meta.get("name") or "").strip() or None
+
+
 @router.get("/my-code", response_model=MyCodeResponse)
 async def my_code(current_user: dict = Depends(get_current_user)):
     try:
@@ -103,12 +113,24 @@ async def add_by_code(request: AddFriendByCodeRequest, current_user: dict = Depe
         raise HTTPException(status_code=401, detail="Invalid user ID in token")
 
     try:
-        friend_id = await add_friend_by_code(user_id=user_id, code=request.code)
-        return AddFriendByCodeResponse(success=True, friend_user_id=friend_id)
+        friend_id, is_new = await add_friend_by_code(user_id=user_id, code=request.code)
     except PermissionError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    # Notify the friend that they were added (only for new friendships).
+    if is_new:
+        try:
+            sender_name = _resolve_display_name(user_id)
+            await send_friend_added_notification_to_user(
+                recipient_user_id=friend_id,
+                sender_name=sender_name,
+            )
+        except Exception:
+            pass  # Push failures should not block the response.
+
+    return AddFriendByCodeResponse(success=True, friend_user_id=friend_id)
 
 
 @router.get("", response_model=FriendsListResponse)

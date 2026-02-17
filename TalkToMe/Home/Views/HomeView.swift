@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UserNotifications
 
 // MARK: - Feature Model
 
@@ -85,7 +86,7 @@ private enum GetStartedStep: Int, CaseIterable, Identifiable {
   case sayHi
   case connectFriend
   case writeDiary
-  case tellStory
+  case customizeBuddy
 
   var id: Int { rawValue }
 
@@ -94,7 +95,7 @@ private enum GetStartedStep: Int, CaseIterable, Identifiable {
     case .sayHi: return "Say Hi to \(buddyName)"
     case .connectFriend: return "Connect with a Friend"
     case .writeDiary: return "Write Your First Entry"
-    case .tellStory: return "Tell Your Story"
+    case .customizeBuddy: return "Customize \(buddyName)"
     }
   }
 
@@ -106,8 +107,8 @@ private enum GetStartedStep: Int, CaseIterable, Identifiable {
       return Text("Share your friend code to pair up, ") + Text("at no extra cost").bold()
     case .writeDiary:
       return Text("Start a daily diary — ") + Text("\(buddyName) will help you reflect").bold()
-    case .tellStory:
-      return Text("Share about yourself so ") + Text("\(buddyName) knows you better").bold()
+    case .customizeBuddy:
+      return Text("Pick a voice and personality — ") + Text("make \(buddyName) uniquely yours").bold()
     }
   }
 
@@ -116,7 +117,7 @@ private enum GetStartedStep: Int, CaseIterable, Identifiable {
     case .sayHi: return "bubble.left.and.text.bubble.right.fill"
     case .connectFriend: return "person.2.fill"
     case .writeDiary: return "book.fill"
-    case .tellStory: return "heart.text.clipboard.fill"
+    case .customizeBuddy: return "wand.and.stars"
     }
   }
 
@@ -128,7 +129,7 @@ private enum GetStartedStep: Int, CaseIterable, Identifiable {
       return [Color(red: 0.63, green: 0.32, blue: 0.98), Color(red: 0.90, green: 0.40, blue: 0.65)]
     case .writeDiary:
       return [Color(red: 0.25, green: 0.72, blue: 0.68), Color(red: 0.40, green: 0.85, blue: 0.55)]
-    case .tellStory:
+    case .customizeBuddy:
       return [Color(red: 0.95, green: 0.55, blue: 0.30), Color(red: 0.98, green: 0.75, blue: 0.35)]
     }
   }
@@ -301,6 +302,7 @@ private struct GetStartedCardView: View {
   @State private var animatingStepId: Int? = nil
   @State private var lineFillProgress: CGFloat = 0
   @State private var checkpointVisible: Set<Int> = []
+  @State private var showInfoTip: Bool = false
 
   private func handleCardTap(_ step: GetStartedStep) {
     guard !completedStepIds.contains(step.id) else { return }
@@ -439,6 +441,39 @@ private struct GetStartedCardView: View {
         onStepReset: onStepReset
       )
       .padding(.bottom, 14)
+    }
+    .overlay(alignment: .bottomLeading) {
+      Button {
+        Haptics.impact(.light)
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+          showInfoTip.toggle()
+        }
+        if showInfoTip {
+          DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+            withAnimation(.easeOut(duration: 0.3)) {
+              showInfoTip = false
+            }
+          }
+        }
+      } label: {
+        Image(systemName: "info.circle")
+          .font(.system(size: 15, weight: .medium))
+          .foregroundStyle(Color(.systemGray))
+      }
+      .padding(12)
+      .overlay(alignment: .leading) {
+        if showInfoTip {
+          Text("Long press a card to undo")
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Color(.systemGray))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.ultraThinMaterial, in: Capsule())
+            .fixedSize()
+            .offset(x: 38)
+            .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .leading)))
+        }
+      }
     }
     .clipShape(containerShape)
     .modifier(GlassContainerModifier(shape: containerShape))
@@ -646,19 +681,21 @@ private struct HomeFeatureCardView: View {
 
 // MARK: - Notifications View (pushed via navigationDestination)
 
-private struct NotificationItem: Identifiable {
+private struct NotificationItem: Identifiable, Codable {
   let id: UUID
   let title: String
   let body: String
   let date: Date
   let icon: String
+  let sessionId: UUID?
 
-  init(title: String, body: String, date: Date, icon: String) {
+  init(title: String, body: String, date: Date, icon: String, sessionId: UUID? = nil) {
     self.id = UUID()
     self.title = title
     self.body = body
     self.date = date
     self.icon = icon
+    self.sessionId = sessionId
   }
 }
 
@@ -673,7 +710,11 @@ private struct NotificationsView: View {
   let onTap: (UUID) -> Void
 
   @ObservedObject private var apns = APNSService.shared
-  @State private var notifications: [NotificationItem] = []
+  @State private var notifications: [NotificationItem] = {
+    guard let data = UserDefaults.standard.data(forKey: "cached_notifications"),
+          let items = try? JSONDecoder().decode([NotificationItem].self, from: data) else { return [] }
+    return items
+  }()
 
   private var groupedNotifications: [(group: NotificationDateGroup, items: [NotificationItem])] {
     let calendar = Calendar.current
@@ -786,7 +827,14 @@ private struct NotificationsView: View {
                 .padding(.horizontal, 4)
 
               ForEach(section.items) { item in
-                notificationRow(item)
+                if let sessionId = item.sessionId {
+                  Button { onTap(sessionId) } label: {
+                    notificationRow(item)
+                  }
+                  .buttonStyle(.plain)
+                } else {
+                  notificationRow(item)
+                }
               }
             }
           }
@@ -810,6 +858,77 @@ private struct NotificationsView: View {
       }
     }
     .navigationTitle("Notifications")
+    .onAppear { loadNotifications() }
+    .onReceive(NotificationCenter.default.publisher(for: .partnerMessageReceived)) { _ in
+      loadNotifications()
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .friendAdded)) { _ in
+      loadNotifications()
+    }
+  }
+
+  private func loadNotifications() {
+    // 1. Build items from delivered OS push notifications.
+    UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
+      var items: [NotificationItem] = []
+      var coveredSessionIds = Set<UUID>()
+
+      for note in delivered {
+        let content = note.request.content
+        let userInfo = content.userInfo
+        let date = note.date
+
+        if let type = userInfo["type"] as? String, type == "friend_added" {
+          items.append(NotificationItem(
+            title: content.title,
+            body: content.body,
+            date: date,
+            icon: "person.badge.plus"
+          ))
+        } else if let sidString = userInfo["session_id"] as? String,
+                  let sid = UUID(uuidString: sidString) {
+          items.append(NotificationItem(
+            title: content.title,
+            body: content.body,
+            date: date,
+            icon: "bubble.left.fill",
+            sessionId: sid
+          ))
+          coveredSessionIds.insert(sid)
+        }
+      }
+
+      // 2. Add unread sessions that have no matching delivered notification
+      //    (e.g. user was in foreground, or notifications were cleared).
+      for session in sessions where !coveredSessionIds.contains(session.id) {
+        let date = Self.parseISO8601(session.lastUsedISO8601) ?? Date()
+        let partnerName = UserDefaults.standard.string(forKey: PreferenceKeys.partnerName)
+        items.append(NotificationItem(
+          title: partnerName ?? "Partner Message",
+          body: session.lastMessageContent ?? "",
+          date: date,
+          icon: "bubble.left.fill",
+          sessionId: session.id
+        ))
+      }
+
+      DispatchQueue.main.async {
+        self.notifications = items
+        if let data = try? JSONEncoder().encode(items) {
+          UserDefaults.standard.set(data, forKey: "cached_notifications")
+        }
+      }
+    }
+  }
+
+  private static func parseISO8601(_ iso: String?) -> Date? {
+    guard let iso, !iso.isEmpty else { return nil }
+    let f1 = ISO8601DateFormatter()
+    f1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let d = f1.date(from: iso) { return d }
+    let f2 = ISO8601DateFormatter()
+    f2.formatOptions = [.withInternetDateTime]
+    return f2.date(from: iso)
   }
 
   @ViewBuilder
@@ -874,15 +993,14 @@ struct HomeView: View {
 
   @State private var showNotifications: Bool = false
   @State private var showContacts: Bool = false
-  @State private var showPersonalization: Bool = false
+  @State private var showCustomizeBuddies: Bool = false
   @State private var showDiary: Bool = false
-  @Namespace private var profileNamespace
 
   @AppStorage("get_started_dismissed") private var getStartedDismissed: Bool = false
   @AppStorage("get_started_say_hi") private var sayHiDone: Bool = false
   @AppStorage("get_started_connect_friend") private var connectFriendDone: Bool = false
   @AppStorage("get_started_write_diary") private var writeDiaryDone: Bool = false
-  @AppStorage("get_started_tell_story") private var tellStoryDone: Bool = false
+  @AppStorage("get_started_customize_buddy") private var customizeBuddyDone: Bool = false
   @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var selectedVoiceName: String = ""
 
   private var buddyDisplayName: String {
@@ -892,7 +1010,7 @@ struct HomeView: View {
   }
 
   private var completedStepCount: Int {
-    [sayHiDone, connectFriendDone, writeDiaryDone, tellStoryDone].filter { $0 }.count
+    [sayHiDone, connectFriendDone, writeDiaryDone, customizeBuddyDone].filter { $0 }.count
   }
 
   private var completedStepIds: Set<Int> {
@@ -900,7 +1018,7 @@ struct HomeView: View {
     if sayHiDone { ids.insert(GetStartedStep.sayHi.id) }
     if connectFriendDone { ids.insert(GetStartedStep.connectFriend.id) }
     if writeDiaryDone { ids.insert(GetStartedStep.writeDiary.id) }
-    if tellStoryDone { ids.insert(GetStartedStep.tellStory.id) }
+    if customizeBuddyDone { ids.insert(GetStartedStep.customizeBuddy.id) }
     return ids
   }
 
@@ -968,8 +1086,6 @@ struct HomeView: View {
               .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            Spacer().frame(height: 12)
-
             ForEach(HomeFeature.allCases) { feature in
               Button { handleCardTap(feature) } label: {
                 HomeFeatureCardView(feature: feature)
@@ -995,13 +1111,8 @@ struct HomeView: View {
       .navigationDestination(isPresented: $showContacts) {
         FriendsAndContactsSectionView()
       }
-      .navigationDestination(isPresented: $showPersonalization) {
-        PersonalizationEditView(
-          isPresented: $showPersonalization,
-          profileNamespace: profileNamespace,
-          viewModel: settingsViewModel
-        )
-        .environmentObject(sessionsVM)
+      .navigationDestination(isPresented: $showCustomizeBuddies) {
+        CustomizeBuddiesView()
       }
       .navigationDestination(isPresented: $showDiary) {
         DiaryView()
@@ -1087,7 +1198,7 @@ struct HomeView: View {
       case .sayHi: sayHiDone = false
       case .connectFriend: connectFriendDone = false
       case .writeDiary: writeDiaryDone = false
-      case .tellStory: tellStoryDone = false
+      case .customizeBuddy: customizeBuddyDone = false
       }
     }
   }
@@ -1096,7 +1207,7 @@ struct HomeView: View {
     sayHiDone = false
     connectFriendDone = false
     writeDiaryDone = false
-    tellStoryDone = false
+    customizeBuddyDone = false
     getStartedDismissed = false
   }
 
@@ -1108,12 +1219,12 @@ struct HomeView: View {
       case .sayHi: sayHiDone = true
       case .connectFriend: connectFriendDone = true
       case .writeDiary: writeDiaryDone = true
-      case .tellStory: tellStoryDone = true
+      case .customizeBuddy: customizeBuddyDone = true
       }
     }
 
     // Auto-dismiss card when all steps are done
-    if sayHiDone && connectFriendDone && writeDiaryDone && tellStoryDone {
+    if sayHiDone && connectFriendDone && writeDiaryDone && customizeBuddyDone {
       DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
         withAnimation(.easeOut(duration: 0.3)) {
           getStartedDismissed = true
@@ -1130,8 +1241,8 @@ struct HomeView: View {
       showContacts = true
     case .writeDiary:
       showDiary = true
-    case .tellStory:
-      showPersonalization = true
+    case .customizeBuddy:
+      showCustomizeBuddies = true
     }
   }
 }

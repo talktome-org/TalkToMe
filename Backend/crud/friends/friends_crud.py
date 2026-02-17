@@ -64,7 +64,8 @@ async def get_or_create_my_code(*, user_id: uuid.UUID, expires_in_minutes: int =
     return await run_in_threadpool(_upsert_new)
 
 
-async def add_friend_by_code(*, user_id: uuid.UUID, code: str) -> uuid.UUID:
+async def add_friend_by_code(*, user_id: uuid.UUID, code: str) -> tuple[uuid.UUID, bool]:
+    """Return ``(owner_id, is_new)`` – *is_new* is True when a friendship was just created."""
     cleaned = (code or "").strip()
     if len(cleaned) != 4 or not cleaned.isdigit():
         raise PermissionError("Code must be exactly 4 digits")
@@ -98,10 +99,9 @@ async def add_friend_by_code(*, user_id: uuid.UUID, code: str) -> uuid.UUID:
     low = min(user_id, owner_id)
     high = max(user_id, owner_id)
 
-    def _insert_friendship():
+    def _insert_friendship() -> bool:
         db = SessionLocal()
         try:
-            # Best-effort: if exists, treat as success.
             existing = (
                 db.execute(
                     select(Friendship.id).where(
@@ -113,15 +113,16 @@ async def add_friend_by_code(*, user_id: uuid.UUID, code: str) -> uuid.UUID:
                 .first()
             )
             if existing:
-                return
+                return False
             fr = Friendship(user_low_id=low, user_high_id=high, status="accepted")
             db.add(fr)
             db.commit()
+            return True
         finally:
             db.close()
 
-    await run_in_threadpool(_insert_friendship)
-    return owner_id
+    is_new = await run_in_threadpool(_insert_friendship)
+    return owner_id, is_new
 
 
 async def list_friends_for_user(*, user_id: uuid.UUID) -> list[uuid.UUID]:

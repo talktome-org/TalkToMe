@@ -73,8 +73,11 @@ final class TransparentPlayerUIView: UIView {
         view.suspendObservers()
         view.queuePlayer?.pause()
         recycleLock.lock()
+        let evicted = recycledViews[name]
         recycledViews[name] = view
         recycleLock.unlock()
+        // Clean up any evicted view so its player resources are freed.
+        evicted?.cleanup()
     }
 
     // MARK: - Preload cache
@@ -300,6 +303,17 @@ final class TransparentPlayerUIView: UIView {
             return
         }
 
+        // Re-associate the player with its layer if the connection was lost
+        // (can happen after navigation transitions or sheet presentations).
+        if let layer = playerLayer, layer.player !== player {
+            layer.player = player
+        }
+
+        // Ensure the layer frame stays in sync with the view bounds.
+        if let layer = playerLayer, layer.frame != bounds, bounds != .zero {
+            layer.frame = bounds
+        }
+
         // After route/session changes AVPlayer may stick in waiting state until nudged.
         if player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
             let t = player.currentTime()
@@ -320,6 +334,17 @@ final class TransparentPlayerUIView: UIView {
 
         cleanup()
         configure(videoName: name, extension: ext, loop: loop, startTime: start)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil, shouldLoop, let player = queuePlayer else { return }
+        // After window transitions (navigation push/pop, recycling re-attach),
+        // the AVPlayerLayer can silently lose its rendering pipeline.
+        // Force a re-association to recover.
+        playerLayer?.player = player
+        playerLayer?.frame = bounds
+        resumeIfNeeded()
     }
 
     override func layoutSubviews() {

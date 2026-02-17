@@ -104,6 +104,11 @@ extension APNSService: UNUserNotificationCenterDelegate {
                 NotificationCenter.default.post(name: .partnerMessageReceived, object: nil, userInfo: ["sessionId": sessionId])
             }
         }
+        if let type = userInfo["type"] as? String, type == "friend_added" {
+            if AuthService.shared.isAuthenticated {
+                NotificationCenter.default.post(name: .friendAdded, object: nil)
+            }
+        }
         return [.banner, .list, .sound, .badge]
     }
 
@@ -137,6 +142,12 @@ extension APNSService: UNUserNotificationCenterDelegate {
                 }
             }
             return
+        }
+
+        if let type = userInfo["type"] as? String, type == "friend_added" {
+            if AuthService.shared.isAuthenticated {
+                NotificationCenter.default.post(name: .friendAdded, object: nil)
+            }
         }
     }
 

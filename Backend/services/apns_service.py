@@ -89,24 +89,22 @@ async def _post_apns(device_token: str, payload: Dict[str, Any]) -> tuple[int, s
     return last_status, last_text
 
 
-async def send_partner_request_notification_to_user(
+async def send_friend_added_notification_to_user(
     *,
     recipient_user_id: uuid.UUID,
-    request_id: uuid.UUID,
-    relationship_id: uuid.UUID,
-    preview: str,
     sender_name: Optional[str] = None,
 ) -> None:
     tokens = await list_tokens_for_user(user_id=recipient_user_id)
     if not tokens:
         return
 
+    name = (sender_name or "").strip() or "Someone"
     aps = {
-        "alert": {"title": "Partner Request", "body": "Your partner has sent you a request. Tap to open."},
+        "alert": {"title": "New Friend", "body": f"{name} added you as a friend!"},
         "sound": "default",
-        "category": "PARTNER_REQUEST",
+        "category": "FRIEND_ADDED",
     }
-    payload = {"aps": aps, "request_id": str(request_id), "relationship_id": str(relationship_id)}
+    payload = {"aps": aps, "type": "friend_added"}
 
     for t in tokens:
         token_val = t.get("token") if isinstance(t, dict) else None

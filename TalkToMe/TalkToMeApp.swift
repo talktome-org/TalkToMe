@@ -76,6 +76,9 @@ struct TalkToMeApp: App {
             print("[URL] Supabase auth callback detected")
           }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .friendAdded)) { _ in
+          Task { try? await friendsVM.loadFriends() }
+        }
         .onChange(of: auth.isAuthenticated, initial: true) { oldValue, isAuthed in
           // With `initial: true`, SwiftUI calls this once on first render.
           // We must NOT treat "initial false" as a logout event.
