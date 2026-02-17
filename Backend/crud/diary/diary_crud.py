@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from starlette.concurrency import run_in_threadpool
@@ -28,16 +28,83 @@ def _row_to_dict(obj) -> dict:
     return d
 
 
-async def get_settings(user_id: uuid.UUID) -> tuple[str, str, str]:
-    """Return (name, description, header_color_hex)."""
+def _compute_streaks(entry_dates: list[date]) -> tuple[int, int]:
+    if not entry_dates:
+        return (0, 0)
+
+    unique_dates = sorted(set(entry_dates))
+
+    max_streak = 0
+    run = 0
+    prev: Optional[date] = None
+    for day in unique_dates:
+        if prev is not None and day == (prev + timedelta(days=1)):
+            run += 1
+        else:
+            run = 1
+        if run > max_streak:
+            max_streak = run
+        prev = day
+
+    date_set = set(unique_dates)
+    today = datetime.now(timezone.utc).date()
+    current_streak = 0
+    cursor = today
+    while cursor in date_set:
+        current_streak += 1
+        cursor -= timedelta(days=1)
+
+    return (current_streak, max_streak)
+
+
+def _ensure_settings_row(db, user_id: uuid.UUID) -> DiarySettings:
+    row = db.get(DiarySettings, user_id)
+    if row is not None:
+        return row
+    row = DiarySettings(
+        user_id=user_id,
+        name="My Diary",
+        description="",
+        header_color_hex="#B8DEFF",
+        current_streak_days=0,
+        max_streak_days=0,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _refresh_streak_stats(db, user_id: uuid.UUID) -> tuple[int, int]:
+    row = _ensure_settings_row(db, user_id)
+    entry_dates = (
+        db.execute(select(DiaryEntry.date).where(DiaryEntry.user_id == user_id))
+        .scalars()
+        .all()
+    )
+    current_streak, max_streak = _compute_streaks(entry_dates)
+    row.current_streak_days = current_streak
+    row.max_streak_days = max_streak
+    row.updated_at = datetime.now(timezone.utc)
+    return (current_streak, max_streak)
+
+
+async def get_settings(user_id: uuid.UUID) -> tuple[str, str, str, int, int]:
+    """Return (name, description, header_color_hex, current_streak_days, max_streak_days)."""
 
     def _get():
         db = SessionLocal()
         try:
-            row = db.get(DiarySettings, user_id)
-            if row is None:
-                return ("My Diary", "", "#B8DEFF")
-            return (row.name, row.description, row.header_color_hex)
+            row = _ensure_settings_row(db, user_id)
+            _refresh_streak_stats(db, user_id)
+            db.commit()
+
+            return (
+                row.name,
+                row.description,
+                row.header_color_hex,
+                row.current_streak_days,
+                row.max_streak_days,
+            )
         finally:
             db.close()
 
@@ -55,7 +122,14 @@ async def upsert_settings(
         try:
             row = db.get(DiarySettings, user_id)
             if row is None:
-                row = DiarySettings(user_id=user_id, name=name, description=description, header_color_hex=header_color_hex)
+                row = DiarySettings(
+                    user_id=user_id,
+                    name=name,
+                    description=description,
+                    header_color_hex=header_color_hex,
+                    current_streak_days=0,
+                    max_streak_days=0,
+                )
                 db.add(row)
             else:
                 row.name = name
@@ -137,6 +211,9 @@ async def save_entry(
                 row.title = title
                 row.body_blocks = body_blocks
                 row.timezone_abbreviation = timezone_abbreviation
+
+            db.flush()
+            _refresh_streak_stats(db, user_id)
             db.commit()
             return entry_id
         except Exception:
@@ -162,6 +239,8 @@ async def delete_entry(user_id: uuid.UUID, entry_id: uuid.UUID) -> None:
             if row is None:
                 raise PermissionError("Entry not found or not owned by user")
             db.delete(row)
+            db.flush()
+            _refresh_streak_stats(db, user_id)
             db.commit()
         except Exception:
             db.rollback()

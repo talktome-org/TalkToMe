@@ -104,8 +104,14 @@ async def upload_diary_photo(
 @router.get("/settings")
 async def get_settings(current_user: dict = Depends(get_current_user)):
     uid = _user_id(current_user)
-    name, description, header_color_hex = await crud_get_settings(uid)
-    return {"name": name, "description": description, "header_color_hex": header_color_hex}
+    name, description, header_color_hex, current_streak_days, max_streak_days = await crud_get_settings(uid)
+    return {
+        "name": name,
+        "description": description,
+        "header_color_hex": header_color_hex,
+        "current_streak_days": current_streak_days,
+        "max_streak_days": max_streak_days,
+    }
 
 
 @router.put("/settings")

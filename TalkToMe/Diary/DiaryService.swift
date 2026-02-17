@@ -11,7 +11,7 @@ import UIKit
 
 // MARK: - API DTOs
 
-struct DiarySettingsRow: Codable {
+struct DiarySettingsRow: Codable, Sendable {
   let user_id: UUID
   var name: String
   var description: String
@@ -20,7 +20,7 @@ struct DiarySettingsRow: Codable {
   var updated_at: String?
 }
 
-struct DiaryEntryRow: Codable {
+struct DiaryEntryRow: Codable, Sendable {
   let id: UUID
   let user_id: UUID
   var date: String  // "yyyy-MM-dd"
@@ -36,6 +36,7 @@ final class DiaryService {
   static let shared = DiaryService()
   /// Keep below backend upload limits to avoid failures.
   private let maxPhotoUploadBytes = 19 * 1024 * 1024
+  private let memoryCache = DiaryServiceMemoryCache()
 
   private init() {}
 
@@ -50,7 +51,14 @@ final class DiaryService {
     name: String, description: String, headerColorHex: String
   ) {
     let token = try await accessToken()
-    return try await BackendService.shared.fetchDiarySettings(accessToken: token)
+    let settings = try await BackendService.shared.fetchDiarySettings(accessToken: token)
+    await memoryCache.storeSettings(
+      for: userId,
+      name: settings.name,
+      description: settings.description,
+      headerColorHex: settings.headerColorHex
+    )
+    return settings
   }
 
   func upsertSettings(userId: UUID, name: String, description: String, headerColorHex: String)
@@ -70,7 +78,7 @@ final class DiaryService {
   func fetchEntries(userId: UUID) async throws -> [DiaryEntryRow] {
     let token = try await accessToken()
     let dtos = try await BackendService.shared.fetchDiaryEntries(accessToken: token)
-    return dtos.map { dto in
+    let rows = dtos.map { dto in
       DiaryEntryRow(
         id: dto.id,
         user_id: dto.user_id,
@@ -81,6 +89,22 @@ final class DiaryService {
         timezone_abbreviation: dto.timezone_abbreviation
       )
     }
+    await memoryCache.storeEntries(for: userId, rows: rows)
+    return rows
+  }
+
+  func cachedSettings(userId: UUID) async -> (name: String, description: String, headerColorHex: String)? {
+    await memoryCache.settings(for: userId)
+  }
+
+  func cachedEntries(userId: UUID) async -> [DiaryEntryRow]? {
+    await memoryCache.entries(for: userId)
+  }
+
+  func preloadDiaryData(userId: UUID) async {
+    async let settingsTask = fetchSettings(userId: userId)
+    async let entriesTask = fetchEntries(userId: userId)
+    _ = try? await (settingsTask, entriesTask)
   }
 
   func fetchEntry(userId: UUID, entryId: UUID) async throws -> DiaryEntryRow? {
@@ -210,7 +234,8 @@ final class DiaryService {
   }
 
   static func isoDate(_ date: Date) -> String {
-    let cal = Calendar.current
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = .current
     let y = cal.component(.year, from: date)
     let m = cal.component(.month, from: date)
     let d = cal.component(.day, from: date)
@@ -218,10 +243,49 @@ final class DiaryService {
   }
 
   static func date(from isoDate: String) -> Date? {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy-MM-dd"
-    formatter.timeZone = TimeZone(identifier: "UTC")
-    return formatter.date(from: isoDate)
+    let trimmed = isoDate.trimmingCharacters(in: .whitespacesAndNewlines)
+    let parts = trimmed.split(separator: "-", omittingEmptySubsequences: false)
+    guard parts.count == 3,
+      let year = Int(parts[0]),
+      let month = Int(parts[1]),
+      let day = Int(parts[2])
+    else { return nil }
+
+    // Date-only values must be interpreted in local calendar space (not UTC)
+    // to avoid previous-day shifts on devices west of UTC.
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = .current
+    var comps = DateComponents()
+    comps.year = year
+    comps.month = month
+    comps.day = day
+    comps.hour = 12
+    comps.minute = 0
+    comps.second = 0
+    return cal.date(from: comps)
+  }
+
+  static func parseISO8601(_ isoDateTime: String?) -> Date? {
+    guard let raw = isoDateTime?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+      return nil
+    }
+
+    let withFractional = ISO8601DateFormatter()
+    withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let parsed = withFractional.date(from: raw) { return parsed }
+
+    let internet = ISO8601DateFormatter()
+    internet.formatOptions = [.withInternetDateTime]
+    if let parsed = internet.date(from: raw) { return parsed }
+
+    // Fallback for backend timestamps missing timezone info.
+    let fallback = DateFormatter()
+    fallback.locale = Locale(identifier: "en_US_POSIX")
+    fallback.timeZone = TimeZone(secondsFromGMT: 0)
+    fallback.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS"
+    if let parsed = fallback.date(from: raw) { return parsed }
+    fallback.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+    return fallback.date(from: raw)
   }
 }
 
@@ -232,6 +296,32 @@ enum DiaryBlockPayload {
   case imageLocal(id: UUID, image: UIImage)
   /// Already-uploaded image with path like `"uploads/UUID"`.
   case imageRemote(id: UUID, remotePath: String)
+}
+
+private actor DiaryServiceMemoryCache {
+  private var settingsByUserId: [UUID: (name: String, description: String, headerColorHex: String)] = [:]
+  private var entriesByUserId: [UUID: [DiaryEntryRow]] = [:]
+
+  func storeSettings(
+    for userId: UUID,
+    name: String,
+    description: String,
+    headerColorHex: String
+  ) {
+    settingsByUserId[userId] = (name, description, headerColorHex)
+  }
+
+  func settings(for userId: UUID) -> (name: String, description: String, headerColorHex: String)? {
+    settingsByUserId[userId]
+  }
+
+  func storeEntries(for userId: UUID, rows: [DiaryEntryRow]) {
+    entriesByUserId[userId] = rows
+  }
+
+  func entries(for userId: UUID) -> [DiaryEntryRow]? {
+    entriesByUserId[userId]
+  }
 }
 
 // MARK: - Decode body_blocks to blocks (text + image URLs; caller loads images)
