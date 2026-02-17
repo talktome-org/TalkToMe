@@ -13,12 +13,13 @@ import UniformTypeIdentifiers
 struct DiaryView: View {
   @StateObject private var viewModel = DiaryViewModel()
   @State private var tab: JournalTab = .overview
-  @State private var showNewEntry: Bool = false
+  @State private var newEntrySession: NewEntrySession?
   @State private var showDiaryEditor: Bool = false
-  @State private var entryToEdit: JournalEntry? = nil
-  @State private var entryDateForNewNote: Date = Date()
+  @State private var editEntrySession: EditEntrySession?
   @State private var draftTitle: String = ""
   @State private var draftBody: String = ""
+  @State private var deleteErrorMessage: String?
+  @State private var isKeyboardVisible: Bool = false
 
   var body: some View {
     NavigationStack {
@@ -26,15 +27,12 @@ struct DiaryView: View {
         AppTheme.background.ignoresSafeArea()
 
         VStack(spacing: 0) {
-          // Top section: "My Diary" + date
-          header
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 36)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(topTintBackground)
+          DiaryHeroCardView(
+            title: diaryDisplayTitle,
+            subtitle: "\(viewModel.displayTodayString) • \(viewModel.displayYearString)",
+            gradientColors: heroGradientColors
+          )
 
-          // White sheet overlaps header by 24pt so rounded top corners show
           JournalSheetView(
             tab: $tab,
             description: viewModel.diaryDescription,
@@ -43,31 +41,39 @@ struct DiaryView: View {
             accentColor: viewModel.diaryColor,
             onEditDiary: { showDiaryEditor = true },
             onAddEntryForDate: { date in
-              entryDateForNewNote = date
-              showNewEntry = true
+              newEntrySession = NewEntrySession(initialDate: date)
             },
             onSelectEntry: { entry in
-              entryToEdit = entry
+              editEntrySession = EditEntrySession(entry: entry)
+            },
+            onDeleteEntry: { entry in
+              deleteEntry(entry)
             }
           )
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .padding(.top, -24)
         }
-        .ignoresSafeArea(edges: .bottom)
+        .padding(.top, 0)
+        .padding(.bottom, 0)
+        .ignoresSafeArea(edges: [.top, .bottom])
 
         GlassFloatingActionButton(systemName: "plus") {
           Haptics.impact(.light)
-          entryDateForNewNote = Date()
-          showNewEntry = true
+          newEntrySession = NewEntrySession(initialDate: Date())
         }
+        .opacity(isKeyboardVisible ? 0 : 1)
+        .scaleEffect(isKeyboardVisible ? 0.92 : 1)
+        .offset(y: isKeyboardVisible ? 22 : 0)
+        .allowsHitTesting(!isKeyboardVisible)
+        .accessibilityHidden(isKeyboardVisible)
+        .animation(.easeInOut(duration: 0.2), value: isKeyboardVisible)
         .padding(.trailing, 18)
         .padding(.bottom, 50)
       }
-      .navigationTitle("Diary")
+      .navigationTitle("")
       .navigationBarTitleDisplayMode(.inline)
-      .toolbarBackground(.hidden, for: .navigationBar)
       .toolbar {
-        ToolbarItem(placement: .topBarLeading) {
+        ToolbarItem(placement: .topBarTrailing) {
           Button("Edit") {
             Haptics.impact(.light)
             showDiaryEditor = true
@@ -88,10 +94,10 @@ struct DiaryView: View {
       .presentationDetents([.medium, .large])
       .presentationDragIndicator(.visible)
     }
-    .sheet(isPresented: $showNewEntry) {
+    .sheet(item: $newEntrySession) { session in
       NewDiaryNoteSheet(
         accentColor: viewModel.diaryColor,
-        initialDate: entryDateForNewNote,
+        initialDate: session.initialDate,
         draftTitle: draftTitle,
         draftBody: draftBody,
         onAdd: { draft in
@@ -107,19 +113,20 @@ struct DiaryView: View {
       .presentationDetents([.large])
       .presentationDragIndicator(.visible)
     }
-    .sheet(item: $entryToEdit) { entry in
+    .sheet(item: $editEntrySession) { session in
       EditDiaryNoteSheet(
-        entry: entry,
+        entry: session.entry,
         accentColor: viewModel.diaryColor,
         onSave: { updated in
           if let idx = viewModel.entries.firstIndex(where: { $0.id == updated.id }) {
             viewModel.entries[idx] = updated
           }
-          entryToEdit = nil
+          viewModel.loadIfNeeded()
+          editEntrySession = nil
         },
         onDelete: {
-          viewModel.entries.removeAll { $0.id == entry.id }
-          entryToEdit = nil
+          viewModel.entries.removeAll { $0.id == session.entry.id }
+          editEntrySession = nil
         }
       )
       .presentationDetents([.large])
@@ -127,42 +134,257 @@ struct DiaryView: View {
     }
     .onAppear { viewModel.loadIfNeeded() }
     .onChange(of: AuthService.shared.currentUserId) { _, _ in viewModel.loadIfNeeded() }
+    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+      isKeyboardVisible = true
+    }
+    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+      isKeyboardVisible = false
+    }
+    .alert(
+      "Couldn't delete note",
+      isPresented: Binding(
+        get: { deleteErrorMessage != nil },
+        set: { if !$0 { deleteErrorMessage = nil } }
+      )
+    ) {
+      Button("OK", role: .cancel) { deleteErrorMessage = nil }
+    } message: {
+      if let msg = deleteErrorMessage { Text(msg) }
+    }
   }
 
-  private var topTintBackground: some View {
-    // User-selectable color: only the top section with "My Diary" + date.
-    // Editable via DiaryEditorSheet → Color picker.
-    viewModel.diaryColor
-      .ignoresSafeArea(edges: .top)
-      .allowsHitTesting(false)
+  private var diaryDisplayTitle: String {
+    let trimmed = viewModel.diaryName.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? "My Diary" : trimmed
   }
 
-  private var header: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack(spacing: 10) {
-        Text(
-          viewModel.diaryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "My Diary" : viewModel.diaryName
-        )
-        .font(.system(size: 34, weight: .bold))
-        .foregroundStyle(.primary)
-      }
+  private var heroGradientColors: [Color] {
+    return [
+      viewModel.diaryColor.opacity(0.98),
+      viewModel.diaryColor.opacity(0.94),
+      viewModel.diaryColor.opacity(0.88),
+      AppTheme.brand.opacity(0.86),
+      AppTheme.brand.opacity(0.80),
+    ]
+  }
 
-      // Date + year in one organic line.
-      HStack(spacing: 8) {
-        Text(viewModel.displayTodayString)
-        Text("•")
-          .foregroundStyle(.secondary.opacity(0.7))
-        Text(viewModel.displayYearString)
+  private func deleteEntry(_ entry: JournalEntry) {
+    Task {
+      guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else {
+        await MainActor.run {
+          deleteErrorMessage = "Sign in to delete this note."
+        }
+        return
       }
-      .font(.system(size: 14, weight: .semibold))
-      .foregroundStyle(.secondary)
+      do {
+        try await DiaryService.shared.deleteEntry(userId: uid, entryId: entry.id)
+        await MainActor.run {
+          viewModel.entries.removeAll { $0.id == entry.id }
+          if editEntrySession?.entry.id == entry.id {
+            editEntrySession = nil
+          }
+        }
+      } catch {
+        await MainActor.run {
+          deleteErrorMessage = DiaryService.userFacingMessage(from: error)
+        }
+      }
     }
   }
 }
 
 #Preview {
   DiaryView()
+}
+
+private extension Color {
+  func blended(with other: Color, amount: CGFloat) -> Color {
+    let t = min(max(amount, 0), 1)
+
+    let a = UIColor(self)
+    let b = UIColor(other)
+
+    var ar: CGFloat = 0
+    var ag: CGFloat = 0
+    var ab: CGFloat = 0
+    var aa: CGFloat = 0
+    var br: CGFloat = 0
+    var bg: CGFloat = 0
+    var bb: CGFloat = 0
+    var ba: CGFloat = 0
+
+    guard a.getRed(&ar, green: &ag, blue: &ab, alpha: &aa),
+      b.getRed(&br, green: &bg, blue: &bb, alpha: &ba)
+    else {
+      return self
+    }
+
+    return Color(
+      uiColor: UIColor(
+        red: ar + (br - ar) * t,
+        green: ag + (bg - ag) * t,
+        blue: ab + (bb - ab) * t,
+        alpha: aa + (ba - aa) * t
+      )
+    )
+  }
+}
+
+private struct DiaryHeroCardView: View {
+  @Environment(\.colorScheme) private var colorScheme
+  let title: String
+  let subtitle: String
+  let gradientColors: [Color]
+
+  private var baseGradientColors: [Color] {
+    [
+      AppTheme.brand.opacity(0.98),
+      AppTheme.brand.opacity(0.94),
+      AppTheme.brand.opacity(0.88),
+      AppTheme.accent.opacity(0.86),
+      AppTheme.accent.opacity(0.80),
+    ]
+  }
+
+  private var styledGradientColors: [Color] {
+    let source = gradientColors.isEmpty ? baseGradientColors : gradientColors
+    if colorScheme == .dark {
+      return [
+        source[0].blended(with: .black, amount: 0.34),
+        source[1].blended(with: AppTheme.accent, amount: 0.32),
+        source[2].blended(with: .black, amount: 0.20),
+        source[3].blended(with: Color(red: 0.20, green: 0.32, blue: 0.50), amount: 0.44),
+        source[4].blended(with: .black, amount: 0.30),
+      ]
+    }
+
+    return [
+      source[0].blended(with: Color(red: 0.99, green: 0.88, blue: 0.74), amount: 0.24),
+      source[1].blended(with: Color(red: 0.70, green: 0.86, blue: 1.0), amount: 0.24),
+      source[2].blended(with: Color(red: 0.96, green: 0.74, blue: 0.80), amount: 0.22),
+      source[3].blended(with: .white, amount: 0.12),
+      source[4].blended(with: Color(red: 0.63, green: 0.81, blue: 0.99), amount: 0.20),
+    ]
+  }
+
+  var body: some View {
+    let source = styledGradientColors
+    let c0 = source[0]
+    let c1 = source[min(1, source.count - 1)]
+    let c2 = source[min(2, source.count - 1)]
+    let c3 = source[min(3, source.count - 1)]
+    let c4 = source[min(4, source.count - 1)]
+    let m12a = c1.blended(with: c2, amount: 0.25)
+    let m12b = c1.blended(with: c2, amount: 0.70)
+    let m23 = c2.blended(with: c3, amount: 0.50)
+
+    ZStack {
+      LinearGradient(
+        gradient: Gradient(stops: [
+          .init(color: c0, location: 0.0),
+          .init(color: c1, location: 0.22),
+          .init(color: m12a, location: 0.36),
+          .init(color: m12b, location: 0.52),
+          .init(color: m23, location: 0.68),
+          .init(color: c3, location: 0.84),
+          .init(color: c4, location: 1.0),
+        ]),
+        startPoint: .leading,
+        endPoint: .trailing
+      )
+
+      LinearGradient(
+        colors: [
+          .white.opacity(colorScheme == .dark ? 0.04 : 0.16),
+          .clear,
+          .black.opacity(colorScheme == .dark ? 0.14 : 0.05),
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+      )
+
+      FloatingOrb(
+        size: 190,
+        color: .white.opacity(colorScheme == .dark ? 0.22 : 0.34),
+        startOffset: CGSize(width: -118, height: -36),
+        drift: CGSize(width: 20, height: 18),
+        blurRadius: 1.5,
+        duration: 8.0
+      )
+
+      FloatingOrb(
+        size: 120,
+        color: AppTheme.brand.opacity(colorScheme == .dark ? 0.18 : 0.28),
+        startOffset: CGSize(width: -18, height: 68),
+        drift: CGSize(width: -14, height: -18),
+        blurRadius: 0.8,
+        duration: 6.7
+      )
+
+      FloatingOrb(
+        size: 108,
+        color: .white.opacity(colorScheme == .dark ? 0.18 : 0.30),
+        startOffset: CGSize(width: 126, height: 54),
+        drift: CGSize(width: -18, height: -20),
+        blurRadius: 1.0,
+        duration: 7.4
+      )
+
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(spacing: 10) {
+          Image(systemName: "book.closed.fill")
+            .font(.system(size: 22, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.95))
+          Text(title)
+            .font(.system(size: 32, weight: .bold))
+            .lineLimit(1)
+            .foregroundStyle(.white)
+        }
+
+        Text(subtitle)
+          .font(.system(size: 14, weight: .semibold))
+          .foregroundStyle(.white.opacity(0.94))
+      }
+      .padding(.horizontal, 18)
+      .padding(.top, 92)
+      .padding(.bottom, 22)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+    .frame(height: 260)
+    .ignoresSafeArea(edges: .top)
+  }
+}
+
+private struct FloatingOrb: View {
+  let size: CGFloat
+  let color: Color
+  let startOffset: CGSize
+  let drift: CGSize
+  let blurRadius: CGFloat
+  let duration: Double
+
+  @State private var animate: Bool = false
+
+  var body: some View {
+    Circle()
+      .fill(
+        RadialGradient(
+          colors: [color, color.opacity(0.5), .clear],
+          center: .center,
+          startRadius: 0,
+          endRadius: size * 0.62
+        )
+      )
+      .frame(width: size, height: size)
+      .blur(radius: blurRadius)
+      .offset(
+        x: startOffset.width + (animate ? drift.width : 0),
+        y: startOffset.height + (animate ? drift.height : 0)
+      )
+      .onAppear { animate = true }
+      .animation(.easeInOut(duration: duration).repeatForever(autoreverses: true), value: animate)
+      .allowsHitTesting(false)
+  }
 }
 
 // MARK: - View model + models
@@ -183,6 +405,8 @@ private struct JournalEntry: Identifiable, Hashable {
   var timezoneAbbreviation: String
   /// Number of photo blocks in this entry (from body_blocks).
   var photoCount: Int
+  /// First photo URL in this entry (signed by backend), if available.
+  var firstPhotoURL: String?
 
   var excerpt: String {
     let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -260,6 +484,11 @@ private final class DiaryViewModel: ObservableObject {
         let body = DiaryService.textContentFromBodyBlocks(row.body_blocks)
         let createdAt = (row.created_at).flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date()
         let photoCount = row.body_blocks.filter { $0["type"] == "image" }.count
+        let firstPhotoURL = row.body_blocks.first { block in
+          guard block["type"] == "image" else { return false }
+          let trimmed = (block["url"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+          return !trimmed.isEmpty
+        }?["url"]
         return JournalEntry(
           id: row.id,
           date: date,
@@ -267,7 +496,8 @@ private final class DiaryViewModel: ObservableObject {
           body: body,
           createdAt: createdAt,
           timezoneAbbreviation: row.timezone_abbreviation,
-          photoCount: photoCount
+          photoCount: photoCount,
+          firstPhotoURL: firstPhotoURL
         )
       }
       await MainActor.run {
@@ -364,9 +594,11 @@ private final class DiaryViewModel: ObservableObject {
         body: draft.body,
         createdAt: Date(),
         timezoneAbbreviation: tz,
-        photoCount: 0
+        photoCount: draft.photoCount,
+        firstPhotoURL: nil
       )
       entries.insert(entry, at: 0)
+      Task { await loadEntries(userId: uid) }
       return
     }
 
@@ -389,9 +621,11 @@ private final class DiaryViewModel: ObservableObject {
           body: draft.body,
           createdAt: Date(),
           timezoneAbbreviation: tz,
-          photoCount: 0
+          photoCount: 0,
+          firstPhotoURL: nil
         )
         await MainActor.run { entries.insert(entry, at: 0) }
+        await loadEntries(userId: uid)
       } catch {
         await MainActor.run { loadError = error.localizedDescription }
       }
@@ -410,14 +644,13 @@ private struct JournalSheetView: View {
   let onEditDiary: () -> Void
   let onAddEntryForDate: (Date) -> Void
   let onSelectEntry: (JournalEntry) -> Void
+  let onDeleteEntry: (JournalEntry) -> Void
 
   @State private var selectedCalendarDay: Date? = Calendar.current.startOfDay(for: Date())
 
   var body: some View {
     VStack(spacing: 0) {
       JournalTabBar(tab: $tab)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
 
       Divider()
         .opacity(0.22)
@@ -432,7 +665,11 @@ private struct JournalSheetView: View {
             onEditDiary: onEditDiary
           )
         case .list:
-          JournalListTab(entries: entries, onSelectEntry: onSelectEntry)
+          JournalListTab(
+            entries: entries,
+            onSelectEntry: onSelectEntry,
+            onDeleteEntry: onDeleteEntry
+          )
         case .calendar:
           JournalCalendarTab(
             entries: $entries,
@@ -447,64 +684,103 @@ private struct JournalSheetView: View {
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
-    .background(
-      UnevenRoundedRectangle(
-        topLeadingRadius: 32,
-        bottomLeadingRadius: 0,
-        bottomTrailingRadius: 0,
-        topTrailingRadius: 32,
-        style: .continuous
-      )
-      .fill(AppTheme.background)
-      .shadow(color: Color.black.opacity(0.08), radius: 18, x: 0, y: -2)
-    )
+    .background(AppTheme.surface)
     .clipShape(
       UnevenRoundedRectangle(
-        topLeadingRadius: 32,
+        topLeadingRadius: 30,
         bottomLeadingRadius: 0,
         bottomTrailingRadius: 0,
-        topTrailingRadius: 32,
+        topTrailingRadius: 30,
         style: .continuous
       )
     )
+    .overlay(
+      UnevenRoundedRectangle(
+        topLeadingRadius: 30,
+        bottomLeadingRadius: 0,
+        bottomTrailingRadius: 0,
+        topTrailingRadius: 30,
+        style: .continuous
+      )
+        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+    )
+    .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: -1)
   }
 }
 
 private struct JournalTabBar: View {
   @Binding var tab: JournalTab
+  @State private var isKeyboardVisible: Bool = false
 
   var body: some View {
-    HStack(spacing: 18) {
-      tabButton(.overview, label: AnyView(Image(systemName: "book")))
-      tabButton(.list, label: AnyView(Text("List")))
-      tabButton(.calendar, label: AnyView(Text("Calendar")))
-      tabButton(.todo, label: AnyView(Text("ToDo")))
-
-      Spacer(minLength: 0)
+    HStack(spacing: 8) {
+      tabButton(.overview, title: "Overview")
+      tabButton(.list, title: "List")
+      tabButton(.calendar, title: "Calendar")
+      tabButton(.todo, title: "To-Do")
     }
-    .padding(.horizontal, 18)
-    .font(.system(size: 15, weight: .semibold))
-    .foregroundStyle(.primary)
+    .padding(.horizontal, 10)
+    .padding(.top, 18)
+    .padding(.bottom, 10)
+    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+      isKeyboardVisible = true
+    }
+    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+      isKeyboardVisible = false
+    }
   }
 
-  @ViewBuilder
-  private func tabButton(_ value: JournalTab, label: AnyView) -> some View {
-    Button {
+  private func tabButton(_ value: JournalTab, title: String) -> some View {
+    let isActive = tab == value
+
+    return Button {
+      guard tab != value else { return }
       Haptics.impact(.light)
-      withAnimation(.spring(response: 0.26, dampingFraction: 0.78)) {
-        tab = value
+
+      if isKeyboardVisible {
+        UIApplication.shared.sendAction(
+          #selector(UIResponder.resignFirstResponder),
+          to: nil,
+          from: nil,
+          for: nil
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+          withAnimation(.spring(response: 0.26, dampingFraction: 0.78)) {
+            tab = value
+          }
+        }
+      } else {
+        withAnimation(.spring(response: 0.26, dampingFraction: 0.78)) {
+          tab = value
+        }
       }
     } label: {
-      VStack(spacing: 8) {
-        label
-          .opacity(tab == value ? 1.0 : 0.6)
-        Rectangle()
-          .fill(tab == value ? Color.primary : Color.clear)
-          .frame(height: 2)
-          .clipShape(Capsule())
-      }
-      .padding(.horizontal, value == .overview ? 2 : 6)
-      .padding(.vertical, 6)
+      Text(title)
+        .font(.system(size: 11, weight: .semibold))
+        .lineLimit(1)
+        .minimumScaleFactor(0.76)
+      .foregroundStyle(isActive ? Color.white : Color(.secondaryLabel))
+      .padding(.horizontal, 8)
+      .padding(.vertical, 9)
+      .frame(maxWidth: .infinity)
+      .background(
+        Group {
+          if isActive {
+            LinearGradient(
+              colors: [AppTheme.brand, AppTheme.accent],
+              startPoint: .leading,
+              endPoint: .trailing
+            )
+          } else {
+            Color(.tertiarySystemBackground)
+          }
+        }
+      )
+      .clipShape(Capsule())
+      .overlay(
+        Capsule()
+          .stroke(Color(.separator).opacity(isActive ? 0.0 : 0.35), lineWidth: 0.5)
+      )
     }
     .buttonStyle(.plain)
   }
@@ -520,68 +796,139 @@ private struct JournalOverviewTab: View {
 
   var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 18) {
-        VStack(alignment: .leading, spacing: 8) {
-          Text("Description")
-            .font(.system(size: 22, weight: .bold))
-            .foregroundStyle(.primary)
+      VStack(alignment: .leading, spacing: 14) {
+        JournalDescriptionCard(
+          description: description,
+          accentColor: accentColor,
+          onEditDiary: onEditDiary
+        )
 
-          Text(
-            description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-              ? "Add a description…" : description
-          )
-          .font(.system(size: 15, weight: .regular))
-          .foregroundStyle(
-            description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-              ? .secondary : .primary
-          )
-          .opacity(description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 1.0 : 0.9)
-          .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
-          .contentShape(Rectangle())
-          .onTapGesture {
-            Haptics.impact(.light)
-            onEditDiary()
-          }
-        }
-        .padding(.horizontal, 18)
-        .padding(.top, 18)
-
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
           Text("Statistics")
-            .font(.system(size: 22, weight: .bold))
+            .font(.system(size: 20, weight: .bold))
             .foregroundStyle(.primary)
+            .padding(.horizontal, 4)
 
-          // First big card: Streak (number centered). Then Entries, Media, Days, On this day.
-          HStack(alignment: .top, spacing: 12) {
-            GlassStatBigCard(
-              title: "STREAK",
-              value: "\(stats.streakDays)",
-              subtitle: "Days",
-              accentColor: accentColor
-            )
-
-            VStack(spacing: 12) {
-              HStack(spacing: 12) {
-                GlassStatSmallCard(
-                  title: "ENTRIES", value: "\(stats.entriesCount)", accentColor: accentColor)
-                GlassStatSmallCard(
-                  title: "MEDIA", value: "\(stats.mediaCount)", accentColor: accentColor)
-              }
-              HStack(spacing: 12) {
-                GlassStatSmallCard(
-                  title: "DAYS", value: "\(stats.uniqueDaysCount)", accentColor: accentColor)
-                GlassStatSmallCard(
-                  title: "ON THIS DAY", value: "\(stats.onThisDayCount)", accentColor: accentColor)
-              }
-            }
-          }
+          JournalStatisticsCards(stats: stats, accentColor: accentColor)
         }
-        .padding(.horizontal, 18)
 
         Spacer().frame(height: 120)
       }
+      .padding(.horizontal, 16)
+      .padding(.top, 16)
     }
     .scrollIndicators(.hidden)
+  }
+}
+
+private struct JournalDescriptionCard: View {
+  let description: String
+  let accentColor: Color
+  let onEditDiary: () -> Void
+
+  private var trimmedDescription: String {
+    description.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  var body: some View {
+    Button {
+      Haptics.impact(.light)
+      onEditDiary()
+    } label: {
+      HStack(alignment: .top, spacing: 14) {
+        ZStack {
+          RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(
+              LinearGradient(
+                colors: [accentColor.opacity(0.95), AppTheme.brand.opacity(0.8)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+              )
+            )
+          Image(systemName: "quote.bubble.fill")
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(.white)
+        }
+        .frame(width: 34, height: 34)
+        .padding(.top, 2)
+
+        VStack(alignment: .leading, spacing: 6) {
+          Text("Description")
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(.primary)
+
+          Text(
+            trimmedDescription.isEmpty
+              ? "Add a short description for your diary."
+              : trimmedDescription
+          )
+          .font(.system(size: 16, weight: .regular))
+          .lineSpacing(2)
+          .foregroundStyle(trimmedDescription.isEmpty ? .secondary : .primary)
+          .lineLimit(nil)
+          .fixedSize(horizontal: false, vertical: true)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        Image(systemName: "chevron.right")
+          .font(.system(size: 13, weight: .bold))
+          .foregroundStyle(.tertiary)
+          .padding(.top, 5)
+      }
+      .padding(.horizontal, 16)
+      .padding(.vertical, 15)
+      .background(AppTheme.surface)
+      .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+      .overlay(
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+          .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+      )
+    }
+    .buttonStyle(.plain)
+  }
+}
+
+private struct JournalStatisticsCards: View {
+  let stats: JournalStats
+  let accentColor: Color
+
+  private let spacing: CGFloat = 12
+  private let smallCardHeight: CGFloat = 78
+
+  var body: some View {
+    GeometryReader { proxy in
+      let availableWidth = max(proxy.size.width, 0)
+      let bigCardWidth = min(max(availableWidth * 0.38, 122), 148)
+      let bigCardHeight = smallCardHeight * 2 + spacing
+
+      HStack(alignment: .top, spacing: spacing) {
+        GlassStatBigCard(
+          title: "STREAK",
+          value: "\(stats.streakDays)",
+          subtitle: "Days",
+          accentColor: accentColor
+        )
+        .frame(width: bigCardWidth, height: bigCardHeight)
+
+        VStack(spacing: spacing) {
+          HStack(spacing: spacing) {
+            GlassStatSmallCard(
+              title: "ENTRIES", value: "\(stats.entriesCount)", accentColor: accentColor)
+            GlassStatSmallCard(
+              title: "MEDIA", value: "\(stats.mediaCount)", accentColor: accentColor)
+          }
+          HStack(spacing: spacing) {
+            GlassStatSmallCard(
+              title: "DAYS", value: "\(stats.uniqueDaysCount)", accentColor: accentColor)
+            GlassStatSmallCard(
+              title: "ON THIS DAY", value: "\(stats.onThisDayCount)", accentColor: accentColor)
+          }
+        }
+        .frame(maxWidth: .infinity)
+      }
+      .frame(width: availableWidth, alignment: .leading)
+    }
+    .frame(height: smallCardHeight * 2 + spacing)
   }
 }
 
@@ -605,9 +952,15 @@ private struct GlassStatBigCard: View {
     Button {
     } label: {
       VStack(spacing: 0) {
-        Text(title)
-          .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(.secondary)
+        HStack(spacing: 6) {
+          Image(systemName: "flame.fill")
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(accentColor)
+
+          Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+        }
 
         Spacer(minLength: 0)
 
@@ -622,11 +975,12 @@ private struct GlassStatBigCard: View {
 
         Spacer(minLength: 0)
       }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
       .padding(16)
-      .frame(width: 150, height: 160)
-      .background { GlassCardBackground(shape: shape, interactive: true) }
-      .overlay { shape.stroke(accentColor.opacity(0.16), lineWidth: 1) }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background { GlassCardBackground(shape: shape) }
+      .overlay { shape.stroke(accentColor.opacity(0.2), lineWidth: 1) }
+      .clipShape(shape)
+      .shadow(color: Color.black.opacity(0.05), radius: 6, x: 0, y: 3)
     }
     .buttonStyle(StatCardButtonStyle())
   }
@@ -643,8 +997,11 @@ private struct GlassStatSmallCard: View {
     } label: {
       VStack(alignment: .leading, spacing: 8) {
         Text(title)
-          .font(.system(size: 11, weight: .semibold))
+          .font(.system(size: 10, weight: .semibold))
+          .lineLimit(2)
+          .minimumScaleFactor(0.75)
           .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
 
         Text(value)
           .font(.system(size: 22, weight: .bold, design: .rounded))
@@ -654,10 +1011,10 @@ private struct GlassStatSmallCard: View {
         Spacer(minLength: 0)
       }
       .padding(14)
-      .frame(maxWidth: .infinity)
-      .frame(height: 74)
-      .background { GlassCardBackground(shape: shape, interactive: true) }
-      .overlay { shape.stroke(accentColor.opacity(0.14), lineWidth: 1) }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background { GlassCardBackground(shape: shape) }
+      .overlay { shape.stroke(Color(.separator).opacity(0.2), lineWidth: 0.5) }
+      .clipShape(shape)
     }
     .buttonStyle(StatCardButtonStyle())
   }
@@ -665,7 +1022,7 @@ private struct GlassStatSmallCard: View {
 
 private struct GlassCardBackground<S: Shape>: View {
   let shape: S
-  var interactive: Bool = false
+  var interactive: Bool = true
 
   var body: some View {
     if #available(iOS 26.0, *) {
@@ -683,6 +1040,9 @@ private struct GlassCardBackground<S: Shape>: View {
 private struct JournalListTab: View {
   let entries: [JournalEntry]
   let onSelectEntry: (JournalEntry) -> Void
+  let onDeleteEntry: (JournalEntry) -> Void
+  @State private var pendingDeleteEntry: JournalEntry?
+  @State private var showDeleteEntryConfirm: Bool = false
 
   private var grouped: [(key: String, value: [JournalEntry])] {
     let formatter = DateFormatter()
@@ -727,7 +1087,16 @@ private struct JournalListTab: View {
               .padding(.top, 16)
 
             ForEach(section.value) { entry in
-              JournalEntryRowLink(entry: entry, onSelect: onSelectEntry)
+              JournalEntryRowLink(
+                entry: entry,
+                onSelect: onSelectEntry,
+                onLongPress: {
+                  Haptics.impact(.light)
+                  pendingDeleteEntry = entry
+                  showDeleteEntryConfirm = true
+                },
+                onDelete: onDeleteEntry
+              )
                 .padding(.horizontal, 18)
             }
           }
@@ -736,110 +1105,326 @@ private struct JournalListTab: View {
       }
     }
     .scrollIndicators(.hidden)
+    .confirmationDialog(
+      "Delete note?",
+      isPresented: $showDeleteEntryConfirm,
+      titleVisibility: .visible
+    ) {
+      Button("Delete", role: .destructive) {
+        guard let entry = pendingDeleteEntry else { return }
+        onDeleteEntry(entry)
+        pendingDeleteEntry = nil
+      }
+      Button("Cancel", role: .cancel) {
+        pendingDeleteEntry = nil
+      }
+    } message: {
+      Text("This will permanently delete the note.")
+    }
   }
 }
 
 // MARK: - ToDo list tab
 
 private let diaryTodoStorageKey = "diary_todo_items"
+private let diaryDefaultTodoItems = [
+  DiaryTodoItem(title: "Plan tomorrow's top priority")
+]
 
 private struct JournalTodoTab: View {
   @State private var todoItems: [DiaryTodoItem] = []
   @State private var newTodoTitle: String = ""
+  @State private var activeReorderItemId: UUID?
+  @State private var activeReorderTranslationY: CGFloat = 0
+  @State private var reorderReferenceTranslationY: CGFloat = 0
   @FocusState private var isAddFieldFocused: Bool
 
+  // Swap only after the dragged row has passed roughly one full row+gap distance.
+  private let todoReorderSwapDistance: CGFloat = 72
+
+  private var completedCount: Int {
+    todoItems.filter(\.isCompleted).count
+  }
+
+  private var pendingCount: Int {
+    max(0, todoItems.count - completedCount)
+  }
+
+  private var completionRatio: CGFloat {
+    guard !todoItems.isEmpty else { return 0 }
+    return CGFloat(completedCount) / CGFloat(todoItems.count)
+  }
+
   var body: some View {
-    VStack(spacing: 0) {
-      // Add row: text field + plus button on the right
-      HStack(spacing: 12) {
-        TextField("New task", text: $newTodoTitle)
-          .font(.system(size: 16, weight: .regular))
-          .focused($isAddFieldFocused)
-          .submitLabel(.done)
-          .onSubmit { addTodo() }
-          .padding(.vertical, 12)
-          .padding(.leading, 16)
-          .padding(.trailing, 8)
-          .background(AppTheme.surface)
-          .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    ScrollView {
+      VStack(alignment: .leading, spacing: 12) {
+        todoSummaryCard
+        addTaskCard
 
-        Button {
-          addTodo()
-        } label: {
-          Image(systemName: "plus.circle.fill")
-            .font(.system(size: 32))
-            .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(
-              newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? Color.secondary.opacity(0.6) : AppTheme.accent)
-        }
-        .buttonStyle(.plain)
-        .disabled(newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-      }
-      .padding(.horizontal, 18)
-      .padding(.vertical, 14)
-      .background(AppTheme.background)
-      .overlay(alignment: .bottom) {
-        Rectangle().fill(Color(.separator)).opacity(0.5).frame(height: 0.5)
-      }
-
-      if todoItems.isEmpty {
-        VStack(spacing: 8) {
-          Spacer().frame(height: 48)
-          Image(systemName: "checklist")
-            .font(.system(size: 24, weight: .light))
-            .foregroundStyle(.tertiary)
-          Text("Nothing yet")
-            .font(.system(size: 15, weight: .regular))
-            .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity)
-        Spacer(minLength: 0)
-      } else {
-        List {
-          ForEach($todoItems) { $item in
-            TodoRowView(
-              item: $item,
-              onDelete: {
-                todoItems.removeAll { $0.id == item.id }
-                saveTodos()
-              }
-            )
-            .listRowInsets(EdgeInsets(top: 10, leading: 18, bottom: 10, trailing: 18))
-            .listRowSeparator(.visible)
-            .listRowBackground(Color.clear)
-            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-              Button(role: .destructive) {
-                Haptics.impact(.light)
-                todoItems.removeAll { $0.id == item.id }
-                saveTodos()
-              } label: {
-                Label("Delete", systemImage: "trash")
-              }
+        if todoItems.isEmpty {
+          emptyStateCard
+        } else {
+          LazyVStack(spacing: 10) {
+            ForEach($todoItems) { $item in
+              TodoRowView(
+                item: $item,
+                isBeingReordered: activeReorderItemId == item.id,
+                onDelete: {
+                  removeTodo(id: item.id)
+                }
+              )
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .contentShape(Rectangle())
+              .offset(y: activeReorderItemId == item.id ? activeReorderTranslationY : 0)
+              .zIndex(activeReorderItemId == item.id ? 1 : 0)
+              .simultaneousGesture(reorderGesture(for: item.id))
             }
           }
+          .padding(.top, 2)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
+
+        Spacer().frame(height: 120)
       }
+      .padding(.horizontal, 16)
+      .padding(.top, 14)
     }
+    .scrollIndicators(.hidden)
+    .background(AppTheme.background)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     .onAppear { loadTodos() }
     .onChange(of: todoItems) { _, _ in saveTodos() }
+  }
+
+  private var todoSummaryCard: some View {
+    let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+
+    return ZStack(alignment: .topLeading) {
+      LinearGradient(
+        colors: [AppTheme.brand.opacity(0.24), AppTheme.accent.opacity(0.2), Color.white.opacity(0.06)],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+      )
+
+      Circle()
+        .fill(.white.opacity(0.22))
+        .frame(width: 138, height: 138)
+        .offset(x: -45, y: -64)
+
+      Circle()
+        .fill(.white.opacity(0.12))
+        .frame(width: 92, height: 92)
+        .offset(x: 260, y: 20)
+
+      VStack(alignment: .leading, spacing: 14) {
+        HStack(alignment: .top, spacing: 12) {
+          VStack(alignment: .leading, spacing: 3) {
+            Text("To-Do")
+              .font(.system(size: 24, weight: .bold))
+              .foregroundStyle(.primary)
+
+            Text(
+              pendingCount == 0
+                ? "All tasks are done."
+                : "\(pendingCount) \(pendingCount == 1 ? "task" : "tasks") pending"
+            )
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(.secondary)
+          }
+
+          Spacer(minLength: 8)
+
+          ZStack {
+            Circle()
+              .stroke(Color.primary.opacity(0.12), lineWidth: 5)
+            Circle()
+              .trim(from: 0, to: completionRatio)
+              .stroke(
+                AngularGradient(
+                  colors: [AppTheme.accent, AppTheme.brand, AppTheme.accent],
+                  center: .center
+                ),
+                style: StrokeStyle(lineWidth: 5, lineCap: .round)
+              )
+              .rotationEffect(.degrees(-90))
+          }
+          .frame(width: 46, height: 46)
+          .accessibilityLabel("Task completion")
+          .accessibilityValue("\(Int((completionRatio * 100).rounded())) percent")
+        }
+
+        HStack(spacing: 8) {
+          todoMetricPill(
+            icon: "circle",
+            title: "Pending",
+            value: "\(pendingCount)",
+            tint: AppTheme.accent
+          )
+          todoMetricPill(
+            icon: "checkmark.circle.fill",
+            title: "Done",
+            value: "\(completedCount)",
+            tint: Color.green.opacity(0.85)
+          )
+        }
+      }
+      .padding(16)
+    }
+    .frame(maxWidth: .infinity)
+    .clipShape(shape)
+    .overlay(
+      shape
+        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.6)
+    )
+    .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
+  }
+
+  private func todoMetricPill(icon: String, title: String, value: String, tint: Color) -> some View {
+    HStack(spacing: 8) {
+      Image(systemName: icon)
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(tint)
+
+      Text(title)
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(.secondary)
+
+      Text(value)
+        .font(.system(size: 12, weight: .bold, design: .rounded))
+        .foregroundStyle(.primary)
+        .monospacedDigit()
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 8)
+    .background(Color(.systemBackground).opacity(0.7))
+    .clipShape(Capsule())
+    .overlay(
+      Capsule()
+        .stroke(Color(.separator).opacity(0.18), lineWidth: 0.5)
+    )
+  }
+
+  private var addTaskCard: some View {
+    let trimmed = newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    let canAdd = !trimmed.isEmpty
+    let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+
+    return HStack(spacing: 10) {
+      ZStack {
+        Circle()
+          .fill(
+            LinearGradient(
+              colors: [AppTheme.brand, AppTheme.accent],
+              startPoint: .topLeading,
+              endPoint: .bottomTrailing
+            )
+          )
+        Image(systemName: "sparkles")
+          .font(.system(size: 13, weight: .semibold))
+          .foregroundStyle(.white)
+      }
+      .frame(width: 30, height: 30)
+
+      TextField("Add a task", text: $newTodoTitle)
+        .font(.system(size: 16, weight: .regular))
+        .focused($isAddFieldFocused)
+        .submitLabel(.done)
+        .onSubmit { addTodo() }
+
+      Button {
+        addTodo()
+      } label: {
+        Image(systemName: "plus")
+          .font(.system(size: 15, weight: .bold))
+          .foregroundStyle(canAdd ? .white : .secondary)
+          .frame(width: 34, height: 34)
+          .background(
+            Group {
+              if canAdd {
+                LinearGradient(
+                  colors: [AppTheme.brand, AppTheme.accent],
+                  startPoint: .topLeading,
+                  endPoint: .bottomTrailing
+                )
+              } else {
+                Color(.tertiarySystemFill)
+              }
+            }
+          )
+          .clipShape(Circle())
+      }
+      .buttonStyle(.plain)
+      .disabled(!canAdd)
+    }
+    .padding(.horizontal, 14)
+    .padding(.vertical, 13)
+    .background { GlassCardBackground(shape: shape) }
+    .clipShape(shape)
+    .overlay(
+      shape
+        .stroke(Color(.separator).opacity(0.22), lineWidth: 0.6)
+    )
+  }
+
+  private var emptyStateCard: some View {
+    let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+
+    return VStack(spacing: 8) {
+      Spacer().frame(height: 40)
+      Image(systemName: "checklist.checked")
+        .font(.system(size: 26, weight: .medium))
+        .foregroundStyle(AppTheme.accent.opacity(0.8))
+      Text("No tasks yet")
+        .font(.system(size: 17, weight: .semibold))
+        .foregroundStyle(.primary)
+      Text("Add your first task to start a clean, focused plan.")
+        .font(.system(size: 14, weight: .medium))
+        .multilineTextAlignment(.center)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 22)
+      Spacer().frame(height: 34)
+    }
+    .frame(maxWidth: .infinity)
+    .background {
+      LinearGradient(
+        colors: [AppTheme.surface, AppTheme.brand.opacity(0.07)],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+      )
+    }
+    .clipShape(shape)
+    .overlay(
+      shape
+        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.6)
+    )
   }
 
   private func addTodo() {
     let trimmed = newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
     Haptics.impact(.light)
-    todoItems.insert(DiaryTodoItem(title: trimmed), at: 0)
+    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+      todoItems.insert(DiaryTodoItem(title: trimmed), at: 0)
+    }
     newTodoTitle = ""
   }
 
+  private func removeTodo(id: UUID) {
+    Haptics.impact(.light)
+    withAnimation(.easeInOut(duration: 0.2)) {
+      todoItems.removeAll { $0.id == id }
+    }
+  }
+
   private func loadTodos() {
-    guard let data = UserDefaults.standard.data(forKey: diaryTodoStorageKey),
+    let defaults = UserDefaults.standard
+    guard let data = defaults.data(forKey: diaryTodoStorageKey),
       let decoded = try? JSONDecoder().decode([DiaryTodoItem].self, from: data)
-    else { return }
+    else {
+      if defaults.object(forKey: diaryTodoStorageKey) == nil {
+        todoItems = diaryDefaultTodoItems
+      }
+      return
+    }
     todoItems = decoded
   }
 
@@ -847,53 +1432,181 @@ private struct JournalTodoTab: View {
     guard let data = try? JSONEncoder().encode(todoItems) else { return }
     UserDefaults.standard.set(data, forKey: diaryTodoStorageKey)
   }
+
+  private func reorderGesture(for itemId: UUID) -> some Gesture {
+    LongPressGesture(minimumDuration: 0.25)
+      .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+      .onChanged { value in
+        switch value {
+        case .first(true):
+          beginReorderIfNeeded(for: itemId)
+        case .second(true, let drag?):
+          beginReorderIfNeeded(for: itemId)
+          updateReorder(translationY: drag.translation.height)
+        default:
+          break
+        }
+      }
+      .onEnded { _ in
+        endReorder()
+      }
+  }
+
+  private func beginReorderIfNeeded(for itemId: UUID) {
+    guard activeReorderItemId == nil else { return }
+    guard todoItems.firstIndex(where: { $0.id == itemId }) != nil else { return }
+
+    activeReorderItemId = itemId
+    reorderReferenceTranslationY = 0
+    activeReorderTranslationY = 0
+    Haptics.impact(.light)
+  }
+
+  private func updateReorder(translationY: CGFloat) {
+    guard let activeId = activeReorderItemId else { return }
+    guard todoItems.firstIndex(where: { $0.id == activeId }) != nil else { return }
+
+    // Move one slot only after crossing a full swap distance.
+    var deltaFromReference = translationY - reorderReferenceTranslationY
+    while deltaFromReference >= todoReorderSwapDistance {
+      guard moveActiveTodo(by: 1) else { break }
+      reorderReferenceTranslationY += todoReorderSwapDistance
+      deltaFromReference = translationY - reorderReferenceTranslationY
+    }
+    while deltaFromReference <= -todoReorderSwapDistance {
+      guard moveActiveTodo(by: -1) else { break }
+      reorderReferenceTranslationY -= todoReorderSwapDistance
+      deltaFromReference = translationY - reorderReferenceTranslationY
+    }
+
+    // Keep only the residual movement after each swap so dragging feels responsive.
+    activeReorderTranslationY = translationY - reorderReferenceTranslationY
+  }
+
+  private func moveActiveTodo(by direction: Int) -> Bool {
+    guard (direction == 1 || direction == -1), let activeId = activeReorderItemId else { return false }
+    guard let fromIndex = todoItems.firstIndex(where: { $0.id == activeId }) else { return false }
+    let toIndex = fromIndex + direction
+    guard (0..<todoItems.count).contains(toIndex) else { return false }
+
+    withAnimation(.easeInOut(duration: 0.1)) {
+      todoItems.move(
+        fromOffsets: IndexSet(integer: fromIndex),
+        toOffset: toIndex > fromIndex ? toIndex + 1 : toIndex
+      )
+    }
+    return true
+  }
+
+  private func endReorder() {
+    guard activeReorderItemId != nil else { return }
+
+    withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+      activeReorderTranslationY = 0
+    }
+
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+      activeReorderItemId = nil
+      reorderReferenceTranslationY = 0
+      activeReorderTranslationY = 0
+    }
+  }
 }
 
 private struct TodoRowView: View {
   @Binding var item: DiaryTodoItem
+  var isBeingReordered: Bool = false
   var onDelete: (() -> Void)?
 
   @State private var isSlidingOut: Bool = false
   private let slideOutDuration: Double = 0.28
 
   var body: some View {
+    let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+
     HStack(alignment: .center, spacing: 12) {
       Button {
         Haptics.impact(.light)
-        item.isCompleted.toggle()
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
+          item.isCompleted.toggle()
+        }
       } label: {
-        Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-          .font(.system(size: 20, weight: .light))
-          .foregroundStyle(
-            item.isCompleted ? Color.primary.opacity(0.6) : Color.primary.opacity(0.25))
+        ZStack {
+          Circle()
+            .fill(item.isCompleted ? Color.green.opacity(0.18) : Color.clear)
+            .frame(width: 28, height: 28)
+
+          Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+            .font(.system(size: 20, weight: .semibold))
+            .foregroundStyle(item.isCompleted ? Color.green.opacity(0.9) : Color.primary.opacity(0.26))
+            .symbolRenderingMode(.hierarchical)
+        }
       }
       .buttonStyle(.plain)
 
       Text(item.title)
-        .font(.system(size: 16, weight: .regular))
+        .font(.system(size: 16, weight: .medium))
         .strikethrough(item.isCompleted, color: item.isCompleted ? Color.secondary : nil)
         .foregroundStyle(item.isCompleted ? .secondary : .primary)
         .frame(maxWidth: .infinity, alignment: .leading)
         .multilineTextAlignment(.leading)
 
-      if item.isCompleted, let onDelete = onDelete {
-        Button {
-          Haptics.impact(.light)
-          withAnimation(.easeIn(duration: slideOutDuration)) {
-            isSlidingOut = true
+      if let onDelete = onDelete {
+        if item.isCompleted {
+          Button {
+            withAnimation(.easeIn(duration: slideOutDuration)) {
+              isSlidingOut = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + slideOutDuration) {
+              onDelete()
+            }
+          } label: {
+            Image(systemName: "trash.fill")
+              .font(.system(size: 14, weight: .semibold))
+              .foregroundStyle(Color.red.opacity(0.9))
+              .frame(width: 28, height: 28)
+              .background(Color.red.opacity(0.1))
+              .clipShape(Circle())
           }
-          DispatchQueue.main.asyncAfter(deadline: .now() + slideOutDuration) {
-            onDelete()
+          .buttonStyle(.plain)
+          .disabled(isBeingReordered)
+        } else {
+          Menu {
+            Button(role: .destructive) {
+              onDelete()
+            } label: {
+              Label("Delete Task", systemImage: "trash")
+            }
+          } label: {
+            Image(systemName: "ellipsis.circle")
+              .font(.system(size: 18, weight: .semibold))
+              .foregroundStyle(.secondary.opacity(0.8))
           }
-        } label: {
-          Image(systemName: "trash")
-            .font(.system(size: 16, weight: .medium))
-            .foregroundStyle(.secondary)
-            .symbolRenderingMode(.hierarchical)
+          .disabled(isBeingReordered)
         }
-        .buttonStyle(.plain)
       }
     }
+    .padding(.horizontal, 14)
+    .padding(.vertical, 12)
+    .background { GlassCardBackground(shape: shape) }
+    .clipShape(shape)
+    .overlay(
+      shape
+        .stroke(
+          isBeingReordered
+            ? AppTheme.accent.opacity(0.78)
+            : (item.isCompleted ? Color.green.opacity(0.2) : Color(.separator).opacity(0.22)),
+          lineWidth: isBeingReordered ? 1.3 : 0.6
+        )
+    )
+    .shadow(
+      color: isBeingReordered ? AppTheme.accent.opacity(0.24) : .black.opacity(0.03),
+      radius: isBeingReordered ? 12 : 4,
+      x: 0,
+      y: isBeingReordered ? 6 : 1
+    )
+    .scaleEffect(isBeingReordered ? 1.015 : 1)
+    .frame(maxWidth: .infinity, alignment: .leading)
     .contentShape(Rectangle())
     .offset(x: isSlidingOut ? -UIScreen.main.bounds.width : 0)
     .opacity(isSlidingOut ? 0 : 1)
@@ -904,15 +1617,41 @@ private struct TodoRowView: View {
 private struct JournalEntryRowLink: View {
   let entry: JournalEntry
   let onSelect: (JournalEntry) -> Void
+  let onLongPress: (() -> Void)?
+  let onDelete: ((JournalEntry) -> Void)?
+
+  init(
+    entry: JournalEntry,
+    onSelect: @escaping (JournalEntry) -> Void,
+    onLongPress: (() -> Void)? = nil,
+    onDelete: ((JournalEntry) -> Void)? = nil
+  ) {
+    self.entry = entry
+    self.onSelect = onSelect
+    self.onLongPress = onLongPress
+    self.onDelete = onDelete
+  }
 
   var body: some View {
-    Button {
-      Haptics.impact(.light)
-      onSelect(entry)
-    } label: {
-      JournalListRowContent(entry: entry)
-    }
-    .buttonStyle(.plain)
+    JournalListRowContent(entry: entry)
+      .contentShape(Rectangle())
+      .onTapGesture {
+        Haptics.impact(.light)
+        onSelect(entry)
+      }
+      .onLongPressGesture(minimumDuration: 0.4) {
+        onLongPress?()
+      }
+      .contextMenu {
+        if let onDelete {
+          Button(role: .destructive) {
+            Haptics.impact(.light)
+            onDelete(entry)
+          } label: {
+            Label("Delete", systemImage: "trash")
+          }
+        }
+      }
   }
 }
 
@@ -973,7 +1712,14 @@ private struct JournalListRowContent: View {
         .foregroundStyle(.tertiary)
         .padding(.top, 4)
     }
+    .padding(.horizontal, 14)
     .padding(.vertical, 12)
+    .background(AppTheme.surface)
+    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+    )
     .contentShape(Rectangle())
   }
 }
@@ -992,8 +1738,34 @@ private struct JournalCalendarTab: View {
 
   private let cal = Calendar.current
 
+  private var dayVisuals: [Date: CalendarDayVisual] {
+    var grouped: [Date: [JournalEntry]] = [:]
+    for entry in entries {
+      let day = cal.startOfDay(for: entry.date)
+      grouped[day, default: []].append(entry)
+    }
+
+    var result: [Date: CalendarDayVisual] = [:]
+    for (day, dayEntries) in grouped {
+      let sorted = dayEntries.sorted { $0.createdAt < $1.createdAt }
+      let firstPhotoURL = sorted.compactMap { entry -> String? in
+        guard let url = entry.firstPhotoURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !url.isEmpty
+        else { return nil }
+        return url
+      }.first
+      let hasPhoto = sorted.contains { $0.photoCount > 0 || (($0.firstPhotoURL ?? "").isEmpty == false) }
+      result[day] = CalendarDayVisual(
+        notesCount: dayEntries.count,
+        hasPhoto: hasPhoto,
+        firstPhotoURL: firstPhotoURL
+      )
+    }
+    return result
+  }
+
   private var daysWithEntries: Set<Date> {
-    Set(entries.map { cal.startOfDay(for: $0.date) })
+    Set(dayVisuals.keys)
   }
 
   private func entries(on day: Date) -> [JournalEntry] {
@@ -1004,47 +1776,46 @@ private struct JournalCalendarTab: View {
       .sorted { $0.createdAt > $1.createdAt }
   }
 
+  private var selectedDayText: String {
+    guard let selectedDay else { return "Select a day" }
+    let f = DateFormatter()
+    f.dateFormat = "EEEE, MMM d"
+    return f.string(from: selectedDay)
+  }
+
   var body: some View {
     ScrollView {
-      VStack(spacing: 16) {
+      VStack(spacing: 12) {
+        calendarSummaryCard
+
         MonthCalendarScrollView(
-          daysWithEntries: daysWithEntries,
+          dayVisuals: dayVisuals,
           accentColor: accentColor,
           selectedDay: $selectedDay,
           onDayTapped: { date in
-            sheetDay = cal.startOfDay(for: date)
+            let normalizedDay = cal.startOfDay(for: date)
+            sheetDay = normalizedDay
             showDaySheet = true
           }
         )
-        .padding(.top, 12)
+        .padding(.top, 2)
 
         if let selectedDay {
           let dayEntries = entries(on: selectedDay)
           if dayEntries.isEmpty {
-            Text("No entries on this day")
-              .font(.system(size: 14))
-              .foregroundStyle(.secondary)
-              .frame(maxWidth: .infinity, alignment: .center)
-              .padding(.top, 6)
+            selectedDayEmptyCard(for: selectedDay)
           } else {
-            VStack(alignment: .leading, spacing: 10) {
-              Text("On this day")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 18)
-
-              ForEach(dayEntries) { entry in
-                JournalEntryRowLink(entry: entry, onSelect: onSelectEntry)
-                  .padding(.horizontal, 18)
-              }
-            }
+            selectedDayEntriesCard(day: selectedDay, dayEntries: dayEntries)
           }
         }
 
         Spacer().frame(height: 120)
       }
+      .padding(.horizontal, 16)
+      .padding(.top, 14)
     }
     .scrollIndicators(.hidden)
+    .background(AppTheme.background)
     .sheet(isPresented: $showDaySheet) {
       if let day = sheetDay {
         CalendarDaySheet(
@@ -1057,17 +1828,215 @@ private struct JournalCalendarTab: View {
               onAddEntryForDate(day)
             }
           },
-          onSelectEntry: onSelectEntry
+          onSelectEntry: { entry in
+            showDaySheet = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+              onSelectEntry(entry)
+            }
+          }
         )
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
       }
     }
   }
+
+  private var calendarSummaryCard: some View {
+    let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+    let selectedCount = selectedDay.map { entries(on: $0).count } ?? 0
+
+    return ZStack(alignment: .topLeading) {
+      LinearGradient(
+        colors: [AppTheme.brand.opacity(0.22), AppTheme.accent.opacity(0.18), Color.white.opacity(0.05)],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+      )
+
+      Circle()
+        .fill(.white.opacity(0.2))
+        .frame(width: 132, height: 132)
+        .offset(x: -45, y: -58)
+
+      Circle()
+        .fill(.white.opacity(0.1))
+        .frame(width: 90, height: 90)
+        .offset(x: 255, y: 24)
+
+      VStack(alignment: .leading, spacing: 14) {
+        HStack(alignment: .top, spacing: 12) {
+          VStack(alignment: .leading, spacing: 3) {
+            Text("Calendar")
+              .font(.system(size: 24, weight: .bold))
+              .foregroundStyle(.primary)
+
+            Text(selectedDayText)
+              .font(.system(size: 14, weight: .semibold))
+              .foregroundStyle(.secondary)
+          }
+
+          Spacer(minLength: 8)
+
+          ZStack {
+            Circle()
+              .fill(
+                LinearGradient(
+                  colors: [AppTheme.brand, AppTheme.accent],
+                  startPoint: .topLeading,
+                  endPoint: .bottomTrailing
+                )
+              )
+            Image(systemName: "calendar")
+              .font(.system(size: 15, weight: .semibold))
+              .foregroundStyle(.white)
+          }
+          .frame(width: 42, height: 42)
+        }
+
+        HStack(spacing: 8) {
+          calendarMetricPill(
+            icon: "checklist.checked",
+            title: "Logged Days",
+            value: "\(daysWithEntries.count)",
+            tint: AppTheme.accent
+          )
+          calendarMetricPill(
+            icon: "book.closed.fill",
+            title: "Selected",
+            value: "\(selectedCount)",
+            tint: accentColor
+          )
+        }
+      }
+      .padding(16)
+    }
+    .frame(maxWidth: .infinity)
+    .clipShape(shape)
+    .overlay(
+      shape
+        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.6)
+    )
+    .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
+  }
+
+  private func calendarMetricPill(icon: String, title: String, value: String, tint: Color) -> some View {
+    HStack(spacing: 8) {
+      Image(systemName: icon)
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(tint)
+
+      Text(title)
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(.secondary)
+
+      Text(value)
+        .font(.system(size: 12, weight: .bold, design: .rounded))
+        .foregroundStyle(.primary)
+        .monospacedDigit()
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 8)
+    .background(Color(.systemBackground).opacity(0.7))
+    .clipShape(Capsule())
+    .overlay(
+      Capsule()
+        .stroke(Color(.separator).opacity(0.18), lineWidth: 0.5)
+    )
+  }
+
+  private func selectedDayEntriesCard(day: Date, dayEntries: [JournalEntry]) -> some View {
+    let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+    let f = DateFormatter()
+    f.dateFormat = "MMMM d"
+
+    return VStack(alignment: .leading, spacing: 10) {
+      HStack(alignment: .center, spacing: 8) {
+        Text("On this day")
+          .font(.system(size: 16, weight: .semibold))
+          .foregroundStyle(.primary)
+
+        Text(f.string(from: day))
+          .font(.system(size: 13, weight: .semibold))
+          .foregroundStyle(.secondary)
+
+        Spacer(minLength: 8)
+
+        Text("\(dayEntries.count)")
+          .font(.system(size: 12, weight: .bold, design: .rounded))
+          .monospacedDigit()
+          .foregroundStyle(.primary)
+          .padding(.horizontal, 10)
+          .padding(.vertical, 6)
+          .background(Color(.tertiarySystemFill))
+          .clipShape(Capsule())
+      }
+      .padding(.horizontal, 14)
+      .padding(.top, 14)
+
+      VStack(spacing: 10) {
+        ForEach(dayEntries) { entry in
+          JournalEntryRowLink(entry: entry, onSelect: onSelectEntry)
+        }
+      }
+      .padding(.horizontal, 12)
+      .padding(.bottom, 12)
+    }
+    .background { GlassCardBackground(shape: shape) }
+    .clipShape(shape)
+    .overlay(
+      shape
+        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.6)
+    )
+  }
+
+  private func selectedDayEmptyCard(for day: Date) -> some View {
+    let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+    let f = DateFormatter()
+    f.dateFormat = "MMMM d"
+    let isFutureDay = cal.startOfDay(for: day) > cal.startOfDay(for: Date())
+
+    return VStack(spacing: 8) {
+      Spacer().frame(height: 28)
+      Image(systemName: isFutureDay ? "calendar.badge.exclamationmark" : "calendar.badge.plus")
+        .font(.system(size: 24, weight: .medium))
+        .foregroundStyle((isFutureDay ? Color.orange : AppTheme.accent).opacity(0.86))
+      Text("No entries on \(f.string(from: day))")
+        .font(.system(size: 16, weight: .semibold))
+        .foregroundStyle(.primary)
+      Text(
+        isFutureDay
+          ? "You can't add a note for this date yet because that day hasn't happened."
+          : "Tap a date to add a note and start building your timeline."
+      )
+        .font(.system(size: 14, weight: .medium))
+        .multilineTextAlignment(.center)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 20)
+      Spacer().frame(height: 24)
+    }
+    .frame(maxWidth: .infinity)
+    .background {
+      LinearGradient(
+        colors: [AppTheme.surface, AppTheme.brand.opacity(0.07)],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+      )
+    }
+    .clipShape(shape)
+    .overlay(
+      shape
+        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.6)
+    )
+  }
+}
+
+private struct CalendarDayVisual {
+  let notesCount: Int
+  let hasPhoto: Bool
+  let firstPhotoURL: String?
 }
 
 private struct MonthCalendarScrollView: View {
-  let daysWithEntries: Set<Date>
+  let dayVisuals: [Date: CalendarDayVisual]
   let accentColor: Color
   @Binding var selectedDay: Date?
   var onDayTapped: ((Date) -> Void)?
@@ -1090,16 +2059,15 @@ private struct MonthCalendarScrollView: View {
   }
 
   var body: some View {
-    LazyVStack(spacing: 18) {
+    LazyVStack(spacing: 12) {
       ForEach(monthsToShow, id: \.self) { monthStart in
         MonthGridView(
           monthStart: monthStart,
-          daysWithEntries: daysWithEntries,
+          dayVisuals: dayVisuals,
           accentColor: accentColor,
           selectedDay: $selectedDay,
           onDayTapped: onDayTapped
         )
-        .padding(.horizontal, 14)
       }
     }
   }
@@ -1107,7 +2075,7 @@ private struct MonthCalendarScrollView: View {
 
 private struct MonthGridView: View {
   let monthStart: Date
-  let daysWithEntries: Set<Date>
+  let dayVisuals: [Date: CalendarDayVisual]
   let accentColor: Color
   @Binding var selectedDay: Date?
   var onDayTapped: ((Date) -> Void)?
@@ -1151,42 +2119,70 @@ private struct MonthGridView: View {
     return result
   }
 
-  var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Text(title)
-        .font(.system(size: 14, weight: .semibold))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 4)
+  private var monthEntryDaysCount: Int {
+    dayVisuals.keys.filter { date in
+      cal.isDate(date, equalTo: monthStart, toGranularity: .month)
+    }.count
+  }
 
-      LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 10)
-      {
+  var body: some View {
+    let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+
+    VStack(alignment: .leading, spacing: 12) {
+      HStack(alignment: .center, spacing: 8) {
+        Text(title)
+          .font(.system(size: 16, weight: .bold))
+          .foregroundStyle(.primary)
+
+        Spacer(minLength: 8)
+
+        HStack(spacing: 6) {
+          Image(systemName: "record.circle")
+            .font(.system(size: 10, weight: .semibold))
+          Text("\(monthEntryDaysCount) logged")
+            .font(.system(size: 11, weight: .semibold))
+            .monospacedDigit()
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color(.tertiarySystemFill))
+        .clipShape(Capsule())
+      }
+
+      LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 8) {
         ForEach(weekdaySymbols, id: \.self) { sym in
           Text(sym)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.secondary.opacity(0.9))
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.secondary.opacity(0.88))
             .frame(maxWidth: .infinity)
+            .padding(.vertical, 3)
         }
 
         ForEach(Array(days.enumerated()), id: \.offset) { _, date in
           DayCell(
             date: date,
-            monthStart: monthStart,
-            daysWithEntries: daysWithEntries,
+            dayVisual: date.flatMap { dayVisuals[cal.startOfDay(for: $0)] },
             accentColor: accentColor,
             selectedDay: $selectedDay,
             onDayTapped: onDayTapped
           )
         }
       }
-      .padding(.horizontal, 4)
     }
+    .padding(14)
+    .background { GlassCardBackground(shape: shape) }
+    .clipShape(shape)
+    .overlay(
+      shape
+        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.6)
+    )
   }
 }
 
 private struct DayCell: View {
   let date: Date?
-  let monthStart: Date
-  let daysWithEntries: Set<Date>
+  let dayVisual: CalendarDayVisual?
   let accentColor: Color
   @Binding var selectedDay: Date?
   var onDayTapped: ((Date) -> Void)?
@@ -1204,8 +2200,24 @@ private struct DayCell: View {
   }
 
   private var hasEntry: Bool {
-    guard let date else { return false }
-    return daysWithEntries.contains(cal.startOfDay(for: date))
+    dayVisual != nil
+  }
+
+  private var hasPhoto: Bool {
+    dayVisual?.hasPhoto == true
+  }
+
+  private var noteCount: Int {
+    dayVisual?.notesCount ?? 0
+  }
+
+  private var indicatorCount: Int {
+    min(max(noteCount, 1), 3)
+  }
+
+  private var firstPhotoURL: URL? {
+    guard let raw = dayVisual?.firstPhotoURL else { return nil }
+    return URL(string: raw)
   }
 
   var body: some View {
@@ -1213,45 +2225,112 @@ private struct DayCell: View {
       if let date {
         Button {
           Haptics.impact(.light)
-          withAnimation(.easeInOut(duration: 0.15)) {
+          withAnimation(.spring(response: 0.24, dampingFraction: 0.8)) {
             selectedDay = cal.startOfDay(for: date)
           }
           onDayTapped?(date)
         } label: {
+          let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+
           ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-              .fill(backgroundFill)
+            shape
+              .fill(Color(.secondarySystemBackground).opacity(0.32))
+
+            if let firstPhotoURL {
+              AsyncImage(url: firstPhotoURL) { phase in
+                switch phase {
+                case .success(let image):
+                  image
+                    .resizable()
+                    .scaledToFill()
+                case .empty, .failure:
+                  LinearGradient(
+                    colors: [accentColor.opacity(0.38), accentColor.opacity(0.18)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                  )
+                @unknown default:
+                  LinearGradient(
+                    colors: [accentColor.opacity(0.38), accentColor.opacity(0.18)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                  )
+                }
+              }
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+              .clipped()
+              .clipShape(shape)
+            } else if hasPhoto {
+              LinearGradient(
+                colors: [accentColor.opacity(0.34), AppTheme.accent.opacity(0.24)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+              )
+            } else if hasEntry {
+              shape
+                .fill(accentColor.opacity(0.15))
+            }
+
+            if hasPhoto {
+              shape
+                .fill(
+                  LinearGradient(
+                    colors: [.black.opacity(0.24), .clear, .black.opacity(0.14)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                  )
+                )
+            }
 
             Text("\(cal.component(.day, from: date))")
               .font(
                 .system(
-                  size: 15, weight: isSelected || isToday ? .bold : .regular, design: .rounded)
+                  size: 16, weight: isToday ? .bold : .semibold, design: .rounded)
               )
-              .foregroundStyle(.primary)
-              .frame(maxWidth: .infinity, maxHeight: .infinity)
+              .foregroundStyle(textColor)
+              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
             if hasEntry {
-              Circle()
-                .fill(accentColor)
-                .frame(width: 6, height: 6)
-                .offset(y: 16)
+              HStack(spacing: 3) {
+                ForEach(0..<indicatorCount, id: \.self) { idx in
+                  Capsule()
+                    .fill(indicatorColor.opacity(idx == 0 ? 1.0 : 0.78))
+                    .frame(width: idx == 0 ? 10 : 5, height: 4)
+                }
+              }
+              .padding(.bottom, 5)
+              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
+
+            shape
+              .stroke(borderColor, lineWidth: isSelected || isToday ? 1.1 : 0.55)
           }
-          .frame(height: 36)
+          .frame(height: 48)
         }
         .buttonStyle(.plain)
       } else {
         Color.clear
-          .frame(height: 36)
+          .frame(height: 48)
       }
     }
   }
 
-  private var backgroundFill: Color {
-    if isSelected { return Color.primary.opacity(0.16) }
-    if isToday { return Color.primary.opacity(0.12) }
-    if hasEntry { return accentColor.opacity(0.10) }
-    return Color.clear
+  private var textColor: Color {
+    if hasPhoto { return .white }
+    if isToday { return accentColor.opacity(0.95) }
+    return .primary
+  }
+
+  private var indicatorColor: Color {
+    if hasPhoto { return .white }
+    return accentColor.opacity(0.95)
+  }
+
+  private var borderColor: Color {
+    if isSelected { return Color(.label).opacity(0.38) }
+    if hasPhoto { return .white.opacity(0.26) }
+    if isToday { return accentColor.opacity(0.55) }
+    return Color(.separator).opacity(0.25)
   }
 }
 
@@ -1281,6 +2360,10 @@ private struct CalendarDaySheet: View {
       .sorted { $0.createdAt > $1.createdAt }
   }
 
+  private var isFutureDay: Bool {
+    cal.startOfDay(for: date) > cal.startOfDay(for: Date())
+  }
+
   var body: some View {
     NavigationStack {
       ScrollView {
@@ -1294,13 +2377,17 @@ private struct CalendarDaySheet: View {
 
           if dayEntries.isEmpty {
             VStack(spacing: 12) {
-              Image(systemName: "book.closed")
+              Image(systemName: isFutureDay ? "calendar.badge.exclamationmark" : "book.closed")
                 .font(.system(size: 36))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isFutureDay ? .orange : .secondary)
               Text("No entries on this day")
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.secondary)
-              Text("Tap the button below to add your first entry.")
+              Text(
+                isFutureDay
+                  ? "You can't add a note for a future date yet. Come back on this date."
+                  : "Tap the button below to add your first entry."
+              )
                 .font(.system(size: 14))
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
@@ -1326,21 +2413,23 @@ private struct CalendarDaySheet: View {
           }
 
           Button {
+            guard !isFutureDay else { return }
             Haptics.impact(.light)
             onAddEntry()
           } label: {
             HStack(spacing: 10) {
               Image(systemName: "plus.circle.fill")
                 .font(.system(size: 20))
-              Text("Add entry")
+              Text(isFutureDay ? "Date not reached yet" : "Add entry")
                 .font(.system(size: 17, weight: .semibold))
             }
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
-            .background(accentColor)
+            .background(isFutureDay ? Color(.systemGray3) : accentColor)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
           }
+          .disabled(isFutureDay)
           .padding(.horizontal, 20)
           .padding(.top, 8)
           .padding(.bottom, 24)
@@ -1412,20 +2501,39 @@ private struct NewJournalEntryDraft: Hashable {
   var date: Date
   var title: String
   var body: String
+  var photoCount: Int = 0
   /// If set, entry is already persisted remotely and should not be re-saved as text-only.
   var entryId: UUID? = nil
+}
+
+private struct NewEntrySession: Identifiable {
+  let id = UUID()
+  let initialDate: Date
+}
+
+private struct EditEntrySession: Identifiable {
+  let id = UUID()
+  let entry: JournalEntry
 }
 
 // Replaced with a full-page editor style sheet (`NewDiaryNoteSheet`).
 
 private struct DiaryEditorSheet: View {
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.colorScheme) private var colorScheme
 
   @State private var name: String
   @State private var description: String
   @State private var color: Color
+  @FocusState private var focusedField: Field?
+  private let descriptionMaxLength: Int = 10_000
 
   let onSave: (String, String, Color) -> Void
+
+  private enum Field: Hashable {
+    case name
+    case description
+  }
 
   init(
     name: String,
@@ -1441,71 +2549,149 @@ private struct DiaryEditorSheet: View {
 
   var body: some View {
     NavigationStack {
-      ScrollView {
-        VStack(alignment: .leading, spacing: 16) {
-          VStack(alignment: .leading, spacing: 10) {
-            Text("Diary name")
-              .font(.system(size: 13, weight: .semibold))
-              .foregroundStyle(.secondary)
+      ZStack {
+        DiaryEditorBackdrop(accentColor: color)
 
-            TextField("My Diary", text: $name)
-              .textContentType(.none)
-              .textInputAutocapitalization(.words)
-              .autocorrectionDisabled()
-              .padding(.horizontal, 12)
-              .padding(.vertical, 10)
-              .background(Color(.secondarySystemBackground))
-              .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-          }
-
-          VStack(alignment: .leading, spacing: 10) {
-            Text("Description")
-              .font(.system(size: 13, weight: .semibold))
-              .foregroundStyle(.secondary)
-
-            TextEditor(text: $description)
-              .font(.system(size: 15))
-              .frame(minHeight: 160)
-              .padding(10)
-              .background(Color(.secondarySystemBackground))
-              .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-          }
-
-          VStack(alignment: .leading, spacing: 10) {
-            Text("Header color")
-              .font(.system(size: 13, weight: .semibold))
-              .foregroundStyle(.secondary)
-
-            Text("Changes the top section tint above the tabs.")
-              .font(.system(size: 12))
-              .foregroundStyle(.tertiary)
-
-            DiaryColorPicker(selected: $color)
-          }
-
-          Divider()
-            .padding(.top, 6)
-
-          Button(role: .destructive) {
-            // Placeholder: backend functionality later
-            Haptics.impact(.light)
-          } label: {
-            HStack(spacing: 10) {
-              Image(systemName: "trash")
-              Text("Delete diary")
+        ScrollView {
+          VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+              Text("Customize your diary")
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(.primary)
+              Text("Update the title, description, and header color.")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
             }
-            .font(.system(size: 16, weight: .semibold))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-          }
-          .buttonStyle(.bordered)
-          .tint(.red)
+            .padding(.horizontal, 4)
+            .padding(.bottom, 2)
 
-          Spacer(minLength: 10)
+            VStack(alignment: .leading, spacing: 10) {
+              Text("Diary name")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+              TextField("My Diary", text: $name)
+                .textContentType(.none)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+                .focused($focusedField, equals: .name)
+                .font(.system(size: 17, weight: .semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                  RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(
+                      focusedField == .name
+                        ? AppTheme.accent.opacity(0.95)
+                        : Color(.separator).opacity(0.34),
+                      lineWidth: focusedField == .name ? 1.6 : 1
+                    )
+                )
+            }
+            .padding(14)
+            .background(editorCardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+              RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color(.separator).opacity(0.2), lineWidth: 0.7)
+            )
+
+            VStack(alignment: .leading, spacing: 10) {
+              Text("Description")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+              ZStack(alignment: .topLeading) {
+                if description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                  Text("Add a short description for your diary.")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .allowsHitTesting(false)
+                }
+
+                TextEditor(text: $description)
+                  .focused($focusedField, equals: .description)
+                  .font(.system(size: 16))
+                  .frame(minHeight: 170)
+                  .padding(.horizontal, 10)
+                  .padding(.vertical, 8)
+                  .scrollContentBackground(.hidden)
+                  .onChange(of: description) { _, newValue in
+                    if newValue.count > descriptionMaxLength {
+                      description = String(newValue.prefix(descriptionMaxLength))
+                    }
+                  }
+              }
+              .background(Color(.systemBackground))
+              .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+              .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                  .stroke(
+                    focusedField == .description
+                      ? AppTheme.accent.opacity(0.95)
+                      : Color(.separator).opacity(0.34),
+                    lineWidth: focusedField == .description ? 1.6 : 1
+                  )
+              )
+
+              Text("\(description.count)/\(descriptionMaxLength)")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .padding(14)
+            .background(editorCardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+              RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color(.separator).opacity(0.2), lineWidth: 0.7)
+            )
+
+            VStack(alignment: .leading, spacing: 10) {
+              Text("Header color")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+              Text("Changes the top section tint above the tabs.")
+                .font(.system(size: 12))
+                .foregroundStyle(.tertiary)
+
+              DiaryColorPicker(selected: $color)
+            }
+            .padding(14)
+            .background(editorCardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+              RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color(.separator).opacity(0.2), lineWidth: 0.7)
+            )
+
+            Button(role: .destructive) {
+              // Placeholder: backend functionality later
+              Haptics.impact(.light)
+            } label: {
+              HStack(spacing: 10) {
+                Image(systemName: "trash")
+                Text("Delete diary")
+              }
+              .font(.system(size: 16, weight: .semibold))
+              .frame(maxWidth: .infinity)
+              .padding(.vertical, 12)
+            }
+            .buttonStyle(.bordered)
+            .tint(.red)
+            .padding(.top, 2)
+
+            Spacer(minLength: 10)
+          }
+          .padding(16)
         }
-        .padding(18)
       }
-      .navigationTitle("Diary editor")
+      .navigationTitle("Edit Diary")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
@@ -1524,6 +2710,69 @@ private struct DiaryEditorSheet: View {
         }
       }
     }
+  }
+
+  private var editorCardBackground: Color {
+    if colorScheme == .dark {
+      return AppTheme.surface.blended(with: Color.black, amount: 0.12).opacity(0.96)
+    }
+    return Color.white.opacity(0.82)
+  }
+}
+
+private struct DiaryEditorBackdrop: View {
+  @Environment(\.colorScheme) private var colorScheme
+  let accentColor: Color
+
+  var body: some View {
+    let top = accentColor.blended(
+      with: colorScheme == .dark ? AppTheme.background : Color(red: 0.97, green: 0.99, blue: 1.0),
+      amount: colorScheme == .dark ? 0.74 : 0.56
+    )
+    let mid =
+      colorScheme == .dark
+      ? AppTheme.background.blended(with: .black, amount: 0.18)
+      : AppTheme.background.blended(with: .white, amount: 0.30)
+    let bottom =
+      colorScheme == .dark
+      ? AppTheme.surface.blended(with: .black, amount: 0.10)
+      : AppTheme.surface.blended(with: .white, amount: 0.04)
+
+    ZStack {
+      LinearGradient(
+        colors: [top, mid, bottom],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+      )
+
+      FloatingOrb(
+        size: 260,
+        color: accentColor.opacity(colorScheme == .dark ? 0.20 : 0.24),
+        startOffset: CGSize(width: -180, height: -210),
+        drift: CGSize(width: 34, height: 30),
+        blurRadius: 2.4,
+        duration: 9.0
+      )
+
+      FloatingOrb(
+        size: 180,
+        color: .white.opacity(colorScheme == .dark ? 0.16 : 0.26),
+        startOffset: CGSize(width: 130, height: -120),
+        drift: CGSize(width: -22, height: 26),
+        blurRadius: 2.0,
+        duration: 7.6
+      )
+
+      FloatingOrb(
+        size: 150,
+        color: AppTheme.brand.opacity(colorScheme == .dark ? 0.14 : 0.22),
+        startOffset: CGSize(width: 120, height: 270),
+        drift: CGSize(width: -24, height: -20),
+        blurRadius: 2.0,
+        duration: 8.4
+      )
+    }
+    .ignoresSafeArea()
   }
 }
 
@@ -1560,7 +2809,7 @@ private struct DiaryColorPicker: View {
                 .frame(width: 34, height: 34)
                 .overlay(
                   Circle()
-                    .stroke(Color.white.opacity(0.8), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.92), lineWidth: 1)
                 )
 
               if isSelected(option.color) {
@@ -1576,15 +2825,23 @@ private struct DiaryColorPicker: View {
         }
       }
       .padding(12)
-      .background(Color(.secondarySystemBackground))
-      .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+      .background(Color(.tertiarySystemBackground))
+      .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+      .overlay(
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+          .stroke(Color(.separator).opacity(0.24), lineWidth: 0.7)
+      )
 
       // Still allow custom colors, but keep it secondary.
       ColorPicker("Custom", selection: $selected, supportsOpacity: false)
         .font(.system(size: 14, weight: .semibold))
         .padding(12)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(Color(.tertiarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+          RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .stroke(Color(.separator).opacity(0.24), lineWidth: 0.7)
+        )
     }
   }
 
@@ -2032,7 +3289,6 @@ private struct DiaryNoteEditorView: View {
     .background(AppTheme.background)
     .navigationBarTitleDisplayMode(.inline)
     .toolbarBackground(.hidden, for: .navigationBar)
-    .ignoresSafeArea(.keyboard, edges: .bottom)
     .toolbar {
       ToolbarItemGroup(placement: .topBarTrailing) {
         Menu {
@@ -2418,6 +3674,13 @@ private struct NewDiaryNoteSheet: View {
     return blocks.textContent
   }
 
+  private var canAddNote: Bool {
+    let hasTitle = !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let hasText = !blocks.textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let hasPhotos = blocks.photoCount > 0 || !imagesToInsert.isEmpty || !photoLibrarySelection.isEmpty
+    return hasTitle || hasText || hasPhotos
+  }
+
   init(
     accentColor: Color, initialDate: Date, draftTitle: String, draftBody: String,
     onAdd: @escaping (NewJournalEntryDraft) -> Void, onSaveDraft: @escaping (String, String) -> Void
@@ -2553,7 +3816,6 @@ private struct NewDiaryNoteSheet: View {
       .scrollDismissesKeyboard(.interactively)
       .background(AppTheme.background)
       .toolbarBackground(.hidden, for: .navigationBar)
-      .ignoresSafeArea(.keyboard, edges: .bottom)
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
           Button {
@@ -2597,6 +3859,10 @@ private struct NewDiaryNoteSheet: View {
           .disabled(isVoiceRecording || isSavingEntry)
 
           Button("Add") {
+            guard canAddNote else {
+              Haptics.notification(.warning)
+              return
+            }
             Haptics.impact(.light)
             Task {
               await MainActor.run { isSavingEntry = true }
@@ -2615,7 +3881,7 @@ private struct NewDiaryNoteSheet: View {
             }
           }
           .fontWeight(.semibold)
-          .disabled(isVoiceRecording || isSavingEntry)
+          .disabled(isVoiceRecording || isSavingEntry || !canAddNote)
         }
       }
       .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -2710,6 +3976,19 @@ private struct NewDiaryNoteSheet: View {
   /// Saves the new note (including image blocks) to Supabase and returns a draft with `entryId` set
   /// so `addEntry` only inserts locally.
   private func saveNewEntryWithBlocks() async throws -> NewJournalEntryDraft {
+    let selectedDay = Calendar.current.startOfDay(for: initialDate)
+    let today = Calendar.current.startOfDay(for: Date())
+    guard selectedDay <= today else {
+      throw NSError(
+        domain: "Diary",
+        code: 422,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "You can't add a note for this date yet because that day hasn't happened."
+        ]
+      )
+    }
+
     // Load any photos still pending in selection (user may tap Add before onChange completes).
     let pendingSelection = await MainActor.run { photoLibrarySelection }
     if !pendingSelection.isEmpty {
@@ -2720,6 +3999,17 @@ private struct NewDiaryNoteSheet: View {
       }
     }
     await MainActor.run { flushPendingImagesIntoBlocksNewNote() }
+
+    let hasTitle = !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let hasText = !blocks.textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let hasPhotos = blocks.photoCount > 0
+    guard hasTitle || hasText || hasPhotos else {
+      throw NSError(
+        domain: "Diary",
+        code: 422,
+        userInfo: [NSLocalizedDescriptionKey: "Add a title, text, or photo before saving."]
+      )
+    }
 
     let payload: [DiaryBlockPayload] = await MainActor.run {
       blocks.compactMap { block in
@@ -2760,6 +4050,7 @@ private struct NewDiaryNoteSheet: View {
       date: initialDate,
       title: titleText,
       body: blocks.textContent,
+      photoCount: blocks.photoCount,
       entryId: entryId
     )
   }
@@ -3028,7 +4319,6 @@ private struct EditDiaryNoteSheet: View {
       .scrollDismissesKeyboard(.interactively)
       .background(AppTheme.background)
       .toolbarBackground(.hidden, for: .navigationBar)
-      .ignoresSafeArea(.keyboard, edges: .bottom)
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
           Button {
@@ -3094,7 +4384,8 @@ private struct EditDiaryNoteSheet: View {
                     body: blocks.textContent,
                     createdAt: entry.createdAt,
                     timezoneAbbreviation: entry.timezoneAbbreviation,
-                    photoCount: blocks.photoCount
+                    photoCount: blocks.photoCount,
+                    firstPhotoURL: entry.firstPhotoURL
                   )
                   onSave(updated)
                   dismiss()
@@ -3449,6 +4740,7 @@ private struct DiaryPhotoLibrarySheet: View {
 // MARK: - Bottom accessory tray – single Liquid Glass group (iOS 26)
 
 private struct NoteAccessoryTray: View {
+  @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var selectedVoiceName: String = ""
   let accentColor: Color
   var isVoiceRecording: Bool = false
   var onAudioTap: (() -> Void)? = nil
@@ -3457,11 +4749,8 @@ private struct NoteAccessoryTray: View {
   var onCamera: (() -> Void)? = nil
   var onFiles: (() -> Void)? = nil
 
-  private var recordingTransition: AnyTransition {
-    .asymmetric(
-      insertion: .move(edge: .bottom).combined(with: .opacity),
-      removal: .move(edge: .bottom).combined(with: .opacity)
-    )
+  private var effectiveAudioAction: () -> Void {
+    { if isVoiceRecording { onEndRecording?() } else { onAudioTap?() } }
   }
 
   var body: some View {
@@ -3469,81 +4758,82 @@ private struct NoteAccessoryTray: View {
       Divider()
         .opacity(0.12)
 
-      if isVoiceRecording {
-        NoteAccessoryRecordingBar(onEnd: { onEndRecording?() })
-          .transition(recordingTransition)
-          .zIndex(1)
-      } else if #available(iOS 26.0, *) {
-        NoteAccessoryGlassBar(
-          accentColor: accentColor, onAudioTap: onAudioTap, onPhotoLibrary: onPhotoLibrary,
-          onCamera: onCamera, onFiles: onFiles
-        )
-        .transition(recordingTransition)
-      } else {
-        NoteAccessoryFallbackBar(
-          accentColor: accentColor, onAudioTap: onAudioTap, onPhotoLibrary: onPhotoLibrary,
-          onCamera: onCamera, onFiles: onFiles
-        )
-        .transition(recordingTransition)
+      HStack(alignment: .bottom, spacing: 8) {
+        if #available(iOS 26.0, *) {
+          NoteAccessoryGlassBar(
+            accentColor: accentColor,
+            isVoiceRecording: isVoiceRecording,
+            onAudioTap: effectiveAudioAction,
+            onPhotoLibrary: onPhotoLibrary,
+            onCamera: onCamera,
+            onFiles: onFiles
+          )
+          .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else {
+          NoteAccessoryFallbackBar(
+            accentColor: accentColor,
+            isVoiceRecording: isVoiceRecording,
+            onAudioTap: effectiveAudioAction,
+            onPhotoLibrary: onPhotoLibrary,
+            onCamera: onCamera,
+            onFiles: onFiles
+          )
+          .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+
+        if isVoiceRecording {
+          Button(action: {
+            Haptics.impact(.medium)
+            onEndRecording?()
+          }) {
+            NoteAccessoryRecordingGhostView(selectedVoiceName: selectedVoiceName)
+              .frame(width: 56, height: 56)
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel("Stop recording")
+          .transition(.move(edge: .trailing).combined(with: .opacity))
+        }
       }
     }
-    .padding(.horizontal, isVoiceRecording ? 14 : 20)
+    .padding(.horizontal, isVoiceRecording ? 16 : 20)
     .padding(.bottom, 10)
     .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: -2)
     .animation(.spring(response: 0.4, dampingFraction: 0.82), value: isVoiceRecording)
   }
 }
 
-private struct NoteAccessoryRecordingBar: View {
-  let onEnd: () -> Void
+private struct NoteAccessoryRecordingGhostView: View {
+  let selectedVoiceName: String
 
-  private let barShape = RoundedRectangle(cornerRadius: 28, style: .continuous)
-  private let backgroundMinHeight: CGFloat = 68
-  private let contentPadding: CGFloat = 14
+  private var ghostVideoName: String {
+    ElevenLabsVoiceSuggestionsView.ghostVideoName(for: selectedVoiceName)
+      ?? selectedVoiceName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private var hasGhostVideo: Bool {
+    guard !ghostVideoName.isEmpty else { return false }
+    return Bundle.main.url(forResource: ghostVideoName, withExtension: "mp4") != nil
+  }
 
   var body: some View {
     Group {
-      if #available(iOS 26.0, *) {
-        recordingBarContent
-          .padding(.horizontal, contentPadding)
-          .padding(.vertical, contentPadding)
-          .frame(maxWidth: .infinity, minHeight: backgroundMinHeight)
-          .glassEffect(.regular.interactive(), in: barShape)
+      if hasGhostVideo {
+        TransparentVideoPlayerView(
+          videoName: ghostVideoName,
+          videoExtension: "mp4",
+          startTime: ElevenLabsVoiceSuggestionsView.ghostStartTimes[ghostVideoName] ?? 0
+        )
+      } else if let uiImage = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: selectedVoiceName) {
+        Image(uiImage: uiImage)
+          .resizable()
+          .scaledToFit()
       } else {
-        recordingBarContent
-          .padding(.horizontal, contentPadding)
-          .padding(.vertical, contentPadding)
-          .frame(maxWidth: .infinity, minHeight: backgroundMinHeight)
-          .background(barShape.fill(.ultraThinMaterial))
+        Image(systemName: "person.crop.circle.fill")
+          .resizable()
+          .scaledToFit()
+          .foregroundStyle(.secondary)
+          .padding(6)
       }
-    }
-  }
-
-  private var recordingBarContent: some View {
-    HStack(spacing: 16) {
-      HStack(spacing: 12) {
-        Circle()
-          .fill(Color.red)
-          .frame(width: 12, height: 12)
-        Text("Recording…")
-          .font(.system(size: 19, weight: .semibold))
-          .foregroundStyle(.primary)
-      }
-
-      Spacer(minLength: 16)
-
-      Button(action: {
-        Haptics.impact(.medium)
-        onEnd()
-      }) {
-        Text("End")
-          .font(.system(size: 17, weight: .semibold))
-          .foregroundColor(.red)
-          .padding(.horizontal, 20)
-          .padding(.vertical, 12)
-          .background(.ultraThinMaterial, in: Capsule())
-      }
-      .buttonStyle(.plain)
     }
   }
 }
@@ -3551,6 +4841,7 @@ private struct NoteAccessoryRecordingBar: View {
 @available(iOS 26.0, *)
 private struct NoteAccessoryGlassBar: View {
   let accentColor: Color
+  var isVoiceRecording: Bool = false
   var onAudioTap: (() -> Void)? = nil
   var onPhotoLibrary: (() -> Void)? = nil
   var onCamera: (() -> Void)? = nil
@@ -3581,14 +4872,11 @@ private struct NoteAccessoryGlassBar: View {
             Label("Files", systemImage: "doc")
           }
         } label: {
-          Image(systemName: "paperclip")
-            .font(.system(size: 18, weight: .medium))
-            .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
+          accessoryIconLabel(systemName: "paperclip")
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
         .accessibilityLabel("Attach")
 
         noteAccessoryDivider()
@@ -3597,14 +4885,11 @@ private struct NoteAccessoryGlassBar: View {
           Haptics.impact(.light)
           onPhotoLibrary?()
         } label: {
-          Image(systemName: "photo.on.rectangle.angled")
-            .font(.system(size: 18, weight: .medium))
-            .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
+          accessoryIconLabel(systemName: "photo.on.rectangle.angled")
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
         .accessibilityLabel("Photo library")
 
         noteAccessoryDivider()
@@ -3613,14 +4898,11 @@ private struct NoteAccessoryGlassBar: View {
           Haptics.impact(.light)
           onCamera?()
         } label: {
-          Image(systemName: "camera")
-            .font(.system(size: 18, weight: .medium))
-            .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
+          accessoryIconLabel(systemName: "camera")
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
         .accessibilityLabel("Camera")
 
         noteAccessoryDivider()
@@ -3629,17 +4911,18 @@ private struct NoteAccessoryGlassBar: View {
           Haptics.impact(.light)
           onAudioTap?()
         } label: {
-          Image(systemName: "waveform")
-            .font(.system(size: 18, weight: .medium))
-            .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+          accessoryIconLabel(
+            systemName: isVoiceRecording ? "stop.fill" : "waveform",
+            tint: isVoiceRecording ? .red : .primary
+          )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Audio")
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .accessibilityLabel(isVoiceRecording ? "Stop recording" : "Audio")
       }
+      .frame(maxWidth: .infinity)
+      .contentShape(Rectangle())
       .padding(.horizontal, 8)
       .padding(.vertical, 8)
       .frame(height: 52)
@@ -3651,11 +4934,24 @@ private struct NoteAccessoryGlassBar: View {
     Rectangle()
       .fill(Color.primary.opacity(0.35))
       .frame(width: 1, height: 28)
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
+  }
+
+  private func accessoryIconLabel(systemName: String, tint: Color = .primary) -> some View {
+    Image(systemName: systemName)
+      .font(.system(size: 18, weight: .medium))
+      .symbolRenderingMode(.hierarchical)
+      .foregroundStyle(tint)
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 10)
+      .contentShape(Rectangle())
   }
 }
 
 private struct NoteAccessoryFallbackBar: View {
   let accentColor: Color
+  var isVoiceRecording: Bool = false
   var onAudioTap: (() -> Void)? = nil
   var onPhotoLibrary: (() -> Void)? = nil
   var onCamera: (() -> Void)? = nil
@@ -3685,59 +4981,51 @@ private struct NoteAccessoryFallbackBar: View {
           Label("Files", systemImage: "doc")
         }
       } label: {
-        Image(systemName: "paperclip")
-          .font(.system(size: 18, weight: .medium))
-          .symbolRenderingMode(.hierarchical)
-          .foregroundStyle(.primary)
-          .frame(maxWidth: .infinity)
-          .padding(.vertical, 10)
+        accessoryIconLabel(systemName: "paperclip")
       }
       .buttonStyle(.plain)
+      .frame(maxWidth: .infinity)
+      .contentShape(Rectangle())
       .accessibilityLabel("Attach")
       fallbackDivider()
       Button {
         Haptics.impact(.light)
         onPhotoLibrary?()
       } label: {
-        Image(systemName: "photo.on.rectangle.angled")
-          .font(.system(size: 18, weight: .medium))
-          .symbolRenderingMode(.hierarchical)
-          .foregroundStyle(.primary)
-          .frame(maxWidth: .infinity)
-          .padding(.vertical, 10)
+        accessoryIconLabel(systemName: "photo.on.rectangle.angled")
       }
       .buttonStyle(.plain)
+      .frame(maxWidth: .infinity)
+      .contentShape(Rectangle())
       .accessibilityLabel("Photo library")
       fallbackDivider()
       Button {
         Haptics.impact(.light)
         onCamera?()
       } label: {
-        Image(systemName: "camera")
-          .font(.system(size: 18, weight: .medium))
-          .symbolRenderingMode(.hierarchical)
-          .foregroundStyle(.primary)
-          .frame(maxWidth: .infinity)
-          .padding(.vertical, 10)
+        accessoryIconLabel(systemName: "camera")
       }
       .buttonStyle(.plain)
+      .frame(maxWidth: .infinity)
+      .contentShape(Rectangle())
       .accessibilityLabel("Camera")
       fallbackDivider()
       Button {
         Haptics.impact(.light)
         onAudioTap?()
       } label: {
-        Image(systemName: "waveform")
-          .font(.system(size: 18, weight: .medium))
-          .symbolRenderingMode(.hierarchical)
-          .foregroundStyle(.primary)
-          .frame(maxWidth: .infinity)
-          .padding(.vertical, 10)
-          .contentShape(Rectangle())
+        accessoryIconLabel(
+          systemName: isVoiceRecording ? "stop.fill" : "waveform",
+          tint: isVoiceRecording ? .red : .primary
+        )
       }
       .buttonStyle(.plain)
-      .accessibilityLabel("Audio")
+      .frame(maxWidth: .infinity)
+      .contentShape(Rectangle())
+      .accessibilityLabel(isVoiceRecording ? "Stop recording" : "Audio")
     }
+    .frame(maxWidth: .infinity)
+    .contentShape(Rectangle())
     .padding(.horizontal, 8)
     .padding(.vertical, 8)
     .frame(height: 52)
@@ -3748,21 +5036,18 @@ private struct NoteAccessoryFallbackBar: View {
     Rectangle()
       .fill(Color.primary.opacity(0.35))
       .frame(width: 1, height: 28)
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
   }
 
-  private func accessoryIconButton(_ systemImage: String, label: String) -> some View {
-    Button {
-      Haptics.impact(.light)
-    } label: {
-      Image(systemName: systemImage)
-        .font(.system(size: 18, weight: .medium))
-        .symbolRenderingMode(.hierarchical)
-        .foregroundStyle(.primary)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
-    }
-    .buttonStyle(.plain)
-    .accessibilityLabel(label)
+  private func accessoryIconLabel(systemName: String, tint: Color = .primary) -> some View {
+    Image(systemName: systemName)
+      .font(.system(size: 18, weight: .medium))
+      .symbolRenderingMode(.hierarchical)
+      .foregroundStyle(tint)
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 10)
+      .contentShape(Rectangle())
   }
 }
 
