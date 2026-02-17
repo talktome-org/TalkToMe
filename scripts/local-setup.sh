@@ -2,6 +2,7 @@
 # Local/conductor-style setup with configurable venv and env paths.
 # Override paths via env vars or edit the defaults below:
 #   BACKEND_ENV_SOURCE  path to your .env (backend env)
+#   SECRETS_PLIST_SOURCE path to your real Secrets.plist (app secrets)
 #   VENV_DIR            path to your Python venv
 #   CONFIG_DIR          path to talktome config (Secrets.plist, Resources); empty to skip
 set -e
@@ -16,6 +17,10 @@ cd "$SCRIPT_ROOT"
 # Where your backend env file lives.
 # If unset, we'll auto-discover from common local locations.
 BACKEND_ENV_SOURCE="${BACKEND_ENV_SOURCE:-}"
+
+# Where your app secrets plist lives.
+# If unset, we'll auto-discover from common local locations.
+SECRETS_PLIST_SOURCE="${SECRETS_PLIST_SOURCE:-}"
 
 # Where your Python venv lives (default: Backend/venv)
 VENV_DIR="${VENV_DIR:-$SCRIPT_ROOT/Backend/venv}"
@@ -45,8 +50,42 @@ if [ -z "$BACKEND_ENV_SOURCE" ]; then
   fi
 fi
 
+# Auto-discover app secrets plist when not explicitly provided.
+if [ -z "$SECRETS_PLIST_SOURCE" ]; then
+  if [ -n "$CONFIG_DIR" ] && [ -f "$CONFIG_DIR/Secrets.plist" ]; then
+    SECRETS_PLIST_SOURCE="$CONFIG_DIR/Secrets.plist"
+  fi
+
+  if [ -z "$SECRETS_PLIST_SOURCE" ] && [ -n "$BACKEND_ENV_SOURCE" ]; then
+    BACKEND_ENV_DIR="$(cd "$(dirname "$BACKEND_ENV_SOURCE")" && pwd)"
+    if [ -f "$BACKEND_ENV_DIR/Secrets.plist" ]; then
+      SECRETS_PLIST_SOURCE="$BACKEND_ENV_DIR/Secrets.plist"
+    fi
+  fi
+
+  if [ -z "$SECRETS_PLIST_SOURCE" ]; then
+    for candidate in \
+      "$HOME/.config/talktome/Secrets.plist" \
+      "$HOME/myapps/TalkToMe project/TalkToMe-1/TalkToMe/Secrets.plist"
+    do
+      if [ -f "$candidate" ]; then
+        SECRETS_PLIST_SOURCE="$candidate"
+        break
+      fi
+    done
+  fi
+
+  if [ -z "$SECRETS_PLIST_SOURCE" ] && [ -d "$HOME/myapps" ]; then
+    DISCOVERED_SECRETS="$(find "$HOME/myapps" -maxdepth 7 -type f -path "*/TalkToMe*/TalkToMe/Secrets.plist" -print -quit 2>/dev/null || true)"
+    if [ -n "$DISCOVERED_SECRETS" ]; then
+      SECRETS_PLIST_SOURCE="$DISCOVERED_SECRETS"
+    fi
+  fi
+fi
+
 echo "🔧 Local setup (secrets + resources + python venv)"
 echo "   BACKEND_ENV_SOURCE=$BACKEND_ENV_SOURCE"
+echo "   SECRETS_PLIST_SOURCE=${SECRETS_PLIST_SOURCE:-(not found)}"
 echo "   VENV_DIR=$VENV_DIR"
 echo "   CONFIG_DIR=${CONFIG_DIR:-(skipped)}"
 
@@ -57,6 +96,11 @@ if [ -z "$BACKEND_ENV_SOURCE" ] || [ ! -f "$BACKEND_ENV_SOURCE" ]; then
   echo "❌ Missing backend env."
   echo "   Checked: $SCRIPT_ROOT/.env, $SCRIPT_ROOT/Backend/.env, ~/.config/talktome/backend.env, ~/myapps/*/Backend/.env"
   echo "   Set BACKEND_ENV_SOURCE=/absolute/path/to/backend.env and rerun."
+  exit 1
+fi
+
+if [ -n "$SECRETS_PLIST_SOURCE" ] && [ ! -f "$SECRETS_PLIST_SOURCE" ]; then
+  echo "❌ SECRETS_PLIST_SOURCE points to a missing file: $SECRETS_PLIST_SOURCE"
   exit 1
 fi
 
@@ -77,12 +121,12 @@ fi
 # Ensure app secrets
 # -------------------------
 if [ ! -e TalkToMe/Secrets.plist ]; then
-  if [ -n "$CONFIG_DIR" ] && [ -f "$CONFIG_DIR/Secrets.plist" ]; then
-    ln -s "$CONFIG_DIR/Secrets.plist" TalkToMe/Secrets.plist
-    echo "✔ Linked TalkToMe/Secrets.plist"
+  if [ -n "$SECRETS_PLIST_SOURCE" ] && [ -f "$SECRETS_PLIST_SOURCE" ]; then
+    ln -s "$SECRETS_PLIST_SOURCE" TalkToMe/Secrets.plist
+    echo "✔ Linked TalkToMe/Secrets.plist -> $SECRETS_PLIST_SOURCE"
   elif [ -f TalkToMe/Secrets.example.plist ]; then
     cp TalkToMe/Secrets.example.plist TalkToMe/Secrets.plist
-    echo "✔ Created TalkToMe/Secrets.plist from Secrets.example.plist"
+    echo "⚠️  Created TalkToMe/Secrets.plist from Secrets.example.plist (real secrets not found)"
   else
     echo "❌ Missing TalkToMe/Secrets.plist and TalkToMe/Secrets.example.plist"
     exit 1
@@ -118,4 +162,4 @@ source "$VENV_DIR/bin/activate"
 pip install --upgrade pip
 pip install -r Backend/requirements.txt
 
-echo "✅ Workspace ready (venv: $VENV_DIR, env: $BACKEND_ENV_SOURCE)"
+echo "✅ Workspace ready (venv: $VENV_DIR, env: $BACKEND_ENV_SOURCE, secrets: ${SECRETS_PLIST_SOURCE:-TalkToMe/Secrets.example.plist})"
