@@ -1346,7 +1346,7 @@ private struct CalendarDaySheet: View {
           .padding(.bottom, 24)
         }
       }
-      .background(Color(.systemBackground))
+      .background(AppTheme.background)
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
@@ -1600,31 +1600,18 @@ private struct DiaryBlock: Identifiable {
   let id: UUID
   var content: Content
 
-<<<<<<< Updated upstream
-    enum Content {
-        case text(String)
-        case image(UIImage?, remotePath: String?)
-    }
-=======
   enum Content {
     case text(String)
     case image(UIImage?, storagePath: String?)
   }
->>>>>>> Stashed changes
 
   static func text(_ string: String) -> DiaryBlock {
     DiaryBlock(id: UUID(), content: .text(string))
   }
 
-<<<<<<< Updated upstream
-    static func image(_ image: UIImage, remotePath: String? = nil) -> DiaryBlock {
-        DiaryBlock(id: UUID(), content: .image(image, remotePath: remotePath))
-    }
-=======
   static func image(_ image: UIImage, storagePath: String? = nil) -> DiaryBlock {
     DiaryBlock(id: UUID(), content: .image(image, storagePath: storagePath))
   }
->>>>>>> Stashed changes
 }
 
 extension Array where Element == DiaryBlock {
@@ -1674,29 +1661,12 @@ private struct DiaryBlockListView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .disabled(true)
         }
-<<<<<<< Updated upstream
-        .onChange(of: imagesToInsert.count) { _, _ in
-            guard !imagesToInsert.isEmpty else { return }
-            let insertIndex: Int = {
-                if let id = insertImageAfterBlockId, let idx = blocks.firstIndex(where: { $0.id == id }) {
-                    return idx + 1
-                }
-                return blocks.count
-            }()
-            for image in imagesToInsert.reversed() {
-                blocks.insert(.text(""), at: min(insertIndex + 1, blocks.count))
-                blocks.insert(.image(image, remotePath: nil), at: min(insertIndex, blocks.count))
-            }
-            onImagesInserted()
-            onBodyChanged?()
-=======
         .contentShape(Rectangle())
         .onTapGesture {
           let newBlock = DiaryBlock.text("")
           blocks.insert(newBlock, at: 0)
           onFocusBlock(newBlock.id)
           onBodyChanged?()
->>>>>>> Stashed changes
         }
       }
       ForEach(blocks) { block in
@@ -1995,278 +1965,6 @@ private struct DiaryNoteEditorView: View {
               imageForViewer = nil
               blockIdForViewer = nil
             }
-<<<<<<< Updated upstream
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .fullScreenCover(isPresented: Binding(get: { imageForViewer != nil }, set: { if !$0 { imageForViewer = nil; blockIdForViewer = nil } })) {
-                if let img = imageForViewer {
-                    DiaryImageViewer(
-                        image: img,
-                        onDismiss: { imageForViewer = nil; blockIdForViewer = nil },
-                        onDelete: {
-                            if let id = blockIdForViewer {
-                                blocks.removeAll { $0.id == id }
-                                entry.body = blocks.textContent
-                            }
-                            blockIdForViewer = nil
-                            imageForViewer = nil
-                        }
-                    )
-                }
-            }
-
-            if !attachedFileURLs.isEmpty {
-                editorFileList
-            }
-        }
-        .padding(.horizontal, 18)
-        .padding(.bottom, 14)
-    }
-
-    private var editorFileList: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(attachedFileURLs.enumerated()), id: \.offset) { idx, url in
-                HStack(spacing: 8) {
-                    Image(systemName: "doc.fill")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                    Text(url.lastPathComponent)
-                        .font(.system(size: 15))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 8)
-                    Button {
-                        Haptics.impact(.light)
-                        attachedFileURLs.remove(at: idx)
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 20))
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 10)
-                .background(Color(.secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            editorContent
-        }
-        .background(Color(.systemBackground))
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .ignoresSafeArea(.keyboard, edges: .bottom)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Menu {
-                    Button {
-                        let text = [entry.title, entry.body].joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !text.isEmpty { UIPasteboard.general.string = text }
-                    } label: {
-                        Label("Copy", systemImage: "doc.on.doc")
-                    }
-                    Button {
-                        entry.title = ""
-                    } label: {
-                        Label("Remove Title", systemImage: "character.cursor.ibeam")
-                    }
-                    Divider()
-                    Button(role: .destructive) {
-                        Haptics.impact(.light)
-                        Task {
-                            if let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) {
-                                try? await DiaryService.shared.deleteEntry(userId: uid, entryId: entry.id)
-                            }
-                            await MainActor.run {
-                                onDeleteEntry?()
-                                dismiss()
-                            }
-                        }
-                    } label: {
-                        Label("Move to Trash", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 18, weight: .semibold))
-                }
-                .accessibilityLabel("More")
-                .disabled(isVoiceRecording || isSavingEntry)
-
-                Button("Done") {
-                    Haptics.impact(.light)
-                    Task {
-                        await MainActor.run { isSavingEntry = true }
-                        let didSave = await saveEntryToSupabase()
-                        await MainActor.run {
-                            isSavingEntry = false
-                            if didSave {
-                                dismiss()
-                            }
-                        }
-                    }
-                }
-                .fontWeight(.semibold)
-                .disabled(isVoiceRecording || isSavingEntry)
-            }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            NoteAccessoryTray(
-                accentColor: accentColor,
-                isVoiceRecording: isVoiceRecording,
-                onAudioTap: { startVoiceRecording() },
-                onEndRecording: { endVoiceRecording() },
-                onPhotoLibrary: { showPhotoLibrarySheet = true },
-                onCamera: {
-                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                        showCamera = true
-                    }
-                },
-                onFiles: { showFileImporter = true }
-            )
-        }
-        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item, .pdf, .plainText, .image], allowsMultipleSelection: true) { result in
-            switch result {
-            case .success(let urls):
-                attachedFileURLs.append(contentsOf: urls)
-            case .failure:
-                break
-            }
-        }
-        .photosPicker(isPresented: $showPhotoLibrarySheet, selection: $photoLibrarySelection, maxSelectionCount: 5, matching: .images)
-        .onChange(of: photoLibrarySelection) { _, new in
-            guard !new.isEmpty else { return }
-            Task {
-                let images = await loadImagesFromPickerItems(new)
-                await MainActor.run {
-                    imagesToInsert.append(contentsOf: images)
-                    photoLibrarySelection = []
-                }
-            }
-        }
-        .fullScreenCover(isPresented: $showCamera) {
-            CameraPickerView(
-                onImage: { image in
-                    imagesToInsert.append(image)
-                    showCamera = false
-                },
-                onCancel: { showCamera = false }
-            )
-            .ignoresSafeArea()
-        }
-        .alert("Voice input", isPresented: Binding(
-            get: { voiceErrorMessage != nil },
-            set: { if !$0 { voiceErrorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) { voiceErrorMessage = nil }
-        } message: {
-            if let msg = voiceErrorMessage { Text(msg) }
-        }
-        .alert("Couldn't save note", isPresented: Binding(
-            get: { saveErrorMessage != nil },
-            set: { if !$0 { saveErrorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) { saveErrorMessage = nil }
-        } message: {
-            if let msg = saveErrorMessage { Text(msg) }
-        }
-        .onAppear {
-            if blocks.isEmpty, !didLoadBlocksFromApi {
-                didLoadBlocksFromApi = true
-                isLoadingBlocksFromApi = true
-                guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else {
-                    blocks = entry.body.isEmpty ? [.text("")] : [.text(entry.body)]
-                    isLoadingBlocksFromApi = false
-                    return
-                }
-                Task {
-                    defer { Task { @MainActor in isLoadingBlocksFromApi = false } }
-                    do {
-                        guard let row = try await DiaryService.shared.fetchEntry(userId: uid, entryId: entry.id), !row.body_blocks.isEmpty else {
-                            await MainActor.run {
-                                blocks = entry.body.isEmpty ? [.text("")] : [.text(entry.body)]
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                    focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id
-                                }
-                            }
-                            return
-                        }
-                        let decoded = DiaryService.decodeBodyBlocks(row.body_blocks)
-                        var loaded: [DiaryBlock] = []
-                        for d in decoded {
-                            switch d.content {
-                            case .text(let s):
-                                loaded.append(DiaryBlock(id: d.id, content: .text(s)))
-                            case .imageURL(let url, let path):
-                                let img = await DiaryService.shared.loadImageFromURL(url)
-                                loaded.append(DiaryBlock(id: d.id, content: .image(img, remotePath: path)))
-                            }
-                        }
-                        await MainActor.run {
-                            blocks = loaded.isEmpty ? (entry.body.isEmpty ? [.text("")] : [.text(entry.body)]) : loaded
-                            entry.body = blocks.textContent
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id
-                            }
-                        }
-                    } catch {
-                        await MainActor.run {
-                            blocks = entry.body.isEmpty ? [.text("")] : [.text(entry.body)]
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func saveEntryToSupabase() async -> Bool {
-        let pendingSelection = await MainActor.run { photoLibrarySelection }
-        if !pendingSelection.isEmpty {
-            let images = await loadImagesFromPickerItems(pendingSelection)
-            await MainActor.run {
-                imagesToInsert.append(contentsOf: images)
-                photoLibrarySelection = []
-            }
-        }
-        await MainActor.run { flushPendingImagesIntoBlocksEditor() }
-
-        guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else {
-            await MainActor.run { saveErrorMessage = "Sign in to save this note." }
-            return false
-        }
-        let payload: [DiaryBlockPayload] = await MainActor.run {
-            blocks.compactMap { block in
-                switch block.content {
-                case .text(let s):
-                    return .text(id: block.id, content: s)
-                case .image(_, let path?) where path.isEmpty == false:
-                    return .imageRemote(id: block.id, remotePath: path)
-                case .image(let img?, _):
-                    return .imageLocal(id: block.id, image: img)
-                case .image(nil, _):
-                    return nil
-                }
-            }
-        }
-        let tz = TimeZone.current.abbreviation() ?? "UTC"
-        do {
-            _ = try await DiaryService.shared.saveEntry(
-                userId: uid,
-                entryId: entry.id,
-                date: entry.date,
-                title: entry.title,
-                bodyBlocks: payload,
-                timezoneAbbreviation: tz
-            )
-            await MainActor.run {
-=======
           })
       ) {
         if let img = imageForViewer {
@@ -2279,7 +1977,6 @@ private struct DiaryNoteEditorView: View {
             onDelete: {
               if let id = blockIdForViewer {
                 blocks.removeAll { $0.id == id }
->>>>>>> Stashed changes
                 entry.body = blocks.textContent
               }
               blockIdForViewer = nil
@@ -2328,11 +2025,11 @@ private struct DiaryNoteEditorView: View {
     .frame(maxWidth: .infinity, alignment: .leading)
   }
 
-  var body: some View {
+  private var noteEditorBase: some View {
     VStack(alignment: .leading, spacing: 10) {
       editorContent
     }
-    .background(Color(.systemBackground))
+    .background(AppTheme.background)
     .navigationBarTitleDisplayMode(.inline)
     .toolbarBackground(.hidden, for: .navigationBar)
     .ignoresSafeArea(.keyboard, edges: .bottom)
@@ -2405,6 +2102,10 @@ private struct DiaryNoteEditorView: View {
         onFiles: { showFileImporter = true }
       )
     }
+  }
+
+  var body: some View {
+    noteEditorBase
     .fileImporter(
       isPresented: $showFileImporter, allowedContentTypes: [.item, .pdf, .plainText, .image],
       allowsMultipleSelection: true
@@ -2497,8 +2198,8 @@ private struct DiaryNoteEditorView: View {
               switch d.content {
               case .text(let s):
                 loaded.append(DiaryBlock(id: d.id, content: .text(s)))
-              case .imageStoragePath(let path):
-                let img = await DiaryService.shared.loadImage(storagePath: path)
+              case .imageURL(let url, let path):
+                let img = await DiaryService.shared.loadImageFromURL(url)
                 loaded.append(DiaryBlock(id: d.id, content: .image(img, storagePath: path)))
               }
             }
@@ -2552,19 +2253,12 @@ private struct DiaryNoteEditorView: View {
         case .text(let s):
           return .text(id: block.id, content: s)
         case .image(_, let path?) where path.isEmpty == false:
-          return .imageRemote(id: block.id, storagePath: path)
+          return .imageRemote(id: block.id, remotePath: path)
         case .image(let img?, _):
           return .imageLocal(id: block.id, image: img)
         case .image(nil, _):
           return nil
         }
-<<<<<<< Updated upstream
-        for image in imagesToInsert.reversed() {
-            blocks.insert(.text(""), at: min(insertIndex + 1, blocks.count))
-            blocks.insert(.image(image, remotePath: nil), at: min(insertIndex, blocks.count))
-        }
-        imagesToInsert = []
-=======
       }
     }
     let tz = TimeZone.current.abbreviation() ?? "UTC"
@@ -2578,7 +2272,6 @@ private struct DiaryNoteEditorView: View {
         timezoneAbbreviation: tz
       )
       await MainActor.run {
->>>>>>> Stashed changes
         entry.body = blocks.textContent
         saveErrorMessage = nil
       }
@@ -2619,6 +2312,11 @@ private struct DiaryNoteEditorView: View {
 
   private func startVoiceRecording() {
     guard !diarySTTService.isRecording else { return }
+    if !UserDefaults.standard.bool(forKey: PreferenceKeys.dictationEnabled) {
+      Haptics.notification(.warning)
+      voiceErrorMessage = "Turn on Dictation in Settings to use voice input."
+      return
+    }
     if !NetworkMonitor.shared.isOnline {
       voiceErrorMessage = "Voice input requires internet."
       return
@@ -2853,7 +2551,7 @@ private struct NewDiaryNoteSheet: View {
         newNoteSheetContent
       }
       .scrollDismissesKeyboard(.interactively)
-      .background(Color(.systemBackground))
+      .background(AppTheme.background)
       .toolbarBackground(.hidden, for: .navigationBar)
       .ignoresSafeArea(.keyboard, edges: .bottom)
       .toolbar {
@@ -2919,22 +2617,6 @@ private struct NewDiaryNoteSheet: View {
           .fontWeight(.semibold)
           .disabled(isVoiceRecording || isSavingEntry)
         }
-<<<<<<< Updated upstream
-        await MainActor.run { flushPendingImagesIntoBlocksNewNote() }
-
-        let payload: [DiaryBlockPayload] = await MainActor.run {
-            blocks.compactMap { block in
-                switch block.content {
-                case .text(let s):
-                    return .text(id: block.id, content: s)
-                case .image(_, let path?) where path.isEmpty == false:
-                    return .imageRemote(id: block.id, remotePath: path)
-                case .image(let img?, _):
-                    return .imageLocal(id: block.id, image: img)
-                case .image(nil, _):
-                    return nil
-                }
-=======
       }
       .safeAreaInset(edge: .bottom, spacing: 0) {
         NoteAccessoryTray(
@@ -2946,7 +2628,6 @@ private struct NewDiaryNoteSheet: View {
           onCamera: {
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
               showCamera = true
->>>>>>> Stashed changes
             }
           },
           onFiles: { showFileImporter = true }
@@ -3046,7 +2727,7 @@ private struct NewDiaryNoteSheet: View {
         case .text(let s):
           return .text(id: block.id, content: s)
         case .image(_, let path?) where path.isEmpty == false:
-          return .imageRemote(id: block.id, storagePath: path)
+          return .imageRemote(id: block.id, remotePath: path)
         case .image(let img?, _):
           return .imageLocal(id: block.id, image: img)
         case .image(nil, _):
@@ -3055,19 +2736,6 @@ private struct NewDiaryNoteSheet: View {
       }
     }
 
-<<<<<<< Updated upstream
-    private func flushPendingImagesIntoBlocksNewNote() {
-        guard !imagesToInsert.isEmpty else { return }
-        var insertIndex = blocks.count
-        if let id = focusedBlockId, let idx = blocks.firstIndex(where: { $0.id == id }) {
-            insertIndex = idx + 1
-        }
-        for image in imagesToInsert.reversed() {
-            blocks.insert(.text(""), at: min(insertIndex + 1, blocks.count))
-            blocks.insert(.image(image, remotePath: nil), at: min(insertIndex, blocks.count))
-        }
-        imagesToInsert = []
-=======
     let tz = TimeZone.current.abbreviation() ?? "UTC"
     let titleText = title.trimmingCharacters(in: .whitespacesAndNewlines)
     let finalTitle = titleText.isEmpty ? "Untitled" : titleText
@@ -3078,7 +2746,6 @@ private struct NewDiaryNoteSheet: View {
         code: 401,
         userInfo: [NSLocalizedDescriptionKey: "Sign in to save this note."]
       )
->>>>>>> Stashed changes
     }
 
     let entryId = try await DiaryService.shared.saveEntry(
@@ -3112,6 +2779,11 @@ private struct NewDiaryNoteSheet: View {
 
   private func startVoiceRecording() {
     guard !diarySTTService.isRecording else { return }
+    if !UserDefaults.standard.bool(forKey: PreferenceKeys.dictationEnabled) {
+      Haptics.notification(.warning)
+      voiceErrorMessage = "Turn on Dictation in Settings to use voice input."
+      return
+    }
     if !NetworkMonitor.shared.isOnline {
       voiceErrorMessage = "Voice input requires internet."
       return
@@ -3336,7 +3008,7 @@ private struct EditDiaryNoteSheet: View {
     .frame(maxWidth: .infinity, alignment: .leading)
   }
 
-  var body: some View {
+  private var editNoteBase: some View {
     NavigationStack {
       ScrollView {
         if isLoadingBlocksFromApi && blocks.isEmpty {
@@ -3354,7 +3026,7 @@ private struct EditDiaryNoteSheet: View {
         }
       }
       .scrollDismissesKeyboard(.interactively)
-      .background(Color(.systemBackground))
+      .background(AppTheme.background)
       .toolbarBackground(.hidden, for: .navigationBar)
       .ignoresSafeArea(.keyboard, edges: .bottom)
       .toolbar {
@@ -3400,81 +3072,6 @@ private struct EditDiaryNoteSheet: View {
             } label: {
               Label("Move to Trash", systemImage: "trash")
             }
-<<<<<<< Updated upstream
-        }
-        .fullScreenCover(isPresented: $showCamera) {
-            CameraPickerView(
-                onImage: { image in
-                    imagesToInsert.append(image)
-                    showCamera = false
-                },
-                onCancel: { showCamera = false }
-            )
-            .ignoresSafeArea()
-        }
-        .alert("Voice input", isPresented: Binding(
-            get: { voiceErrorMessage != nil },
-            set: { if !$0 { voiceErrorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) { voiceErrorMessage = nil }
-        } message: {
-            if let msg = voiceErrorMessage { Text(msg) }
-        }
-        .alert("Couldn't save note", isPresented: Binding(
-            get: { saveErrorMessage != nil },
-            set: { if !$0 { saveErrorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) { saveErrorMessage = nil }
-        } message: {
-            if let msg = saveErrorMessage { Text(msg) }
-        }
-        .onAppear {
-            if blocks.isEmpty, !didLoadBlocksFromApi {
-                didLoadBlocksFromApi = true
-                isLoadingBlocksFromApi = true
-                guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else {
-                    blocks = entry.body.isEmpty ? [.text("")] : [.text(entry.body)]
-                    isLoadingBlocksFromApi = false
-                    return
-                }
-                Task {
-                    defer { Task { @MainActor in isLoadingBlocksFromApi = false } }
-                    do {
-                        guard let row = try await DiaryService.shared.fetchEntry(userId: uid, entryId: entry.id), !row.body_blocks.isEmpty else {
-                            await MainActor.run {
-                                blocks = entry.body.isEmpty ? [.text("")] : [.text(entry.body)]
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                    focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id
-                                }
-                            }
-                            return
-                        }
-                        let decoded = DiaryService.decodeBodyBlocks(row.body_blocks)
-                        var loaded: [DiaryBlock] = []
-                        for d in decoded {
-                            switch d.content {
-                            case .text(let s):
-                                loaded.append(DiaryBlock(id: d.id, content: .text(s)))
-                            case .imageURL(let url, let path):
-                                let img = await DiaryService.shared.loadImageFromURL(url)
-                                loaded.append(DiaryBlock(id: d.id, content: .image(img, remotePath: path)))
-                            }
-                        }
-                        await MainActor.run {
-                            blocks = loaded.isEmpty ? (entry.body.isEmpty ? [.text("")] : [.text(entry.body)]) : loaded
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id
-                            }
-                        }
-                    } catch {
-                        await MainActor.run {
-                            blocks = entry.body.isEmpty ? [.text("")] : [.text(entry.body)]
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                focusedBlockId = blocks.first(where: { if case .text = $0.content { return true }; return false })?.id
-                            }
-                        }
-                    }
-=======
           } label: {
             Image(systemName: "ellipsis.circle")
               .font(.system(size: 18, weight: .semibold))
@@ -3501,7 +3098,6 @@ private struct EditDiaryNoteSheet: View {
                   )
                   onSave(updated)
                   dismiss()
->>>>>>> Stashed changes
                 }
               }
             }
@@ -3526,6 +3122,10 @@ private struct EditDiaryNoteSheet: View {
         )
       }
     }
+  }
+
+  var body: some View {
+    editNoteBase
     .fileImporter(
       isPresented: $showFileImporter, allowedContentTypes: [.item, .pdf, .plainText, .image],
       allowsMultipleSelection: true
@@ -3618,8 +3218,8 @@ private struct EditDiaryNoteSheet: View {
               switch d.content {
               case .text(let s):
                 loaded.append(DiaryBlock(id: d.id, content: .text(s)))
-              case .imageStoragePath(let path):
-                let img = await DiaryService.shared.loadImage(storagePath: path)
+              case .imageURL(let url, let path):
+                let img = await DiaryService.shared.loadImageFromURL(url)
                 loaded.append(DiaryBlock(id: d.id, content: .image(img, storagePath: path)))
               }
             }
@@ -3634,27 +3234,6 @@ private struct EditDiaryNoteSheet: View {
                   })?.id
               }
             }
-<<<<<<< Updated upstream
-        }
-        await MainActor.run { flushPendingImagesIntoBlocks() }
-
-        guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else {
-            await MainActor.run { saveErrorMessage = "Sign in to save this note." }
-            return false
-        }
-        let payload: [DiaryBlockPayload] = await MainActor.run {
-            blocks.compactMap { block in
-                switch block.content {
-                case .text(let s):
-                    return .text(id: block.id, content: s)
-                case .image(_, let path?) where path.isEmpty == false:
-                    return .imageRemote(id: block.id, remotePath: path)
-                case .image(let img?, _):
-                    return .imageLocal(id: block.id, image: img)
-                case .image(nil, _):
-                    return nil
-                }
-=======
           } catch {
             await MainActor.run {
               blocks = entry.body.isEmpty ? [.text("")] : [.text(entry.body)]
@@ -3665,7 +3244,6 @@ private struct EditDiaryNoteSheet: View {
                     return false
                   })?.id
               }
->>>>>>> Stashed changes
             }
           }
         }
@@ -3682,15 +3260,7 @@ private struct EditDiaryNoteSheet: View {
         {
           result.append(image)
         }
-<<<<<<< Updated upstream
-        for image in imagesToInsert.reversed() {
-            blocks.insert(.text(""), at: min(insertIndex + 1, blocks.count))
-            blocks.insert(.image(image, remotePath: nil), at: min(insertIndex, blocks.count))
-        }
-        imagesToInsert = []
-=======
       } catch {}
->>>>>>> Stashed changes
     }
     return result
   }
@@ -3716,7 +3286,7 @@ private struct EditDiaryNoteSheet: View {
         case .text(let s):
           return .text(id: block.id, content: s)
         case .image(_, let path?) where path.isEmpty == false:
-          return .imageRemote(id: block.id, storagePath: path)
+          return .imageRemote(id: block.id, remotePath: path)
         case .image(let img?, _):
           return .imageLocal(id: block.id, image: img)
         case .image(nil, _):
@@ -3759,6 +3329,11 @@ private struct EditDiaryNoteSheet: View {
 
   private func startVoiceRecording() {
     guard !diarySTTService.isRecording else { return }
+    if !UserDefaults.standard.bool(forKey: PreferenceKeys.dictationEnabled) {
+      Haptics.notification(.warning)
+      voiceErrorMessage = "Turn on Dictation in Settings to use voice input."
+      return
+    }
     if !NetworkMonitor.shared.isOnline {
       voiceErrorMessage = "Voice input requires internet."
       return

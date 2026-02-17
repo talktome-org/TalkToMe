@@ -6,7 +6,7 @@ final class APNSService: NSObject, ObservableObject {
     static let shared = APNSService()
 
     @Published private(set) var authorizationGranted: Bool = false
-    @Published var isPushEnabled: Bool = true
+    @Published var isPushEnabled: Bool = false
 
     private(set) var currentDeviceToken: String?
     private var processingRequestIds: Set<UUID> = []
@@ -88,8 +88,8 @@ final class APNSService: NSObject, ObservableObject {
         if UserDefaults.standard.object(forKey: pushEnabledDefaultsKey) != nil {
             isPushEnabled = UserDefaults.standard.bool(forKey: pushEnabledDefaultsKey)
         } else {
-            isPushEnabled = true
-            UserDefaults.standard.set(true, forKey: pushEnabledDefaultsKey)
+            isPushEnabled = false
+            UserDefaults.standard.set(false, forKey: pushEnabledDefaultsKey)
         }
     }
 }

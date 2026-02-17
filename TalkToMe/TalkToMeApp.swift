@@ -100,6 +100,9 @@ struct TalkToMeApp: App {
               "[Auth] isAuthenticated -> true; userId=\(auth.currentUserId ?? "nil") activeSessionId=\(sessionsViewModel.activeSessionId?.uuidString ?? "nil") sessions=\(sessionsViewModel.sessions.count)"
             )
           #endif
+          // Ensure Mira is the default buddy on first launch
+          ElevenLabsVoiceSuggestionsView.ensureDefaultBuddySelected()
+
           Task {
             // Load all initial data in parallel
             await withTaskGroup(of: Void.self) { group in

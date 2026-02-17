@@ -4,12 +4,15 @@ struct ChatScreenView: View {
 
   @ObservedObject var chatViewModel: ChatViewModel
 
-  @AppStorage(PreferenceKeys.voiceModeEnabled) private var voiceModeEnabled: Bool = false
   @AppStorage(PreferenceKeys.chatWallpaperType) private var wallpaperType: String = "default"
   @AppStorage(PreferenceKeys.chatWallpaperValue) private var wallpaperValue: String = ""
+  @AppStorage(PreferenceKeys.dictationEnabled) private var dictationEnabled: Bool = false
 
   let onSend: () -> Void
   let isInputFocused: FocusState<Bool>.Binding
+
+  @State private var toastMessage: String? = nil
+  @State private var toastWorkItem: DispatchWorkItem? = nil
 
   private var inputAreaHeight: CGFloat {
     chatViewModel.pendingAttachments.isEmpty ? 68 : 220
@@ -35,13 +38,16 @@ struct ChatScreenView: View {
     .safeAreaInset(edge: .bottom, spacing: 0) {
       InputAreaView(
         isVoiceRecording: chatViewModel.dictationSTTService.isRecording,
-        voiceModeEnabled: voiceModeEnabled,
         isSpeakModeActive: chatViewModel.isSpeakModeActive,
         isSpeakMicMuted: chatViewModel.voiceController.isSpeakMicMuted,
         speakModePhase: chatViewModel.voiceController.speakModePhase,
         speakerLevel: chatViewModel.voiceController.speakerLevel,
         micLevel: chatViewModel.voiceController.micLevel,
         onSpeakToggle: {
+          guard dictationEnabled else {
+            showDictationToast()
+            return
+          }
           if chatViewModel.isSpeakModeActive {
             chatViewModel.voiceController.stopSpeakMode()
           } else {
@@ -67,7 +73,13 @@ struct ChatScreenView: View {
             }
           }
         },
-        onVoiceModeStart: { chatViewModel.voiceController.startVoiceModePushToTalk() },
+        onVoiceModeStart: {
+          guard dictationEnabled else {
+            showDictationToast()
+            return
+          }
+          chatViewModel.voiceController.startVoiceModePushToTalk()
+        },
         onVoiceModeStop: { chatViewModel.voiceController.stopVoiceModePushToTalk() }
       )
       .frame(
@@ -78,10 +90,32 @@ struct ChatScreenView: View {
       .padding(.bottom, focusedBottomInset)
       .transition(.move(edge: .bottom).combined(with: .opacity))
     }
+    .overlay(alignment: .top) {
+      if let toastMessage {
+        ToastOverlayView(message: toastMessage, onDismiss: dismissToast)
+          .padding(.top, 8)
+      }
+    }
+    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
     .background {
       chatBackground
         .ignoresSafeArea()
     }
+  }
+
+  private func showDictationToast() {
+    Haptics.notification(.warning)
+    toastWorkItem?.cancel()
+    toastMessage = "Turn on Dictation in Settings to use voice input."
+    let item = DispatchWorkItem { dismissToast() }
+    toastWorkItem = item
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: item)
+  }
+
+  private func dismissToast() {
+    toastWorkItem?.cancel()
+    toastWorkItem = nil
+    toastMessage = nil
   }
 
   @ViewBuilder

@@ -251,13 +251,13 @@ struct PersonalizationEditView: View {
                 }
             }
         }
-        .background(Color(.systemGray6).ignoresSafeArea())
+        .background(AppTheme.background.ignoresSafeArea())
         .animation(.spring(response: 0.45, dampingFraction: 0.9, blendDuration: 0), value: isPresented)
         .overlay(alignment: .top) {
             GeometryReader { proxy in
                 let topInset: CGFloat = proxy.safeAreaInsets.top
 
-                Color(.systemGray6)
+                AppTheme.background
                     .frame(height: topInset)
                     .ignoresSafeArea(edges: .top)
                     .overlay(

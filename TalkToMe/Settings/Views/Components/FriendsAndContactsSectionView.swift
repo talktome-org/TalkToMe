@@ -56,6 +56,8 @@ struct FriendsAndContactsSectionView: View {
         .listSectionSpacing(.compact)
         .contentMargins(.top, 0)
         .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
         .scrollDismissesKeyboard(.immediately)
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search")
         .navigationTitle("Contacts")

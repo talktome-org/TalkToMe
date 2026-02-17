@@ -13,13 +13,10 @@ struct SettingsView: View {
 
   @Binding var isPresented: Bool
 
-<<<<<<< Updated upstream
-    @State private var avatarRefreshKey = UUID()
-    @State private var toastMessage: String? = nil
-    @State private var toastWorkItem: DispatchWorkItem? = nil
-=======
   @State private var avatarRefreshKey = UUID()
->>>>>>> Stashed changes
+  @State private var toastMessage: String? = nil
+  @State private var toastWorkItem: DispatchWorkItem? = nil
+  @State private var customizationHighlightOpacity: CGFloat = 0
 
   private var avatarPlaceholder: AnyView { AnyView(Color.clear) }
 
@@ -28,168 +25,14 @@ struct SettingsView: View {
       Circle()
         .fill(Color(.tertiarySystemFill))
         .frame(width: 100, height: 100)
-<<<<<<< Updated upstream
-        .clipShape(Circle())
-        .overlay(Circle().stroke(Color(.separator).opacity(0.3), lineWidth: 0.5))
-        .id(avatarRefreshKey)
-    }
-
-    private var profileHeader: some View {
-        VStack(spacing: 16) {
-            HStack(alignment: .top, spacing: 0) {
-                // You
-                VStack(spacing: 10) {
-                    avatarView
-
-                    Text(preferredName.components(separatedBy: " ").first ?? preferredName)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-
-                    Text("You")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background(Color(.secondarySystemGroupedBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-                .frame(maxWidth: .infinity)
-
-                // Buddy
-                SettingsBuddyDisplayView()
-                    .frame(maxWidth: .infinity)
-            }
-            .padding(.horizontal, 16)
-
-            if let email = AuthService.shared.currentUser?.email, !email.isEmpty {
-                Text(email)
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundColor(.secondary)
-            }
-        }
-        .padding(.top, 20)
-        .padding(.bottom, 24)
-    }
-
-    @ViewBuilder
-    private var sectionsListView: some View {
-        VStack(spacing: 36) {
-            ForEach(Array(viewModel.settingsSections.enumerated()), id: \.offset) { sectionIndex, section in
-                SettingsCardView(
-                    section: section,
-                    onToggle: { settingIndex in
-                        viewModel.toggleSetting(for: sectionIndex, settingIndex: settingIndex)
-                    },
-                    onAction: { settingIndex in
-                        viewModel.handleSettingAction(for: sectionIndex, settingIndex: settingIndex)
-                    }
-                )
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 40)
-    }
-
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Color(.systemGroupedBackground).ignoresSafeArea()
-
-                ScrollView {
-                    VStack(spacing: 0) {
-                        profileHeader
-                        sectionsListView
-                    }
-                }
-                .scrollIndicators(.hidden)
-            }
-            .overlay(alignment: .top) {
-                if let toastMessage {
-                    ToastOverlayView(message: toastMessage, onDismiss: dismissToast)
-                        .padding(.top, 8)
-                }
-            }
-            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        Haptics.impact(.light)
-                        viewModel.showPersonalizationEdit = true
-                    } label: {
-                        Text("Edit")
-                    }
-                }
-
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        if let code = friendsVM.myCode {
-                            Button {
-                                UIPasteboard.general.string = code
-                                Haptics.impact(.light)
-                                showToast("Add a Friend code copied to clipboard!")
-                            } label: {
-                                Label(code, systemImage: "square.on.square")
-                            }
-                        } else {
-                            Button {
-                                Task { await friendsVM.refreshMyCode(force: true) }
-                            } label: {
-                                Label("Load Code", systemImage: "arrow.clockwise")
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "textformat.123")
-                            .font(.system(size: 16))
-                            .foregroundStyle(.primary)
-                    }
-                }
-            }
-        }
-        .sheet(isPresented: $viewModel.showPersonalizationEdit) {
-            PersonalizationEditView(
-                isPresented: $viewModel.showPersonalizationEdit,
-                profileNamespace: profileNamespace,
-                viewModel: viewModel
-            )
-            .environmentObject(sessionsVM)
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
-        }
-        .preferredColorScheme(
-            appearance == "Light" ? .light : appearance == "Dark" ? .dark : nil
-=======
         .overlay(
           Text(preferredName.prefix(1).uppercased())
             .font(.system(size: 36, weight: .semibold, design: .rounded))
             .foregroundColor(.secondary)
->>>>>>> Stashed changes
         )
     )
   }
 
-<<<<<<< Updated upstream
-            Task { @MainActor in
-                await sessionsVM.ensureProfilePictureCached()
-                avatarRefreshKey = UUID()
-            }
-
-            if !viewModel.isProfileLoaded {
-                viewModel.loadProfileInfo()
-            }
-
-            Task { await friendsVM.refreshMyCode() }
-
-            // Pre-warm ghost video players for Customize Buddies
-            ElevenLabsVoiceSuggestionsView.preloadGhostVideos()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .profileChanged)) { _ in
-            viewModel.loadProfileInfo()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .avatarChanged)) { _ in
-            avatarRefreshKey = UUID()
-        }
-=======
   private var preferredName: String {
     let name = viewModel.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
     if !name.isEmpty { return name }
@@ -197,7 +40,6 @@ struct SettingsView: View {
       if let n = user.userMetadata["full_name"]?.stringValue, !n.isEmpty { return n }
       if let n = user.userMetadata["name"]?.stringValue, !n.isEmpty { return n }
       if let email = user.email { return email.components(separatedBy: "@").first ?? "User" }
->>>>>>> Stashed changes
     }
     return "User"
   }
@@ -210,66 +52,151 @@ struct SettingsView: View {
     )
     .frame(width: 100, height: 100)
     .clipShape(Circle())
-    .overlay(Circle().stroke(Color(.separator).opacity(0.3), lineWidth: 0.5))
+    .overlay(Circle().stroke(Color(.separator).opacity(0.5), lineWidth: 1))
     .id(avatarRefreshKey)
   }
 
   private var profileHeader: some View {
-    VStack(spacing: 16) {
-      HStack(alignment: .top, spacing: 0) {
-        // You
-        VStack(spacing: 10) {
-          avatarView
+    let buddyDisplay = SettingsBuddyDisplayView()
 
-          Text(preferredName)
-            .font(.system(size: 18, weight: .semibold))
-            .foregroundColor(.primary)
-            .lineLimit(1)
-
-          Text("You")
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(.secondary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
-            .background(AppTheme.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .frame(maxWidth: .infinity)
-
-        // Buddy
-        SettingsBuddyDisplayView()
-          .frame(maxWidth: .infinity)
-      }
-      .padding(.horizontal, 16)
-
-      if let email = AuthService.shared.currentUser?.email, !email.isEmpty {
-        Text(email)
-          .font(.system(size: 14, weight: .regular))
+    return HStack(alignment: .top, spacing: 0) {
+      // Left column: User
+      VStack(spacing: 6) {
+        avatarView
+          .frame(height: 120)
+        Text(preferredName.components(separatedBy: " ").first ?? preferredName)
+          .font(.system(size: 18, weight: .semibold))
+          .foregroundColor(.primary)
+          .lineLimit(1)
+          .frame(height: 22)
+        Text("You")
+          .font(.system(size: 13, weight: .medium))
           .foregroundColor(.secondary)
+          .lineLimit(1)
+          .padding(.horizontal, 14)
+          .padding(.vertical, 6)
+          .background(AppTheme.surface)
+          .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
       }
+      .frame(maxWidth: .infinity)
+
+      // Right column: Buddy
+      VStack(spacing: 6) {
+        buddyDisplay.ghostVideoView
+        Text(buddyDisplay.buddyDisplayName)
+          .font(.system(size: 18, weight: .semibold))
+          .foregroundColor(.primary)
+          .lineLimit(1)
+          .frame(height: 22)
+        Text("Buddy")
+          .font(.system(size: 13, weight: .medium))
+          .foregroundColor(.secondary)
+          .lineLimit(1)
+          .padding(.horizontal, 14)
+          .padding(.vertical, 6)
+          .background(AppTheme.surface)
+          .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+      }
+      .frame(maxWidth: .infinity)
     }
-    .padding(.top, 20)
-    .padding(.bottom, 24)
+    .padding(.horizontal, 16)
+    .padding(.top, 10)
+    .padding(.bottom, 48)
   }
 
   @ViewBuilder
   private var sectionsListView: some View {
     VStack(spacing: 36) {
-      ForEach(Array(viewModel.settingsSections.enumerated()), id: \.offset) {
-        sectionIndex, section in
-        SettingsCardView(
-          section: section,
-          onToggle: { settingIndex in
-            viewModel.toggleSetting(for: sectionIndex, settingIndex: settingIndex)
-          },
-          onAction: { settingIndex in
-            viewModel.handleSettingAction(for: sectionIndex, settingIndex: settingIndex)
+      ForEach(Array(viewModel.settingsSections.enumerated()), id: \.element.id) { sectionIndex, section in
+        if section.id == "account" {
+          accountSectionView(sectionIndex: sectionIndex, section: section)
+        } else {
+          SettingsCardView(
+            section: section,
+            onToggle: { settingIndex in
+              viewModel.toggleSetting(for: sectionIndex, settingIndex: settingIndex)
+            },
+            onAction: { settingIndex in
+              viewModel.handleSettingAction(for: sectionIndex, settingIndex: settingIndex)
+            }
+          )
+          .id(section.id)
+          .overlay {
+            if section.id == "customization" {
+              RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .strokeBorder(AppTheme.accent, lineWidth: 2)
+                .opacity(customizationHighlightOpacity)
+            }
           }
-        )
+        }
       }
     }
     .padding(.horizontal, 16)
     .padding(.bottom, 40)
+  }
+
+  @ViewBuilder
+  private func accountSectionView(sectionIndex: Int, section: SettingsSection) -> some View {
+    VStack(spacing: 0) {
+      if let user = AuthService.shared.currentUser,
+         let email = user.email, !email.isEmpty {
+        let provider = user.appMetadata["provider"]?.stringValue ?? "email"
+
+        HStack(spacing: 14) {
+          Image(systemName: "envelope")
+            .font(.system(size: 18))
+            .foregroundColor(.secondary)
+            .frame(width: 30, height: 30)
+
+          Text(email)
+            .font(.system(size: 17, weight: .regular))
+            .foregroundColor(.primary)
+            .lineLimit(1)
+
+          Spacer()
+
+          if provider == "apple" {
+            Image(systemName: "applelogo")
+              .font(.system(size: 16))
+              .foregroundColor(.primary)
+          } else if provider == "google" {
+            Image("icons8-google-48 copy")
+              .renderingMode(.original)
+              .resizable()
+              .aspectRatio(contentMode: .fit)
+              .frame(width: 20, height: 20)
+          }
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 44)
+
+        Divider()
+          .padding(.leading, 60)
+      }
+
+      ForEach(Array(section.settings.enumerated()), id: \.element.id) { settingIndex, setting in
+        Button(action: { viewModel.handleSettingAction(for: sectionIndex, settingIndex: settingIndex) }) {
+          HStack(spacing: 14) {
+            Image(systemName: setting.icon)
+              .font(.system(size: 18))
+              .foregroundColor(.secondary)
+              .frame(width: 30, height: 30)
+
+            Text(setting.title)
+              .font(.system(size: 17, weight: .regular))
+              .foregroundColor(.red)
+
+            Spacer()
+          }
+          .padding(.horizontal, 16)
+          .frame(minHeight: 44)
+        }
+        .buttonStyle(PlainButtonStyle())
+      }
+    }
+    .padding(.vertical, 6)
+    .background(AppTheme.surface)
+    .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
   }
 
   var body: some View {
@@ -277,13 +204,38 @@ struct SettingsView: View {
       ZStack {
         AppTheme.background.ignoresSafeArea()
 
-        ScrollView {
-          VStack(spacing: 0) {
-            profileHeader
-            sectionsListView
+        ScrollViewReader { proxy in
+          ScrollView {
+            VStack(spacing: 0) {
+              profileHeader
+              sectionsListView
+            }
+          }
+          .scrollIndicators(.hidden)
+          .onChange(of: viewModel.shouldHighlightCustomization) { _, shouldHighlight in
+            guard shouldHighlight else { return }
+            viewModel.shouldHighlightCustomization = false
+            withAnimation(.easeOut(duration: 0.3)) {
+              proxy.scrollTo("customization", anchor: .center)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+              animateCustomizationHighlight()
+            }
           }
         }
-        .scrollIndicators(.hidden)
+      }
+      .overlay(alignment: .top) {
+        if let toastMessage {
+          ToastOverlayView(message: toastMessage, onDismiss: dismissToast)
+            .padding(.top, 8)
+        }
+      }
+      .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
+      .navigationDestination(isPresented: $viewModel.shouldNavigateToContacts) {
+        FriendsAndContactsSectionView()
+      }
+      .navigationDestination(isPresented: $viewModel.shouldNavigateToAppearance) {
+        AppearanceSettingsView()
       }
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
@@ -292,6 +244,30 @@ struct SettingsView: View {
             viewModel.showPersonalizationEdit = true
           } label: {
             Text("Edit")
+          }
+        }
+
+        ToolbarItem(placement: .topBarTrailing) {
+          Menu {
+            if let code = friendsVM.myCode {
+              Button {
+                UIPasteboard.general.string = code
+                Haptics.impact(.light)
+                showToast("Add a Friend code copied to clipboard!")
+              } label: {
+                Label(code, systemImage: "square.on.square")
+              }
+            } else {
+              Button {
+                Task { await friendsVM.refreshMyCode(force: true) }
+              } label: {
+                Label("Load Code", systemImage: "arrow.clockwise")
+              }
+            }
+          } label: {
+            Image(systemName: "textformat.123")
+              .font(.system(size: 16))
+              .foregroundStyle(.primary)
           }
         }
       }
@@ -322,6 +298,9 @@ struct SettingsView: View {
       }
 
       Task { await friendsVM.refreshMyCode() }
+
+      // Pre-warm ghost video players for Customize Buddies
+      ElevenLabsVoiceSuggestionsView.preloadGhostVideos()
     }
     .onReceive(NotificationCenter.default.publisher(for: .profileChanged)) { _ in
       viewModel.loadProfileInfo()
@@ -331,20 +310,30 @@ struct SettingsView: View {
     }
   }
 
-    private func showToast(_ message: String) {
-        toastWorkItem?.cancel()
-        toastMessage = message
-        let item = DispatchWorkItem { dismissToast() }
-        toastWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: item)
-    }
+  private func showToast(_ message: String) {
+    toastWorkItem?.cancel()
+    toastMessage = message
+    let item = DispatchWorkItem { dismissToast() }
+    toastWorkItem = item
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: item)
+  }
 
-    private func dismissToast() {
-        toastWorkItem?.cancel()
-        toastWorkItem = nil
-        toastMessage = nil
-    }
+  private func dismissToast() {
+    toastWorkItem?.cancel()
+    toastWorkItem = nil
+    toastMessage = nil
+  }
 
+  private func animateCustomizationHighlight() {
+    withAnimation(.easeIn(duration: 0.2)) {
+      customizationHighlightOpacity = 1.0
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+      withAnimation(.easeOut(duration: 0.3)) {
+        customizationHighlightOpacity = 0
+      }
+    }
+  }
 }
 
 #Preview {

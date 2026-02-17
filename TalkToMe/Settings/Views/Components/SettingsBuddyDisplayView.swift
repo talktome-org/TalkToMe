@@ -16,41 +16,53 @@ struct SettingsBuddyDisplayView: View {
     return Bundle.main.url(forResource: ghostVideoName, withExtension: "mp4") != nil
   }
 
-  private var buddyDisplayName: String {
+  var buddyDisplayName: String {
     let name = selectedVoiceName.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !name.isEmpty else { return "Buddy" }
     return name.prefix(1).uppercased() + name.dropFirst().lowercased()
   }
 
   var body: some View {
-    VStack(spacing: 10) {
-      Group {
-        if hasGhostVideo {
-          TransparentVideoPlayerView(
-            videoName: ghostVideoName,
-            videoExtension: "mp4",
-            startTime: ElevenLabsVoiceSuggestionsView.ghostStartTimes[ghostVideoName] ?? 0
-          )
-        } else {
-          ghostFallbackImage
-        }
+    VStack(spacing: 6) {
+      ghostVideoView
+      VStack(spacing: 4) {
+        buddyNameText
+        buddyLabel
       }
-      .frame(width: 100, height: 100)
-
-      Text(buddyDisplayName)
-        .font(.system(size: 18, weight: .semibold))
-        .foregroundColor(.primary)
-        .lineLimit(1)
-
-      Text("Buddy")
-        .font(.system(size: 13, weight: .medium))
-        .foregroundColor(.secondary)
-        .lineLimit(1)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .background(AppTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
+  }
+
+  var ghostVideoView: some View {
+    Group {
+      if hasGhostVideo {
+        TransparentVideoPlayerView(
+          videoName: ghostVideoName,
+          videoExtension: "mp4",
+          startTime: ElevenLabsVoiceSuggestionsView.ghostStartTimes[ghostVideoName] ?? 0
+        )
+      } else {
+        ghostFallbackImage
+      }
+    }
+    .frame(width: 120, height: 120)
+  }
+
+  var buddyNameText: some View {
+    Text(buddyDisplayName)
+      .font(.system(size: 18, weight: .semibold))
+      .foregroundColor(.primary)
+      .lineLimit(1)
+  }
+
+  var buddyLabel: some View {
+    Text("Your Buddy")
+      .font(.system(size: 13, weight: .medium))
+      .foregroundColor(.secondary)
+      .lineLimit(1)
+      .padding(.horizontal, 14)
+      .padding(.vertical, 6)
+      .background(AppTheme.surface)
+      .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
   }
 
   @ViewBuilder

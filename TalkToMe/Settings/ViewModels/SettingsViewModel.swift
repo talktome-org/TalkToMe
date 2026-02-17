@@ -10,6 +10,9 @@ class SettingsViewModel: ObservableObject {
     @Published var isUploadingAvatar: Bool = false
     @Published var avatarURL: String? = nil
     @Published var showPersonalizationEdit: Bool = false
+    @Published var shouldNavigateToContacts: Bool = false
+    @Published var shouldNavigateToAppearance: Bool = false
+    @Published var shouldHighlightCustomization: Bool = false
 
     private let avatarCacheManager = AvatarCacheManager.shared
 
@@ -18,6 +21,7 @@ class SettingsViewModel: ObservableObject {
     @Published var isProfileLoaded: Bool = false
 
     init() {
+        APNSService.shared.loadPushEnabledFromDefaults()
         loadSettings()
         // Warm name from cache immediately to avoid flicker
         if let cached = UserDefaults.standard.string(forKey: "talktome_profile_full_name"),
@@ -36,11 +40,11 @@ class SettingsViewModel: ObservableObject {
             UserDefaults.standard.set(true, forKey: PreferenceKeys.hapticsEnabled)
         }
 
-        if UserDefaults.standard.object(forKey: PreferenceKeys.voiceModeEnabled) != nil {
-            settingsData.voiceModeEnabled = UserDefaults.standard.bool(forKey: PreferenceKeys.voiceModeEnabled)
+        if UserDefaults.standard.object(forKey: PreferenceKeys.dictationEnabled) != nil {
+            settingsData.dictationEnabled = UserDefaults.standard.bool(forKey: PreferenceKeys.dictationEnabled)
         } else {
-            settingsData.voiceModeEnabled = false
-            UserDefaults.standard.set(false, forKey: PreferenceKeys.voiceModeEnabled)
+            settingsData.dictationEnabled = true
+            UserDefaults.standard.set(true, forKey: PreferenceKeys.dictationEnabled)
         }
 
         if let vid = UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId),
@@ -61,6 +65,7 @@ class SettingsViewModel: ObservableObject {
     private func setupSettingsSections() {
         settingsSections = [
             SettingsSection(
+                id: "contacts",
                 title: "",
                 icon: "",
                 gradient: [],
@@ -69,6 +74,7 @@ class SettingsViewModel: ObservableObject {
                 ]
             ),
             SettingsSection(
+                id: "customization",
                 title: "",
                 icon: "",
                 gradient: [],
@@ -79,16 +85,18 @@ class SettingsViewModel: ObservableObject {
                 ]
             ),
             SettingsSection(
+                id: "toggles",
                 title: "",
                 icon: "",
                 gradient: [],
                 settings: [
                     SettingItem(title: "Notifications", subtitle: nil, type: .toggle(APNSService.shared.isPushEnabled), icon: "bell"),
                     SettingItem(title: "Haptics", subtitle: nil, type: .toggle(settingsData.hapticFeedbackEnabled), icon: "iphone.radiowaves.left.and.right"),
-                    SettingItem(title: "Voice Mode", subtitle: nil, type: .toggle(settingsData.voiceModeEnabled), icon: "waveform")
+                    SettingItem(title: "Dictation", subtitle: nil, type: .toggle(settingsData.dictationEnabled), icon: "waveform")
                 ]
             ),
             SettingsSection(
+                id: "support",
                 title: "",
                 icon: "",
                 gradient: [],
@@ -98,6 +106,7 @@ class SettingsViewModel: ObservableObject {
                 ]
             ),
             SettingsSection(
+                id: "account",
                 title: "",
                 icon: "",
                 gradient: [],
@@ -109,31 +118,28 @@ class SettingsViewModel: ObservableObject {
     }
 
     func toggleSetting(for sectionIndex: Int, settingIndex: Int) {
-        let section = settingsSections[sectionIndex]
-        let setting = section.settings[settingIndex]
+        let setting = settingsSections[sectionIndex].settings[settingIndex]
+        var newValue = false
 
-        switch (section.title, setting.title) {
-        case ("App Settings", "Voice Mode"):
-            settingsData.voiceModeEnabled.toggle()
-            UserDefaults.standard.set(settingsData.voiceModeEnabled, forKey: PreferenceKeys.voiceModeEnabled)
-        case ("App Settings", "Haptic Feedback"), ("App Settings", "Haptics"):
+        switch setting.title {
+        case "Haptics":
             settingsData.hapticFeedbackEnabled.toggle()
-            UserDefaults.standard.set(settingsData.hapticFeedbackEnabled, forKey: PreferenceKeys.hapticsEnabled)
-            if settingsData.hapticFeedbackEnabled {
-                Haptics.selection()
-            }
-        case ("App Settings", "Push Notifications"), ("App Settings", "Notifications"):
-            let current = UserDefaults.standard.object(forKey: "talktome_push_enabled") != nil ? UserDefaults.standard.bool(forKey: "talktome_push_enabled") : true
-            let newValue = !current
+            newValue = settingsData.hapticFeedbackEnabled
+            UserDefaults.standard.set(newValue, forKey: PreferenceKeys.hapticsEnabled)
+            if newValue { Haptics.selection() }
+        case "Dictation":
+            settingsData.dictationEnabled.toggle()
+            newValue = settingsData.dictationEnabled
+            UserDefaults.standard.set(newValue, forKey: PreferenceKeys.dictationEnabled)
+        case "Notifications":
+            newValue = !APNSService.shared.isPushEnabled
             APNSService.shared.setPushEnabled(newValue)
-            DispatchQueue.main.async { self.setupSettingsSections() }
-        case ("Chat Settings", "Auto Scroll"):
-            break
         default:
-            break
+            return
         }
 
-        setupSettingsSections()
+        // Update in-place so SwiftUI sees a minimal diff instead of a full array rebuild
+        settingsSections[sectionIndex].settings[settingIndex].type = .toggle(newValue)
     }
 
     func handleSettingAction(for sectionIndex: Int, settingIndex: Int) {

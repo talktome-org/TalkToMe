@@ -57,7 +57,11 @@ struct MainTabView: View {
     ZStack {
       TabView(selection: $selectedTab) {
         Tab("Home", systemImage: "house", value: .home) {
-          HomeView()
+          HomeView(
+            selectedTab: $selectedTab,
+            onStartNewChat: { openChat(sessionId: nil) },
+            onOpenChat: { sid in openChat(sessionId: sid) }
+          )
         }
 
         Tab("Diary", systemImage: "book", value: .diary) {
@@ -177,4 +181,5 @@ private struct SettingsTabWrapper: View {
     .environmentObject(ChatSessionsViewModel())
     .environmentObject(FriendsViewModel(accessTokenProvider: { "" }))
     .environmentObject(SettingsViewModel())
+    .environmentObject(ContactsViewModel())
 }
