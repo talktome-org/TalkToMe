@@ -60,11 +60,6 @@ if [ -z "$BACKEND_ENV_SOURCE" ] || [ ! -f "$BACKEND_ENV_SOURCE" ]; then
   exit 1
 fi
 
-if [ -n "$CONFIG_DIR" ] && [ ! -f "$CONFIG_DIR/Secrets.plist" ]; then
-  echo "❌ Missing $CONFIG_DIR/Secrets.plist"
-  exit 1
-fi
-
 if [ -n "$CONFIG_DIR" ] && [ ! -d "$CONFIG_DIR/Resources" ]; then
   echo "❌ Missing $CONFIG_DIR/Resources"
   exit 1
@@ -79,12 +74,18 @@ if [ ! -e Backend/.env ]; then
 fi
 
 # -------------------------
-# Link secrets (symlink OK)
+# Ensure app secrets
 # -------------------------
-if [ -n "$CONFIG_DIR" ]; then
-  if [ ! -e TalkToMe/Secrets.plist ]; then
+if [ ! -e TalkToMe/Secrets.plist ]; then
+  if [ -n "$CONFIG_DIR" ] && [ -f "$CONFIG_DIR/Secrets.plist" ]; then
     ln -s "$CONFIG_DIR/Secrets.plist" TalkToMe/Secrets.plist
     echo "✔ Linked TalkToMe/Secrets.plist"
+  elif [ -f TalkToMe/Secrets.example.plist ]; then
+    cp TalkToMe/Secrets.example.plist TalkToMe/Secrets.plist
+    echo "✔ Created TalkToMe/Secrets.plist from Secrets.example.plist"
+  else
+    echo "❌ Missing TalkToMe/Secrets.plist and TalkToMe/Secrets.example.plist"
+    exit 1
   fi
 fi
 
