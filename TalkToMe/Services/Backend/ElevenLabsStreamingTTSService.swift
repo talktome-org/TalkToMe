@@ -17,6 +17,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
     private var config: Config = .init()
     private var voiceId: String?
     private var voiceName: String?
+    private var connectedVoiceId: String?
     private let audioQueue = DispatchQueue(label: "talktome.elevenlabs.tts.audio")
     private let wsSendQueue = DispatchQueue(label: "talktome.elevenlabs.tts.wsSend")
 
@@ -43,7 +44,14 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
 
     @MainActor
     func preconnect(voiceId: String, voiceName: String? = nil, config: Config = .init()) async {
-        guard !isConnected else { return }
+        if isConnected {
+            if voiceId == connectedVoiceId { return }
+            stopKeepAlive()
+            wsTask?.cancel(with: .goingAway, reason: nil)
+            wsTask = nil
+            isConnected = false
+            connectedVoiceId = nil
+        }
         self.config = config
         self.voiceId = voiceId
         self.voiceName = voiceName
@@ -75,13 +83,21 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         }
 
         if isConnected {
-            self.flushPendingTextImmediately()
-            if self.pendingFinish {
-                self.pendingFinish = false
+            if voiceId != connectedVoiceId {
+                stopKeepAlive()
+                wsTask?.cancel(with: .goingAway, reason: nil)
+                wsTask = nil
+                isConnected = false
+                connectedVoiceId = nil
+            } else {
                 self.flushPendingTextImmediately()
-                self.sendEvent(["type": "end"])
+                if self.pendingFinish {
+                    self.pendingFinish = false
+                    self.flushPendingTextImmediately()
+                    self.sendEvent(["type": "end"])
+                }
+                return
             }
-            return
         }
 
         guard let token = await AuthService.shared.getAccessToken() else {
@@ -145,6 +161,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         wsTask?.cancel(with: .goingAway, reason: nil)
         wsTask = nil
         isConnected = false
+        connectedVoiceId = nil
         stopPlayback()
     }
 
@@ -199,6 +216,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         }
         wsTask?.cancel(with: .goingAway, reason: nil)
         wsTask = task
+        connectedVoiceId = voiceId
     }
 
     private func receiveLoop() {

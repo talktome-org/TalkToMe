@@ -390,9 +390,9 @@ extension ChatViewModel: ChatStreamingDelegate {
             return
         }
 
-        let voiceId = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
+        let voiceId = (voiceController.capturedVoiceId ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let voiceName = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? "")
+        let voiceName = (voiceController.capturedVoiceName ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !voiceId.isEmpty else { return }
 
