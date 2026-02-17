@@ -123,7 +123,7 @@ struct MessagesListView: View {
                     .padding(.top, 120)
             }
 
-            VStack(spacing: 18) {
+            LazyVStack(spacing: 18) {
                 ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
                     MessageBubbleView(
                         chatViewModel: chatViewModel,
