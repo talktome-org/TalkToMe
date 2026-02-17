@@ -55,6 +55,7 @@ struct ChatView: View {
                     }
                 }
             }
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let onBack {
                     ToolbarItem(placement: .topBarLeading) {
