@@ -159,12 +159,17 @@ struct DiaryView: View {
   }
 
   private var heroGradientColors: [Color] {
+    let base = viewModel.diaryColor
+    let peach = base.blended(with: Color(red: 1.00, green: 0.84, blue: 0.76), amount: 0.36)
+    let mint = base.blended(with: Color(red: 0.74, green: 0.96, blue: 0.86), amount: 0.50)
+    let sky = base.blended(with: Color(red: 0.67, green: 0.85, blue: 1.00), amount: 0.62)
+    let lilac = base.blended(with: Color(red: 0.86, green: 0.80, blue: 1.00), amount: 0.34)
     return [
-      viewModel.diaryColor.opacity(0.98),
-      viewModel.diaryColor.opacity(0.94),
-      viewModel.diaryColor.opacity(0.88),
-      AppTheme.brand.opacity(0.86),
-      AppTheme.brand.opacity(0.80),
+      peach,
+      mint,
+      sky,
+      lilac,
+      mint.blended(with: lilac, amount: 0.42),
     ]
   }
 
@@ -239,31 +244,33 @@ private struct DiaryHeroCardView: View {
   private var baseGradientColors: [Color] {
     [
       AppTheme.brand.opacity(0.98),
-      AppTheme.brand.opacity(0.94),
-      AppTheme.brand.opacity(0.88),
-      AppTheme.accent.opacity(0.86),
-      AppTheme.accent.opacity(0.80),
+      AppTheme.brand.opacity(0.92),
+      AppTheme.accent.opacity(0.90),
+      AppTheme.accent.opacity(0.84),
+      AppTheme.accent.opacity(0.76),
     ]
   }
 
   private var styledGradientColors: [Color] {
     let source = gradientColors.isEmpty ? baseGradientColors : gradientColors
     if colorScheme == .dark {
+      let deepBase = AppTheme.background.blended(with: .black, amount: 0.25)
       return [
-        source[0].blended(with: .black, amount: 0.34),
-        source[1].blended(with: AppTheme.accent, amount: 0.32),
-        source[2].blended(with: .black, amount: 0.20),
-        source[3].blended(with: Color(red: 0.20, green: 0.32, blue: 0.50), amount: 0.44),
-        source[4].blended(with: .black, amount: 0.30),
+        source[0].blended(with: deepBase, amount: 0.40),
+        source[1].blended(with: .black, amount: 0.34),
+        source[2].blended(with: deepBase, amount: 0.46),
+        source[3].blended(with: .black, amount: 0.38),
+        source[4].blended(with: deepBase, amount: 0.42),
       ]
     }
 
+    let lightLift = Color(red: 0.98, green: 0.99, blue: 1.00)
     return [
-      source[0].blended(with: Color(red: 0.99, green: 0.88, blue: 0.74), amount: 0.24),
-      source[1].blended(with: Color(red: 0.70, green: 0.86, blue: 1.0), amount: 0.24),
-      source[2].blended(with: Color(red: 0.96, green: 0.74, blue: 0.80), amount: 0.22),
-      source[3].blended(with: .white, amount: 0.12),
-      source[4].blended(with: Color(red: 0.63, green: 0.81, blue: 0.99), amount: 0.20),
+      source[0].blended(with: .white, amount: 0.34),
+      source[1].blended(with: lightLift, amount: 0.32),
+      source[2].blended(with: .white, amount: 0.24),
+      source[3].blended(with: lightLift, amount: 0.28),
+      source[4].blended(with: .white, amount: 0.22),
     ]
   }
 
@@ -274,38 +281,57 @@ private struct DiaryHeroCardView: View {
     let c2 = source[min(2, source.count - 1)]
     let c3 = source[min(3, source.count - 1)]
     let c4 = source[min(4, source.count - 1)]
-    let m12a = c1.blended(with: c2, amount: 0.25)
-    let m12b = c1.blended(with: c2, amount: 0.70)
-    let m23 = c2.blended(with: c3, amount: 0.50)
 
     ZStack {
       LinearGradient(
-        gradient: Gradient(stops: [
-          .init(color: c0, location: 0.0),
-          .init(color: c1, location: 0.22),
-          .init(color: m12a, location: 0.36),
-          .init(color: m12b, location: 0.52),
-          .init(color: m23, location: 0.68),
-          .init(color: c3, location: 0.84),
-          .init(color: c4, location: 1.0),
-        ]),
-        startPoint: .leading,
-        endPoint: .trailing
-      )
-
-      LinearGradient(
-        colors: [
-          .white.opacity(colorScheme == .dark ? 0.04 : 0.16),
-          .clear,
-          .black.opacity(colorScheme == .dark ? 0.14 : 0.05),
-        ],
+        colors: [c0, c1, c2, c3, c4],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
       )
 
+      RadialGradient(
+        colors: [
+          c1.opacity(colorScheme == .dark ? 0.54 : 0.72),
+          .clear,
+        ],
+        center: .topLeading,
+        startRadius: 24,
+        endRadius: 290
+      )
+
+      RadialGradient(
+        colors: [
+          c3.opacity(colorScheme == .dark ? 0.48 : 0.62),
+          .clear,
+        ],
+        center: .bottomTrailing,
+        startRadius: 20,
+        endRadius: 260
+      )
+
+      RadialGradient(
+        colors: [
+          .white.opacity(colorScheme == .dark ? 0.06 : 0.22),
+          .clear,
+        ],
+        center: .top,
+        startRadius: 10,
+        endRadius: 230
+      )
+
+      LinearGradient(
+        colors: [
+          .white.opacity(colorScheme == .dark ? 0.04 : 0.22),
+          .clear,
+          .black.opacity(colorScheme == .dark ? 0.26 : 0.09),
+        ],
+        startPoint: .top,
+        endPoint: .bottom
+      )
+
       FloatingOrb(
-        size: 190,
-        color: .white.opacity(colorScheme == .dark ? 0.22 : 0.34),
+        size: 210,
+        color: .white.opacity(colorScheme == .dark ? 0.18 : 0.42),
         startOffset: CGSize(width: -118, height: -36),
         drift: CGSize(width: 20, height: 18),
         blurRadius: 1.5,
@@ -314,7 +340,8 @@ private struct DiaryHeroCardView: View {
 
       FloatingOrb(
         size: 120,
-        color: AppTheme.brand.opacity(colorScheme == .dark ? 0.18 : 0.28),
+        color: c2.blended(with: .white, amount: colorScheme == .dark ? 0.08 : 0.30)
+          .opacity(colorScheme == .dark ? 0.32 : 0.36),
         startOffset: CGSize(width: -18, height: 68),
         drift: CGSize(width: -14, height: -18),
         blurRadius: 0.8,
@@ -323,7 +350,8 @@ private struct DiaryHeroCardView: View {
 
       FloatingOrb(
         size: 108,
-        color: .white.opacity(colorScheme == .dark ? 0.18 : 0.30),
+        color: c4.blended(with: .white, amount: colorScheme == .dark ? 0.06 : 0.34)
+          .opacity(colorScheme == .dark ? 0.24 : 0.35),
         startOffset: CGSize(width: 126, height: 54),
         drift: CGSize(width: -18, height: -20),
         blurRadius: 1.0,
@@ -403,7 +431,7 @@ private struct JournalEntry: Identifiable, Hashable {
   var body: String
   var createdAt: Date
   var timezoneAbbreviation: String
-  /// Number of photo blocks in this entry (from body_blocks).
+  /// Number of attached media blocks in this entry (non-text blocks from body_blocks).
   var photoCount: Int
   /// First photo URL in this entry (signed by backend), if available.
   var firstPhotoURL: String?
@@ -421,10 +449,11 @@ private struct JournalEntry: Identifiable, Hashable {
 
 private struct JournalStats: Hashable {
   var streakDays: Int
+  var maxStreakDays: Int
   var entriesCount: Int
   var mediaCount: Int
   var uniqueDaysCount: Int
-  var onThisDayCount: Int
+  var todayEntriesCount: Int
 }
 
 private struct DiaryTodoItem: Identifiable, Codable, Hashable {
@@ -456,8 +485,25 @@ private final class DiaryViewModel: ObservableObject {
       return
     }
     Task {
+      await loadCachedData(userId: uid)
       await loadSettings(userId: uid)
       await loadEntries(userId: uid)
+    }
+  }
+
+  private func loadCachedData(userId: UUID) async {
+    if let cachedSettings = await DiaryService.shared.cachedSettings(userId: userId) {
+      await MainActor.run {
+        diaryName = cachedSettings.name
+        diaryDescription = cachedSettings.description
+        diaryColor = Color(hex: cachedSettings.headerColorHex) ?? AppTheme.brand
+      }
+    }
+    if let cachedRows = await DiaryService.shared.cachedEntries(userId: userId) {
+      let mapped = mapRowsToEntries(cachedRows)
+      await MainActor.run {
+        entries = mapped
+      }
     }
   }
 
@@ -479,27 +525,7 @@ private final class DiaryViewModel: ObservableObject {
     defer { Task { @MainActor in isLoading = false } }
     do {
       let rows = try await DiaryService.shared.fetchEntries(userId: userId)
-      let list = rows.compactMap { row -> JournalEntry? in
-        guard let date = DiaryService.date(from: row.date) else { return nil }
-        let body = DiaryService.textContentFromBodyBlocks(row.body_blocks)
-        let createdAt = (row.created_at).flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date()
-        let photoCount = row.body_blocks.filter { $0["type"] == "image" }.count
-        let firstPhotoURL = row.body_blocks.first { block in
-          guard block["type"] == "image" else { return false }
-          let trimmed = (block["url"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-          return !trimmed.isEmpty
-        }?["url"]
-        return JournalEntry(
-          id: row.id,
-          date: date,
-          title: row.title,
-          body: body,
-          createdAt: createdAt,
-          timezoneAbbreviation: row.timezone_abbreviation,
-          photoCount: photoCount,
-          firstPhotoURL: firstPhotoURL
-        )
-      }
+      let list = mapRowsToEntries(rows)
       await MainActor.run {
         entries = list
         loadError = nil
@@ -509,6 +535,34 @@ private final class DiaryViewModel: ObservableObject {
         loadError = error.localizedDescription
         entries = []
       }
+    }
+  }
+
+  private func mapRowsToEntries(_ rows: [DiaryEntryRow]) -> [JournalEntry] {
+    rows.compactMap { row -> JournalEntry? in
+      guard let date = DiaryService.date(from: row.date) else { return nil }
+      let body = DiaryService.textContentFromBodyBlocks(row.body_blocks)
+      let createdAt = DiaryService.parseISO8601(row.created_at) ?? date
+      let mediaBlockCount = row.body_blocks.reduce(0) { partialResult, block in
+        let type = (block["type"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !type.isEmpty, type != "text" else { return partialResult }
+        return partialResult + 1
+      }
+      let firstPhotoURL = row.body_blocks.first { block in
+        guard block["type"] == "image" else { return false }
+        let trimmed = (block["url"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty
+      }?["url"]
+      return JournalEntry(
+        id: row.id,
+        date: date,
+        title: row.title,
+        body: body,
+        createdAt: createdAt,
+        timezoneAbbreviation: row.timezone_abbreviation,
+        photoCount: mediaBlockCount,
+        firstPhotoURL: firstPhotoURL
+      )
     }
   }
 
@@ -544,20 +598,16 @@ private final class DiaryViewModel: ObservableObject {
   }
 
   var stats: JournalStats {
-    let entriesCount = entries.count
-
     let cal = Calendar.current
+    let entriesCount = entries.count
     let uniqueDays = Set(entries.map { cal.startOfDay(for: $0.date) })
 
     let today = cal.startOfDay(for: Date())
-    let onThisDayCount = entries.filter { entry in
-      let d = entry.date
-      return cal.component(.month, from: d) == cal.component(.month, from: today)
-        && cal.component(.day, from: d) == cal.component(.day, from: today)
-        && cal.component(.year, from: d) != cal.component(.year, from: today)
+    let todayEntriesCount = entries.filter { entry in
+      cal.isDate(entry.date, inSameDayAs: today)
     }.count
 
-    // Simple local streak: consecutive days ending today with >= 1 entry/day.
+    // Current streak: consecutive days with >=1 note, ending today.
     var streak = 0
     var cursor = today
     while uniqueDays.contains(cursor) {
@@ -566,14 +616,33 @@ private final class DiaryViewModel: ObservableObject {
       cursor = prev
     }
 
+    // Max streak: longest consecutive run across all note days.
+    let sortedDays = uniqueDays.sorted()
+    var maxStreak = 0
+    var currentRun = 0
+    var previousDay: Date?
+    for day in sortedDays {
+      if let previousDay,
+        let expectedNext = cal.date(byAdding: .day, value: 1, to: previousDay),
+        cal.isDate(day, inSameDayAs: expectedNext)
+      {
+        currentRun += 1
+      } else {
+        currentRun = 1
+      }
+      maxStreak = max(maxStreak, currentRun)
+      previousDay = day
+    }
+
     let mediaCount = entries.reduce(0) { $0 + $1.photoCount }
 
     return JournalStats(
       streakDays: streak,
+      maxStreakDays: maxStreak,
       entriesCount: entriesCount,
       mediaCount: mediaCount,
       uniqueDaysCount: uniqueDays.count,
-      onThisDayCount: onThisDayCount
+      todayEntriesCount: todayEntriesCount
     )
   }
 
@@ -906,6 +975,7 @@ private struct JournalStatisticsCards: View {
           title: "STREAK",
           value: "\(stats.streakDays)",
           subtitle: "Days",
+          maxStreakLabel: "Max \(stats.maxStreakDays)d",
           accentColor: accentColor
         )
         .frame(width: bigCardWidth, height: bigCardHeight)
@@ -921,7 +991,7 @@ private struct JournalStatisticsCards: View {
             GlassStatSmallCard(
               title: "DAYS", value: "\(stats.uniqueDaysCount)", accentColor: accentColor)
             GlassStatSmallCard(
-              title: "ON THIS DAY", value: "\(stats.onThisDayCount)", accentColor: accentColor)
+              title: "ON THIS DAY", value: "\(stats.todayEntriesCount)", accentColor: accentColor)
           }
         }
         .frame(maxWidth: .infinity)
@@ -945,6 +1015,7 @@ private struct GlassStatBigCard: View {
   let title: String
   let value: String
   let subtitle: String
+  let maxStreakLabel: String?
   let accentColor: Color
 
   var body: some View {
@@ -952,14 +1023,16 @@ private struct GlassStatBigCard: View {
     Button {
     } label: {
       VStack(spacing: 0) {
-        HStack(spacing: 6) {
-          Image(systemName: "flame.fill")
-            .font(.system(size: 11, weight: .bold))
-            .foregroundStyle(accentColor)
+        HStack(alignment: .top, spacing: 6) {
+          HStack(spacing: 6) {
+            Image(systemName: "flame.fill")
+              .font(.system(size: 11, weight: .bold))
+              .foregroundStyle(accentColor)
 
-          Text(title)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.secondary)
+            Text(title)
+              .font(.system(size: 11, weight: .semibold))
+              .foregroundStyle(.secondary)
+          }
         }
 
         Spacer(minLength: 0)
@@ -979,6 +1052,17 @@ private struct GlassStatBigCard: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background { GlassCardBackground(shape: shape) }
       .overlay { shape.stroke(accentColor.opacity(0.2), lineWidth: 1) }
+      .overlay(alignment: .bottomTrailing) {
+        if let maxStreakLabel {
+          Text(maxStreakLabel)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(.ultraThinMaterial, in: Capsule())
+            .padding(10)
+        }
+      }
       .clipShape(shape)
       .shadow(color: Color.black.opacity(0.05), radius: 6, x: 0, y: 3)
     }
@@ -1022,12 +1106,11 @@ private struct GlassStatSmallCard: View {
 
 private struct GlassCardBackground<S: Shape>: View {
   let shape: S
-  var interactive: Bool = true
 
   var body: some View {
     if #available(iOS 26.0, *) {
       Color.clear
-        .glassEffect(interactive ? .regular.interactive() : .regular, in: shape)
+        .glassEffect(.regular.interactive(), in: shape)
     } else {
       shape
         .fill(.ultraThinMaterial)
@@ -1134,11 +1217,15 @@ private let diaryDefaultTodoItems = [
 private struct JournalTodoTab: View {
   @State private var todoItems: [DiaryTodoItem] = []
   @State private var newTodoTitle: String = ""
+  @State private var showReorderHint: Bool = false
   @State private var activeReorderItemId: UUID?
+  @State private var isReorderDragging: Bool = false
   @State private var activeReorderTranslationY: CGFloat = 0
   @State private var reorderReferenceTranslationY: CGFloat = 0
   @FocusState private var isAddFieldFocused: Bool
 
+  // Require a deliberate press-and-hold before drag can start.
+  private let todoReorderLongPressDuration: Double = 0.7
   // Swap only after the dragged row has passed roughly one full row+gap distance.
   private let todoReorderSwapDistance: CGFloat = 72
 
@@ -1160,24 +1247,38 @@ private struct JournalTodoTab: View {
       VStack(alignment: .leading, spacing: 12) {
         todoSummaryCard
         addTaskCard
+        if showReorderHint {
+          reorderHintCard
+        }
 
         if todoItems.isEmpty {
           emptyStateCard
         } else {
           LazyVStack(spacing: 10) {
             ForEach($todoItems) { $item in
+              let isActiveDrag = activeReorderItemId == item.id && isReorderDragging
+
               TodoRowView(
                 item: $item,
-                isBeingReordered: activeReorderItemId == item.id,
+                isBeingReordered: isActiveDrag,
+                onShowReorderHint: todoItems.count > 1
+                  ? {
+                    Haptics.impact(.light)
+                    showReorderHint = true
+                  }
+                  : nil,
                 onDelete: {
                   removeTodo(id: item.id)
                 }
               )
               .frame(maxWidth: .infinity, alignment: .leading)
               .contentShape(Rectangle())
-              .offset(y: activeReorderItemId == item.id ? activeReorderTranslationY : 0)
-              .zIndex(activeReorderItemId == item.id ? 1 : 0)
-              .simultaneousGesture(reorderGesture(for: item.id))
+              .offset(y: isActiveDrag ? activeReorderTranslationY : 0)
+              .zIndex(isActiveDrag ? 1 : 0)
+              .simultaneousGesture(
+                reorderGesture(for: item.id),
+                including: todoItems.count > 1 ? .all : .none
+              )
             }
           }
           .padding(.top, 2)
@@ -1365,6 +1466,35 @@ private struct JournalTodoTab: View {
     )
   }
 
+  private var reorderHintCard: some View {
+    HStack(spacing: 10) {
+      Label("Hold and drag tasks to reorder", systemImage: "hand.draw")
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(AppTheme.accent)
+
+      Spacer(minLength: 8)
+
+      Button("Got it") {
+        showReorderHint = false
+      }
+      .font(.system(size: 13, weight: .bold))
+      .padding(.horizontal, 12)
+      .padding(.vertical, 6)
+      .background(AppTheme.accent.opacity(0.14))
+      .foregroundStyle(AppTheme.accent)
+      .clipShape(Capsule())
+      .buttonStyle(.plain)
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 10)
+    .background(Color(.secondarySystemBackground).opacity(0.75))
+    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 14, style: .continuous)
+        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.6)
+    )
+  }
+
   private var emptyStateCard: some View {
     let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
 
@@ -1412,6 +1542,12 @@ private struct JournalTodoTab: View {
     Haptics.impact(.light)
     withAnimation(.easeInOut(duration: 0.2)) {
       todoItems.removeAll { $0.id == id }
+      if activeReorderItemId == id || todoItems.count < 2 {
+        activeReorderItemId = nil
+        isReorderDragging = false
+        reorderReferenceTranslationY = 0
+        activeReorderTranslationY = 0
+      }
     }
   }
 
@@ -1434,15 +1570,19 @@ private struct JournalTodoTab: View {
   }
 
   private func reorderGesture(for itemId: UUID) -> some Gesture {
-    LongPressGesture(minimumDuration: 0.25)
+    LongPressGesture(minimumDuration: todoReorderLongPressDuration)
       .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
       .onChanged { value in
         switch value {
-        case .first(true):
+        case .first(false):
+          endReorder()
+        case .second(true, nil):
           beginReorderIfNeeded(for: itemId)
         case .second(true, let drag?):
           beginReorderIfNeeded(for: itemId)
           updateReorder(translationY: drag.translation.height)
+        case .second(false, _):
+          endReorder()
         default:
           break
         }
@@ -1453,13 +1593,17 @@ private struct JournalTodoTab: View {
   }
 
   private func beginReorderIfNeeded(for itemId: UUID) {
-    guard activeReorderItemId == nil else { return }
+    guard activeReorderItemId == nil else {
+      isReorderDragging = true
+      return
+    }
     guard todoItems.firstIndex(where: { $0.id == itemId }) != nil else { return }
 
+    Haptics.impact(.light)
     activeReorderItemId = itemId
+    isReorderDragging = true
     reorderReferenceTranslationY = 0
     activeReorderTranslationY = 0
-    Haptics.impact(.light)
   }
 
   private func updateReorder(translationY: CGFloat) {
@@ -1499,14 +1643,9 @@ private struct JournalTodoTab: View {
   }
 
   private func endReorder() {
-    guard activeReorderItemId != nil else { return }
-
     withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-      activeReorderTranslationY = 0
-    }
-
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
       activeReorderItemId = nil
+      isReorderDragging = false
       reorderReferenceTranslationY = 0
       activeReorderTranslationY = 0
     }
@@ -1516,13 +1655,16 @@ private struct JournalTodoTab: View {
 private struct TodoRowView: View {
   @Binding var item: DiaryTodoItem
   var isBeingReordered: Bool = false
+  var onShowReorderHint: (() -> Void)?
   var onDelete: (() -> Void)?
-
-  @State private var isSlidingOut: Bool = false
-  private let slideOutDuration: Double = 0.28
 
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+    let isElevated = isBeingReordered
+    let borderColor: Color = isBeingReordered
+      ? AppTheme.accent.opacity(0.78)
+      : (item.isCompleted ? Color.green.opacity(0.2) : Color(.separator).opacity(0.22))
+    let borderWidth: CGFloat = isBeingReordered ? 1.3 : 0.6
 
     HStack(alignment: .center, spacing: 12) {
       Button {
@@ -1552,38 +1694,26 @@ private struct TodoRowView: View {
         .multilineTextAlignment(.leading)
 
       if let onDelete = onDelete {
-        if item.isCompleted {
-          Button {
-            withAnimation(.easeIn(duration: slideOutDuration)) {
-              isSlidingOut = true
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + slideOutDuration) {
-              onDelete()
-            }
-          } label: {
-            Image(systemName: "trash.fill")
-              .font(.system(size: 14, weight: .semibold))
-              .foregroundStyle(Color.red.opacity(0.9))
-              .frame(width: 28, height: 28)
-              .background(Color.red.opacity(0.1))
-              .clipShape(Circle())
-          }
-          .buttonStyle(.plain)
-          .disabled(isBeingReordered)
-        } else {
-          Menu {
-            Button(role: .destructive) {
-              onDelete()
+        Menu {
+          if let onShowReorderHint = onShowReorderHint {
+            Button {
+              onShowReorderHint()
             } label: {
-              Label("Delete Task", systemImage: "trash")
+              Label("Reorder Tasks", systemImage: "arrow.up.arrow.down")
             }
-          } label: {
-            Image(systemName: "ellipsis.circle")
-              .font(.system(size: 18, weight: .semibold))
-              .foregroundStyle(.secondary.opacity(0.8))
           }
-          .disabled(isBeingReordered)
+
+          Button(role: .destructive) {
+            onDelete()
+          } label: {
+            Label("Delete Task", systemImage: "trash")
+          }
+        } label: {
+          Image(systemName: "ellipsis.circle")
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundStyle(.secondary.opacity(0.8))
         }
+        .disabled(isBeingReordered)
       }
     }
     .padding(.horizontal, 14)
@@ -1593,24 +1723,19 @@ private struct TodoRowView: View {
     .overlay(
       shape
         .stroke(
-          isBeingReordered
-            ? AppTheme.accent.opacity(0.78)
-            : (item.isCompleted ? Color.green.opacity(0.2) : Color(.separator).opacity(0.22)),
-          lineWidth: isBeingReordered ? 1.3 : 0.6
+          borderColor,
+          lineWidth: borderWidth
         )
     )
     .shadow(
-      color: isBeingReordered ? AppTheme.accent.opacity(0.24) : .black.opacity(0.03),
-      radius: isBeingReordered ? 12 : 4,
+      color: isElevated ? AppTheme.accent.opacity(0.22) : .black.opacity(0.03),
+      radius: isElevated ? 10 : 4,
       x: 0,
-      y: isBeingReordered ? 6 : 1
+      y: isElevated ? 4 : 1
     )
-    .scaleEffect(isBeingReordered ? 1.015 : 1)
+    .scaleEffect(isElevated ? 1.01 : 1)
     .frame(maxWidth: .infinity, alignment: .leading)
     .contentShape(Rectangle())
-    .offset(x: isSlidingOut ? -UIScreen.main.bounds.width : 0)
-    .opacity(isSlidingOut ? 0 : 1)
-    .animation(.easeIn(duration: slideOutDuration), value: isSlidingOut)
   }
 }
 
@@ -2233,8 +2358,8 @@ private struct DayCell: View {
           let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
 
           ZStack {
-            shape
-              .fill(Color(.secondarySystemBackground).opacity(0.32))
+            Color(.secondarySystemBackground)
+              .opacity(0.32)
 
             if let firstPhotoURL {
               AsyncImage(url: firstPhotoURL) { phase in
@@ -2258,8 +2383,6 @@ private struct DayCell: View {
                 }
               }
               .frame(maxWidth: .infinity, maxHeight: .infinity)
-              .clipped()
-              .clipShape(shape)
             } else if hasPhoto {
               LinearGradient(
                 colors: [accentColor.opacity(0.34), AppTheme.accent.opacity(0.24)],
@@ -2267,26 +2390,22 @@ private struct DayCell: View {
                 endPoint: .bottomTrailing
               )
             } else if hasEntry {
-              shape
-                .fill(accentColor.opacity(0.15))
+              accentColor.opacity(0.15)
             }
 
             if hasPhoto {
-              shape
-                .fill(
-                  LinearGradient(
-                    colors: [.black.opacity(0.24), .clear, .black.opacity(0.14)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                  )
-                )
+              LinearGradient(
+                colors: [.black.opacity(0.24), .clear, .black.opacity(0.14)],
+                startPoint: .top,
+                endPoint: .bottom
+              )
             }
 
             Text("\(cal.component(.day, from: date))")
               .font(
                 .system(
                   size: 16, weight: isToday ? .bold : .semibold, design: .rounded)
-              )
+                )
               .foregroundStyle(textColor)
               .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
@@ -2301,16 +2420,20 @@ private struct DayCell: View {
               .padding(.bottom, 5)
               .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
-
-            shape
-              .stroke(borderColor, lineWidth: isSelected || isToday ? 1.1 : 0.55)
           }
           .frame(height: 48)
+          .frame(maxWidth: .infinity)
+          .clipShape(shape)
+          .overlay(
+            shape
+              .stroke(borderColor, lineWidth: isSelected || isToday ? 1.1 : 0.55)
+          )
         }
         .buttonStyle(.plain)
       } else {
         Color.clear
           .frame(height: 48)
+          .frame(maxWidth: .infinity)
       }
     }
   }
@@ -2417,17 +2540,40 @@ private struct CalendarDaySheet: View {
             Haptics.impact(.light)
             onAddEntry()
           } label: {
+            let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+
             HStack(spacing: 10) {
-              Image(systemName: "plus.circle.fill")
-                .font(.system(size: 20))
+              Image(systemName: isFutureDay ? "calendar.badge.exclamationmark" : "plus.circle.fill")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.white.opacity(isFutureDay ? 0.78 : 0.98))
+
               Text(isFutureDay ? "Date not reached yet" : "Add entry")
                 .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white.opacity(isFutureDay ? 0.84 : 1.0))
+
+              Spacer(minLength: 8)
+
+              Image(systemName: "arrow.right")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.white.opacity(isFutureDay ? 0.65 : 0.9))
             }
-            .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .background(isFutureDay ? Color(.systemGray3) : accentColor)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 15)
+            .background(
+              LinearGradient(
+                colors: isFutureDay
+                  ? [Color(.systemGray3), Color(.systemGray2)]
+                  : [AppTheme.brand, AppTheme.accent],
+                startPoint: .leading,
+                endPoint: .trailing
+              )
+            )
+            .clipShape(shape)
+            .overlay(
+              shape
+                .stroke(.white.opacity(isFutureDay ? 0.10 : 0.22), lineWidth: 0.8)
+            )
           }
           .disabled(isFutureDay)
           .padding(.horizontal, 20)
@@ -2578,7 +2724,7 @@ private struct DiaryEditorSheet: View {
                 .font(.system(size: 17, weight: .semibold))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
-                .background(Color(.systemBackground))
+                .background(editorInputBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(
                   RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -2626,7 +2772,7 @@ private struct DiaryEditorSheet: View {
                     }
                   }
               }
-              .background(Color(.systemBackground))
+              .background(editorInputBackground)
               .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
               .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -2670,22 +2816,6 @@ private struct DiaryEditorSheet: View {
                 .stroke(Color(.separator).opacity(0.2), lineWidth: 0.7)
             )
 
-            Button(role: .destructive) {
-              // Placeholder: backend functionality later
-              Haptics.impact(.light)
-            } label: {
-              HStack(spacing: 10) {
-                Image(systemName: "trash")
-                Text("Delete diary")
-              }
-              .font(.system(size: 16, weight: .semibold))
-              .frame(maxWidth: .infinity)
-              .padding(.vertical, 12)
-            }
-            .buttonStyle(.bordered)
-            .tint(.red)
-            .padding(.top, 2)
-
             Spacer(minLength: 10)
           }
           .padding(16)
@@ -2718,6 +2848,13 @@ private struct DiaryEditorSheet: View {
     }
     return Color.white.opacity(0.82)
   }
+
+  private var editorInputBackground: Color {
+    if colorScheme == .dark {
+      return AppTheme.surface.blended(with: .white, amount: 0.08).opacity(0.98)
+    }
+    return Color(.systemBackground)
+  }
 }
 
 private struct DiaryEditorBackdrop: View {
@@ -2727,16 +2864,17 @@ private struct DiaryEditorBackdrop: View {
   var body: some View {
     let top = accentColor.blended(
       with: colorScheme == .dark ? AppTheme.background : Color(red: 0.97, green: 0.99, blue: 1.0),
-      amount: colorScheme == .dark ? 0.74 : 0.56
+      amount: colorScheme == .dark ? 0.58 : 0.30
     )
     let mid =
       colorScheme == .dark
-      ? AppTheme.background.blended(with: .black, amount: 0.18)
-      : AppTheme.background.blended(with: .white, amount: 0.30)
+      ? AppTheme.background.blended(with: .black, amount: 0.28)
+      : AppTheme.background.blended(with: .white, amount: 0.44)
     let bottom =
       colorScheme == .dark
-      ? AppTheme.surface.blended(with: .black, amount: 0.10)
-      : AppTheme.surface.blended(with: .white, amount: 0.04)
+      ? AppTheme.surface.blended(with: .black, amount: 0.20)
+      : AppTheme.surface.blended(with: .white, amount: 0.18)
+    let glow = accentColor.blended(with: .white, amount: colorScheme == .dark ? 0.08 : 0.26)
 
     ZStack {
       LinearGradient(
@@ -2745,9 +2883,29 @@ private struct DiaryEditorBackdrop: View {
         endPoint: .bottomTrailing
       )
 
+      RadialGradient(
+        colors: [
+          glow.opacity(colorScheme == .dark ? 0.30 : 0.44),
+          .clear,
+        ],
+        center: .topLeading,
+        startRadius: 10,
+        endRadius: 300
+      )
+
+      LinearGradient(
+        colors: [
+          .white.opacity(colorScheme == .dark ? 0.03 : 0.18),
+          .clear,
+          .black.opacity(colorScheme == .dark ? 0.20 : 0.08),
+        ],
+        startPoint: .top,
+        endPoint: .bottom
+      )
+
       FloatingOrb(
         size: 260,
-        color: accentColor.opacity(colorScheme == .dark ? 0.20 : 0.24),
+        color: accentColor.opacity(colorScheme == .dark ? 0.28 : 0.34),
         startOffset: CGSize(width: -180, height: -210),
         drift: CGSize(width: 34, height: 30),
         blurRadius: 2.4,
@@ -2756,7 +2914,7 @@ private struct DiaryEditorBackdrop: View {
 
       FloatingOrb(
         size: 180,
-        color: .white.opacity(colorScheme == .dark ? 0.16 : 0.26),
+        color: .white.opacity(colorScheme == .dark ? 0.12 : 0.30),
         startOffset: CGSize(width: 130, height: -120),
         drift: CGSize(width: -22, height: 26),
         blurRadius: 2.0,
@@ -2765,7 +2923,7 @@ private struct DiaryEditorBackdrop: View {
 
       FloatingOrb(
         size: 150,
-        color: AppTheme.brand.opacity(colorScheme == .dark ? 0.14 : 0.22),
+        color: AppTheme.brand.opacity(colorScheme == .dark ? 0.20 : 0.28),
         startOffset: CGSize(width: 120, height: 270),
         drift: CGSize(width: -24, height: -20),
         blurRadius: 2.0,
@@ -2777,11 +2935,30 @@ private struct DiaryEditorBackdrop: View {
 }
 
 private struct DiaryColorPicker: View {
+  @Environment(\.colorScheme) private var colorScheme
   @Binding var selected: Color
 
   private struct Option: Hashable {
     let name: String
     let color: Color
+
+    func swatch(for scheme: ColorScheme) -> Color {
+      if scheme == .dark {
+        return color.blended(with: AppTheme.background, amount: 0.34)
+      }
+      return color
+    }
+  }
+
+  private struct GradientOption: Hashable {
+    let name: String
+    let lightColors: [Color]
+    let darkColors: [Color]
+    let anchor: Color
+
+    func colors(for scheme: ColorScheme) -> [Color] {
+      scheme == .dark ? darkColors : lightColors
+    }
   }
 
   private let options: [Option] = [
@@ -2794,34 +2971,155 @@ private struct DiaryColorPicker: View {
   ]
 
   private let columns: [GridItem] = Array(repeating: GridItem(.flexible(), spacing: 12), count: 6)
+  private let gradientOptions: [GradientOption] = [
+    .init(
+      name: "Coral Bloom",
+      lightColors: [
+        Color(red: 1.00, green: 0.77, blue: 0.72),
+        Color(red: 1.00, green: 0.90, blue: 0.68),
+      ],
+      darkColors: [
+        Color(red: 0.53, green: 0.30, blue: 0.34),
+        Color(red: 0.58, green: 0.42, blue: 0.28),
+      ],
+      anchor: Color(red: 0.95, green: 0.72, blue: 0.64)
+    ),
+    .init(
+      name: "Lavender Peach",
+      lightColors: [
+        Color(red: 0.79, green: 0.76, blue: 1.00),
+        Color(red: 1.00, green: 0.84, blue: 0.77),
+      ],
+      darkColors: [
+        Color(red: 0.43, green: 0.34, blue: 0.62),
+        Color(red: 0.57, green: 0.39, blue: 0.33),
+      ],
+      anchor: Color(red: 0.83, green: 0.73, blue: 0.86)
+    ),
+    .init(
+      name: "Azure Mint",
+      lightColors: [
+        Color(red: 0.60, green: 0.84, blue: 1.00),
+        Color(red: 0.69, green: 0.96, blue: 0.87),
+      ],
+      darkColors: [
+        Color(red: 0.27, green: 0.40, blue: 0.64),
+        Color(red: 0.26, green: 0.54, blue: 0.43),
+      ],
+      anchor: Color(red: 0.61, green: 0.84, blue: 0.90)
+    ),
+    .init(
+      name: "Berry Sky",
+      lightColors: [
+        Color(red: 0.98, green: 0.73, blue: 0.86),
+        Color(red: 0.70, green: 0.79, blue: 1.00),
+      ],
+      darkColors: [
+        Color(red: 0.56, green: 0.31, blue: 0.47),
+        Color(red: 0.30, green: 0.38, blue: 0.62),
+      ],
+      anchor: Color(red: 0.80, green: 0.70, blue: 0.91)
+    ),
+    .init(
+      name: "Sunset Rose",
+      lightColors: [
+        Color(red: 1.00, green: 0.71, blue: 0.60),
+        Color(red: 0.99, green: 0.64, blue: 0.76),
+      ],
+      darkColors: [
+        Color(red: 0.55, green: 0.31, blue: 0.29),
+        Color(red: 0.57, green: 0.29, blue: 0.43),
+      ],
+      anchor: Color(red: 0.93, green: 0.63, blue: 0.66)
+    ),
+    .init(
+      name: "Forest Lake",
+      lightColors: [
+        Color(red: 0.60, green: 0.88, blue: 0.68),
+        Color(red: 0.49, green: 0.79, blue: 0.90),
+      ],
+      darkColors: [
+        Color(red: 0.26, green: 0.46, blue: 0.30),
+        Color(red: 0.24, green: 0.39, blue: 0.52),
+      ],
+      anchor: Color(red: 0.54, green: 0.79, blue: 0.72)
+    ),
+  ]
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      LazyVGrid(columns: columns, spacing: 12) {
-        ForEach(options, id: \.self) { option in
-          Button {
-            Haptics.impact(.light)
-            selected = option.color
-          } label: {
-            ZStack {
-              Circle()
-                .fill(option.color)
-                .frame(width: 34, height: 34)
-                .overlay(
-                  Circle()
-                    .stroke(Color.white.opacity(0.92), lineWidth: 1)
-                )
+      VStack(alignment: .leading, spacing: 12) {
+        HStack(spacing: 10) {
+          ForEach(gradientOptions, id: \.self) { option in
+            Button {
+              Haptics.impact(.light)
+              selected = option.anchor
+            } label: {
+              ZStack {
+                Circle()
+                  .fill(
+                    LinearGradient(
+                      colors: option.colors(for: colorScheme),
+                      startPoint: .topLeading,
+                      endPoint: .bottomTrailing
+                    )
+                  )
+                  .frame(width: 34, height: 34)
+                  .overlay(
+                    Circle()
+                      .stroke(Color.white.opacity(0.9), lineWidth: 1)
+                  )
 
-              if isSelected(option.color) {
-                Image(systemName: "checkmark")
-                  .font(.system(size: 14, weight: .bold))
-                  .foregroundStyle(Color.black.opacity(0.75))
+                if isSelected(option.anchor) {
+                  Image(systemName: "checkmark")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(
+                      colorScheme == .dark
+                        ? Color.white.opacity(0.9)
+                        : Color.black.opacity(0.75)
+                    )
+                }
               }
+              .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(option.name) gradient")
           }
-          .buttonStyle(.plain)
-          .accessibilityLabel(option.name)
+        }
+
+        Divider()
+          .overlay(Color(.separator).opacity(0.20))
+
+        LazyVGrid(columns: columns, spacing: 12) {
+          ForEach(options, id: \.self) { option in
+            Button {
+              Haptics.impact(.light)
+              selected = option.color
+            } label: {
+              ZStack {
+                Circle()
+                  .fill(option.swatch(for: colorScheme))
+                  .frame(width: 34, height: 34)
+                  .overlay(
+                    Circle()
+                      .stroke(Color.white.opacity(0.92), lineWidth: 1)
+                  )
+
+                if isSelected(option.color) {
+                  Image(systemName: "checkmark")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(
+                      colorScheme == .dark
+                        ? Color.white.opacity(0.9)
+                        : Color.black.opacity(0.75)
+                    )
+                }
+              }
+              .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(option.name)
+          }
         }
       }
       .padding(12)
@@ -2846,8 +3144,25 @@ private struct DiaryColorPicker: View {
   }
 
   private func isSelected(_ candidate: Color) -> Bool {
-    // Best-effort: SwiftUI Color doesn't compare reliably; compare by description.
-    String(describing: candidate) == String(describing: selected)
+    guard let a = rgba(of: candidate), let b = rgba(of: selected) else {
+      return String(describing: candidate) == String(describing: selected)
+    }
+
+    let difference =
+      abs(a.r - b.r) + abs(a.g - b.g) + abs(a.b - b.b) + abs(a.a - b.a)
+    return difference < 0.045
+  }
+
+  private func rgba(of color: Color) -> (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat)? {
+    var r: CGFloat = 0
+    var g: CGFloat = 0
+    var b: CGFloat = 0
+    var a: CGFloat = 0
+
+    guard UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a) else {
+      return nil
+    }
+    return (r, g, b, a)
   }
 }
 

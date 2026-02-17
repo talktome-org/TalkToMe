@@ -34,6 +34,8 @@ class DiarySettings(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'My Diary'::text"))
     description: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("''::text"))
     header_color_hex: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'#B8DEFF'::text"))
+    current_streak_days: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    max_streak_days: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

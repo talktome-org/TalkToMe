@@ -136,6 +136,12 @@ struct TalkToMeApp: App {
                 // Pre-warm device contacts so Friends and Contacts opens instantly.
                 await contactsVM.preloadIfAuthorized()
               }
+              group.addTask {
+                guard let rawUserId = AuthService.shared.currentUserId,
+                  let userId = UUID(uuidString: rawUserId)
+                else { return }
+                await DiaryService.shared.preloadDiaryData(userId: userId)
+              }
             }
 
             // All initial data loaded, hide loading screen
@@ -182,6 +188,10 @@ struct TalkToMeApp: App {
                 group.addTask {
                   await contactsVM.preloadIfAuthorized()
                 }
+                group.addTask {
+                  guard let userId = UUID(uuidString: newKey) else { return }
+                  await DiaryService.shared.preloadDiaryData(userId: userId)
+                }
               }
               APNSService.shared.tryUploadIfAuthenticated()
               APNSService.shared.consumePendingIfReady()
@@ -212,6 +222,13 @@ struct TalkToMeApp: App {
               APNSService.shared.consumePendingIfReady()
             }
             if auth.isAuthenticated {
+              if let rawUserId = auth.currentUserId,
+                let userId = UUID(uuidString: rawUserId)
+              {
+                Task {
+                  await DiaryService.shared.preloadDiaryData(userId: userId)
+                }
+              }
               Task {
                 guard let token = try? await AuthService.shared.client.auth.session.accessToken
                 else { return }
