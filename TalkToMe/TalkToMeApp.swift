@@ -67,9 +67,8 @@ struct TalkToMeApp: App {
         .environmentObject(sessionsViewModel)
         .environmentObject(settingsViewModel)
         .environmentObject(contactsVM)
-        .preferredColorScheme(
-          appearance == "Light" ? .light : appearance == "Dark" ? .dark : nil
-        )
+        .environmentObject(contactsVM)
+        // .preferredColorScheme(.dark) -- Removed to allow dynamic theme switching
         .onOpenURL { url in
           print("[URL] onOpenURL received: \(url.absoluteString)")
           AuthService.shared.client.auth.handle(url)
@@ -211,7 +210,8 @@ struct TalkToMeApp: App {
             }
             if auth.isAuthenticated {
               Task {
-                guard let token = try? await AuthService.shared.client.auth.session.accessToken else { return }
+                guard let token = try? await AuthService.shared.client.auth.session.accessToken
+                else { return }
                 try? await BackendService.shared.updatePresence(online: true, accessToken: token)
               }
             }
@@ -220,7 +220,8 @@ struct TalkToMeApp: App {
               let bgTaskId = UIApplication.shared.beginBackgroundTask(expirationHandler: nil)
               Task {
                 defer { UIApplication.shared.endBackgroundTask(bgTaskId) }
-                guard let token = try? await AuthService.shared.client.auth.session.accessToken else { return }
+                guard let token = try? await AuthService.shared.client.auth.session.accessToken
+                else { return }
                 try? await BackendService.shared.updatePresence(online: false, accessToken: token)
               }
             }

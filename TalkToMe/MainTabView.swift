@@ -19,7 +19,7 @@ struct MainTabView: View {
   @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
   @EnvironmentObject private var navigationViewModel: SidebarNavigationViewModel
 
-  @State private var selectedTab: AppTab = .chat
+  @State private var selectedTab: AppTab = .home
   @State private var showChat: Bool = false
   @State private var chatDragOffset: CGFloat = 0
   @State private var searchString: String = ""
@@ -105,7 +105,7 @@ struct MainTabView: View {
         )
         .id(viewId)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground))
+        .background(AppTheme.background)
         .clipShape(RoundedRectangle(cornerRadius: 44, style: .continuous))
         .ignoresSafeArea()
         .offset(x: chatDragOffset)
