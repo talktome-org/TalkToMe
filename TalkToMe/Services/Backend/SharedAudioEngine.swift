@@ -17,6 +17,7 @@ final class SharedAudioEngine: @unchecked Sendable {
     private var hasSpeakerLevelTap = false
     private var hasInputTap = false
     private var isVoiceSessionActive = false
+    private var isVoiceSessionHeld = false
 
     private init() {}
 
@@ -26,6 +27,22 @@ final class SharedAudioEngine: @unchecked Sendable {
         audioQueue.sync {
             ensureRunningOnQueue()
         }
+    }
+
+    /// Kick off engine setup on the background queue without blocking the caller.
+    /// Subsequent `ensureRunning()` calls will wait for this to finish then
+    /// hit the fast path (engine already running).
+    func ensureRunningAsync() {
+        audioQueue.async {
+            self.ensureRunningOnQueue()
+        }
+    }
+
+    /// Prevent automatic audio session deactivation while speak mode is active.
+    /// Synchronous so the hold is guaranteed to be in place before any
+    /// subsequent async dispatches (e.g. ghost video ensureIdleAudioSession).
+    func holdVoiceSession() {
+        audioQueue.sync { self.isVoiceSessionHeld = true }
     }
 
     /// Return the app audio session to a non-blocking idle state.
@@ -171,6 +188,7 @@ final class SharedAudioEngine: @unchecked Sendable {
     /// Runs synchronously so background music resumes before the call returns.
     func stop() {
         audioQueue.sync {
+            self.isVoiceSessionHeld = false
             if self.hasSpeakerLevelTap {
                 self.engine?.mainMixerNode.removeTap(onBus: 0)
                 self.hasSpeakerLevelTap = false
@@ -192,6 +210,7 @@ final class SharedAudioEngine: @unchecked Sendable {
     }
 
     private func deactivateAudioSessionIfIdleOnQueue() {
+        guard !isVoiceSessionHeld else { return }
         guard !hasInputTap else { return }
         guard !hasSpeakerLevelTap else { return }
         guard !playerNode.isPlaying else { return }
@@ -222,9 +241,19 @@ final class SharedAudioEngine: @unchecked Sendable {
     }
 
     private func configureIdleAudioSessionOnQueue() {
+        guard !isVoiceSessionHeld else { return }
         guard !hasInputTap else { return }
         guard !hasSpeakerLevelTap else { return }
         guard !playerNode.isPlaying else { return }
-        deactivateVoiceSessionOnQueue()
+
+        if isVoiceSessionActive {
+            deactivateVoiceSessionOnQueue()
+        } else {
+            // Even without a prior voice session, explicitly set ambient so
+            // the default .soloAmbient category doesn't interrupt other audio
+            // (e.g. when decorative video players start).
+            let session = AVAudioSession.sharedInstance()
+            try? session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+        }
     }
 }

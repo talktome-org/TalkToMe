@@ -229,7 +229,7 @@ final class ChatVoiceModeController: ObservableObject {
 
         if speakSTTService.isConnected == false {
             await speakSTTService.connect(
-                config: .init(language: "en-US", model: "nova-3", endpointingMs: 400, sampleRateHz: 24_000)
+                config: .init(language: "multi", model: "nova-3", endpointingMs: 300, sampleRateHz: 24_000)
             )
         }
 
@@ -324,11 +324,16 @@ final class ChatVoiceModeController: ObservableObject {
         updatePhase(.connecting)
         delegate?.inputText = ""
 
-        // Eagerly activate the audio session and start the engine so the
-        // hardware mic is ready by the time we install the input tap.
-        // This causes any background music to pause immediately, giving
-        // a clean transition into voice mode.
-        SharedAudioEngine.shared.ensureRunning()
+        // Lock the audio session open for the duration of speak mode so that
+        // transient idle checks (e.g. between TTS turns, ghost video configure)
+        // can't deactivate it and cycle the mic.
+        SharedAudioEngine.shared.holdVoiceSession()
+
+        // Kick off audio session + engine setup on a background thread so the
+        // main thread isn't blocked (~200-500 ms for voice processing init).
+        // installMicTap() will sync-wait for this to finish before installing
+        // the tap, so the mic is ready as soon as the engine is.
+        SharedAudioEngine.shared.ensureRunningAsync()
 
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -346,15 +351,15 @@ final class ChatVoiceModeController: ObservableObject {
 
             self.speakSTTService.transcriptAggregation = .perUtterance
             self.speakSTTService.startRecording()
-            self.updatePhase(.listening)
 
-            // Connect STT and preconnect TTS in parallel
+            // Connect STT and preconnect TTS in parallel.
+            // Phase stays .connecting (gray waveform) until both are ready.
             let voiceIdForTTS = storedVoiceId
             let voiceNameForTTS = name
             async let sttConnect: Void = {
                 if self.speakSTTService.isConnected == false {
                     await self.speakSTTService.connect(
-                        config: .init(language: "en-US", model: "nova-3", endpointingMs: 400, sampleRateHz: 24_000)
+                        config: .init(language: "multi", model: "nova-3", endpointingMs: 300, sampleRateHz: 24_000)
                     )
                 }
             }()
@@ -366,6 +371,7 @@ final class ChatVoiceModeController: ObservableObject {
             if self.speakSTTService.isConnected {
                 self.speakSTTService.lastError = nil
             }
+            self.updatePhase(.listening)
         }
     }
 
