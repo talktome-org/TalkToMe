@@ -20,6 +20,8 @@ struct BuddyHeaderView: View {
         "mira": "Bright and uplifting",
         "pax": "Calm and wise",
         "luma": "Soft and warm",
+        "jay": "Bold and driven",
+        "hex": "Arcane and curious",
     ]
 
     private var buddyDescription: String {

@@ -325,7 +325,7 @@ struct MessagesListView: View {
     @ViewBuilder
     private var chatEmptyState: some View {
         VStack(spacing: 24) {
-            // Static domino of ghost buddies
+            // Static domino of ghost buddy cards
             Button {
                 Haptics.impact(.light)
                 NotificationCenter.default.post(name: .openMediaPanel, object: nil)
@@ -347,13 +347,13 @@ struct MessagesListView: View {
             .buttonStyle(GhostCardPressStyle())
             .frame(height: 120)
 
-            VStack(spacing: 14) {
+            VStack(spacing: 8) {
                 Button {
                     Haptics.impact(.light)
                     NotificationCenter.default.post(name: .openMediaPanel, object: nil)
                 } label: {
                     HStack(spacing: 4) {
-                        Text("Choose your ghost")
+                        Text("Choose Your Buddy")
                             .font(.system(size: 17, weight: .bold))
                         Image(systemName: "chevron.right")
                             .font(.system(size: 12, weight: .semibold))
@@ -361,6 +361,12 @@ struct MessagesListView: View {
                     .foregroundStyle(.primary)
                 }
                 .buttonStyle(.plain)
+
+                Text("Vent about anything, get advice, or have your buddy draft messages to send to friends.")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
             }
         }
     }
