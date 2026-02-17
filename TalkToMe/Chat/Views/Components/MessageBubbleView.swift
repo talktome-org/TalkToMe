@@ -491,15 +491,18 @@ struct MessageBubbleView: View {
       if message.isFromUser {
         let isSendAnimationTarget = message.id == outgoingAnimatingMessageId
 
-        if isSendAnimationTarget, let ns = sendAnimationNamespace {
-          UserMessageBubbleView(
-            segments: message.segments, isFromVoiceMode: message.isFromVoiceMode
-          )
-          .matchedGeometryEffect(id: message.id, in: ns, properties: .position, isSource: false)
-        } else {
-          UserMessageBubbleView(
-            segments: message.segments, isFromVoiceMode: message.isFromVoiceMode)
+        Group {
+          if isSendAnimationTarget, let ns = sendAnimationNamespace {
+            UserMessageBubbleView(
+              segments: message.segments, isFromVoiceMode: message.isFromVoiceMode
+            )
+            .matchedGeometryEffect(id: message.id, in: ns, properties: .position, isSource: false)
+          } else {
+            UserMessageBubbleView(
+              segments: message.segments, isFromVoiceMode: message.isFromVoiceMode)
+          }
         }
+        .textSelection(.enabled)
       } else if shouldShowThinkingIndicator || message.isFromPartnerUser || hasRenderableAssistantContent {
         VStack(alignment: .leading, spacing: 8) {
           if shouldShowThinkingIndicator {

@@ -421,4 +421,5 @@ extension ChatViewModel: ChatStreamingDelegate {
         // Always call finish — it will wait for connection if needed
         elevenLabsStreamingTTS.finish()
     }
+
 }
