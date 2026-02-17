@@ -19,4 +19,5 @@ extension Notification.Name {
     static let unsendPartnerMessageResult = Notification.Name("chat.partner.unsend.result")
     static let openAddFriendSheet = Notification.Name("chat.open.add.friend.sheet")
     static let openChatSession = Notification.Name("chat.open.session")
+    static let openMediaPanel = Notification.Name("chat.open.media.panel")
 }

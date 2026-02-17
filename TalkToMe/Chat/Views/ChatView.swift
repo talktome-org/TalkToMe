@@ -49,6 +49,13 @@ struct ChatView: View {
                     viewModel.voiceController.startSpeakMode()
                 }
             }
+            .onAppear {
+                if viewModel.sessionId == nil && !sessionsViewModel.shouldStartInVoiceMode {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        isInputFocused = true
+                    }
+                }
+            }
             .toolbar {
                 if let onBack {
                     ToolbarItem(placement: .topBarLeading) {

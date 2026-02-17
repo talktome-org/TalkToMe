@@ -139,6 +139,8 @@ private enum GetStartedStep: Int, CaseIterable, Identifiable {
 private struct GetStartedStepCardView: View {
   let step: GetStartedStep
   let buddyName: String
+  var index: Int = 0
+  var total: Int = 1
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -163,6 +165,21 @@ private struct GetStartedStepCardView: View {
           .font(.system(size: 24, weight: .medium))
           .foregroundStyle(.white)
           .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
+
+        VStack {
+          HStack {
+            Spacer()
+            Text("\(index + 1)/\(total)")
+              .font(.system(size: 10, weight: .semibold, design: .rounded))
+              .foregroundStyle(.white.opacity(0.7))
+              .padding(.horizontal, 7)
+              .padding(.vertical, 3)
+              .background(.white.opacity(0.15))
+              .clipShape(Capsule())
+          }
+          Spacer()
+        }
+        .padding(8)
       }
       .frame(height: 76)
 
@@ -250,11 +267,9 @@ private struct QuarterProgressRing: View {
 
   var body: some View {
     ZStack {
-      // Background track
       Circle()
         .stroke(Color(.separator).opacity(0.25), lineWidth: 2.5)
 
-      // Filled quarters
       ForEach(0..<completed, id: \.self) { i in
         Circle()
           .trim(
@@ -265,7 +280,6 @@ private struct QuarterProgressRing: View {
           .rotationEffect(.degrees(-90))
       }
 
-      // Label
       Text("\(completed)/\(total)")
         .font(.system(size: 11, weight: .semibold, design: .rounded))
         .foregroundStyle(Color(.label))
@@ -285,35 +299,18 @@ private struct GetStartedCardView: View {
   let onStepTap: (GetStartedStep) -> Void
   var onReset: (() -> Void)? = nil
 
-  @State private var isExpanded: Bool = true
-
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Header
-      Button {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-          isExpanded.toggle()
-        }
-      } label: {
-        HStack(spacing: 10) {
-          QuarterProgressRing(completed: completedCount, total: totalCount)
+      HStack(spacing: 10) {
+        QuarterProgressRing(completed: completedCount, total: totalCount)
 
-          Text("Get started")
-            .font(.system(size: 18, weight: .bold))
-            .foregroundStyle(Color(.label))
+        Text("Get started")
+          .font(.system(size: 18, weight: .bold))
+          .foregroundStyle(Color(.label))
 
-          Spacer()
-
-          Image(systemName: "chevron.up")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(Color(.tertiaryLabel))
-            .rotationEffect(.degrees(isExpanded ? 0 : 180))
-            .frame(width: 30, height: 30)
-            .background(Color(.tertiarySystemFill))
-            .clipShape(Circle())
-        }
+        Spacer()
       }
-      .buttonStyle(.plain)
       .simultaneousGesture(
         LongPressGesture(minimumDuration: 1.0).onEnded { _ in
           Haptics.notification(.warning)
@@ -323,35 +320,64 @@ private struct GetStartedCardView: View {
         }
       )
       .padding(.horizontal, 14)
-      .padding(.top, 14)
-      .padding(.bottom, isExpanded ? 10 : 14)
+      .padding(.top, 4)
+      .padding(.bottom, 10)
 
-      // Horizontal card scroll
-      if isExpanded {
-        ScrollView(.horizontal, showsIndicators: false) {
-          HStack(spacing: 10) {
-            ForEach(steps) { step in
-              if !completedStepIds.contains(step.id) {
-                Button {
-                  onStepTap(step)
-                } label: {
-                  GetStartedStepCardView(step: step, buddyName: buddyName)
-                }
-                .buttonStyle(SpringPressStyle())
-              }
+      // Arc carousel
+      ArcCarouselView(
+        steps: steps,
+        completedStepIds: completedStepIds,
+        buddyName: buddyName,
+        onStepTap: onStepTap
+      )
+    }
+  }
+}
+
+// MARK: - Arc Carousel
+
+private struct ArcCarouselView: View {
+  let steps: [GetStartedStep]
+  let completedStepIds: Set<Int>
+  let buddyName: String
+  let onStepTap: (GetStartedStep) -> Void
+
+  private let maxYDrop: CGFloat = 20
+  private let maxRotation: Double = 5
+
+  private var visibleSteps: [GetStartedStep] {
+    steps.filter { !completedStepIds.contains($0.id) }
+  }
+
+  var body: some View {
+    if !visibleSteps.isEmpty {
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(alignment: .top, spacing: 12) {
+          ForEach(Array(visibleSteps.enumerated()), id: \.element.id) { index, step in
+            Button { onStepTap(step) } label: {
+              GetStartedStepCardView(step: step, buddyName: buddyName, index: index, total: visibleSteps.count)
+            }
+            .buttonStyle(SpringPressStyle())
+            .visualEffect { content, proxy in
+              let scrollBounds = proxy.bounds(of: .scrollView(axis: .horizontal)) ?? .zero
+              let scrollCenter = scrollBounds.width / 2
+              let cardMid = proxy.frame(in: .scrollView(axis: .horizontal)).midX
+              let distance = cardMid - scrollCenter
+              let normalized = scrollCenter > 0 ? distance / scrollCenter : 0
+              let clamped = max(-1.5, min(1.5, normalized))
+
+              return content
+                .offset(y: clamped * clamped * maxYDrop)
+                .rotationEffect(.degrees(-Double(clamped) * maxRotation))
             }
           }
-          .padding(.horizontal, 14)
         }
-        .padding(.bottom, 14)
+        .padding(.horizontal, 14)
+        .padding(.bottom, maxYDrop)
       }
+      .scrollClipDisabled()
+      .padding(.bottom, 8)
     }
-    .background(AppTheme.surface)
-    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-    .overlay(
-      RoundedRectangle(cornerRadius: 20, style: .continuous)
-        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
-    )
   }
 }
 
@@ -777,6 +803,8 @@ struct HomeView: View {
               )
               .transition(.opacity.combined(with: .move(edge: .top)))
             }
+
+            Spacer().frame(height: 12)
 
             ForEach(HomeFeature.allCases) { feature in
               Button { handleCardTap(feature) } label: {

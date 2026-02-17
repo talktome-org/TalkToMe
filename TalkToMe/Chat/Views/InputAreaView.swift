@@ -407,6 +407,9 @@ struct InputAreaView: View {
           }
         }
       }
+      .onReceive(NotificationCenter.default.publisher(for: .openMediaPanel)) { _ in
+        isMediaPanelVisible = true
+      }
       .sheet(isPresented: $isMediaPanelVisible) {
         MediaPickerPanelView(
           attachments: $pendingAttachments,

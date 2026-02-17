@@ -500,7 +500,7 @@ struct MessageBubbleView: View {
           UserMessageBubbleView(
             segments: message.segments, isFromVoiceMode: message.isFromVoiceMode)
         }
-      } else {
+      } else if shouldShowThinkingIndicator || message.isFromPartnerUser || hasRenderableAssistantContent {
         VStack(alignment: .leading, spacing: 8) {
           if shouldShowThinkingIndicator {
             if let thinkingText = activeStreamingThinkingText {

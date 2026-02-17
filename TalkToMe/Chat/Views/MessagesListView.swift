@@ -117,6 +117,12 @@ struct MessagesListView: View {
 
     var body: some View {
         ScrollView {
+            if messages.isEmpty {
+                chatEmptyState
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 120)
+            }
+
             VStack(spacing: 18) {
                 ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
                     MessageBubbleView(
@@ -317,6 +323,74 @@ struct MessagesListView: View {
     }
 
     @ViewBuilder
+    private var chatEmptyState: some View {
+        VStack(spacing: 20) {
+            // Static domino of ghost buddies
+            Button {
+                Haptics.impact(.light)
+                NotificationCenter.default.post(name: .openMediaPanel, object: nil)
+            } label: {
+                ZStack {
+                    ghostCard(name: "snow")
+                        .rotationEffect(.degrees(-12))
+                        .offset(x: -70, y: 10)
+
+                    ghostCard(name: "pax")
+                        .rotationEffect(.degrees(12))
+                        .offset(x: 70, y: 10)
+
+                    ghostCard(name: "mira")
+                        .scaleEffect(1.05)
+                        .offset(x: -5)
+                }
+            }
+            .buttonStyle(GhostCardPressStyle())
+            .frame(height: 140)
+
+            VStack(spacing: 14) {
+                Button {
+                    Haptics.impact(.light)
+                    NotificationCenter.default.post(name: .openMediaPanel, object: nil)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Choose your ghost")
+                            .font(.system(size: 19, weight: .bold))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundStyle(.primary)
+                }
+                .buttonStyle(.plain)
+
+                (Text("Tap ")
+                + Text(Image(systemName: "plus.rectangle.on.rectangle"))
+                    .font(.system(size: 13, weight: .semibold))
+                + Text(" to pick a ghost with its own custom voice. Share your relationship or personal problems — they're here to listen."))
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+            }
+        }
+    }
+
+    private func ghostCard(name: String) -> some View {
+        Group {
+            if let uiImage = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: name) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 110, height: 110)
+            } else {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 36, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 110, height: 110)
+            }
+        }
+    }
+
+    @ViewBuilder
     private var scrollToBottomButton: some View {
         let bottomPadding: CGFloat = -10
 
@@ -393,6 +467,14 @@ struct MessagesListView: View {
     }
 }
 
+
+private struct GhostCardPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.93 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: configuration.isPressed)
+    }
+}
 
 private struct ScrollButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
