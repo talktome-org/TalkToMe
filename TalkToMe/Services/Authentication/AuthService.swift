@@ -96,13 +96,17 @@ class AuthService: ObservableObject {
     ///         In that case we return `.needsEmailConfirmation` and do not set `isAuthenticated=true`.
     func signUp(fullName: String, email: String, password: String) async -> EmailSignUpOutcome {
         do {
-            _ = try await client.auth.signUp(email: email, password: password)
+            print("[AuthService] signUp starting for email: \(email)")
+            let response = try await client.auth.signUp(email: email, password: password)
+            print("[AuthService] signUp succeeded – user id: \(response.user.id)")
 
             // If confirm-email is enabled, signUp succeeds but there is no session yet.
             let session: Session
             do {
                 session = try await client.auth.session
+                print("[AuthService] session obtained – accessToken present: \(!session.accessToken.isEmpty)")
             } catch {
+                print("[AuthService] no session after signUp (confirm-email likely enabled): \(error)")
                 await MainActor.run { self.lastAuthError = nil }
                 return .needsEmailConfirmation
             }
@@ -112,6 +116,7 @@ class AuthService: ObservableObject {
             do {
                 let trimmed = fullName.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
+                    print("[AuthService] updating onboarding with name: \(trimmed)")
                     _ = try await BackendService.shared.updateOnboarding(
                         accessToken: session.accessToken,
                         update: .init(
@@ -122,9 +127,10 @@ class AuthService: ObservableObject {
                             relationship_topics: nil
                         )
                     )
+                    print("[AuthService] onboarding update succeeded")
                 }
             } catch {
-                // Don't block sign-up on profile persistence.
+                print("[AuthService] onboarding update failed (non-blocking): \(error)")
             }
 
             await MainActor.run {
@@ -134,6 +140,12 @@ class AuthService: ObservableObject {
             }
             return .signedIn
         } catch {
+            print("[AuthService] signUp FAILED: \(error)")
+            print("[AuthService] signUp error localizedDescription: \(error.localizedDescription)")
+            print("[AuthService] signUp error type: \(type(of: error))")
+            if let urlError = error as? URLError {
+                print("[AuthService] URLError code: \(urlError.code.rawValue)")
+            }
             await MainActor.run {
                 self.lastAuthError = error.localizedDescription
             }

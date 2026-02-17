@@ -326,9 +326,13 @@ private struct EmailSignUpView: View {
     @State private var password: String = ""
     @State private var confirmPassword: String = ""
 
+    @FocusState private var focusedField: Field?
     @State private var isSubmitting: Bool = false
     @State private var showOfflineAlert: Bool = false
-    @State private var infoMessage: String? = nil
+    @State private var toastMessage: String? = nil
+    @State private var toastWorkItem: DispatchWorkItem? = nil
+
+    private enum Field { case name, email, password, confirm }
 
     private var trimmedName: String { fullName.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var trimmedEmail: String { email.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -340,6 +344,14 @@ private struct EmailSignUpView: View {
     private var hasValidPassword: Bool { password.count >= 6 }
     private var passwordsMatch: Bool { !password.isEmpty && password == confirmPassword }
     private var canSubmit: Bool { hasValidDetails && hasValidPassword && passwordsMatch && !isSubmitting }
+
+    private var validationHint: String {
+        if trimmedName.isEmpty { return "Enter your full name." }
+        if !isPlausibleEmail(trimmedEmail) { return "Enter a valid email address." }
+        if !hasValidPassword { return "Password: at least 6 characters." }
+        if !passwordsMatch { return "Passwords don't match." }
+        return ""
+    }
 
     // 0% at start → 50% when details are filled → 100% when ready to submit.
     private var progress: CGFloat {
@@ -362,41 +374,37 @@ private struct EmailSignUpView: View {
 
                 VStack(spacing: 14) {
                     TextField("Full name", text: $fullName)
+                        .focused($focusedField, equals: .name)
                         .textInputAutocapitalization(.words)
                         .autocorrectionDisabled(true)
                         .textContentType(.name)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .email }
                         .modifier(AuthTextFieldStyle())
 
                     TextField("Email", text: $email)
+                        .focused($focusedField, equals: .email)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
                         .textContentType(.username)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .password }
                         .modifier(AuthTextFieldStyle())
 
                     SecureField("Password", text: $password)
+                        .focused($focusedField, equals: .password)
                         .textContentType(.newPassword)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .confirm }
                         .modifier(AuthTextFieldStyle())
 
                     SecureField("Confirm password", text: $confirmPassword)
+                        .focused($focusedField, equals: .confirm)
                         .textContentType(.newPassword)
+                        .submitLabel(.go)
+                        .onSubmit { if canSubmit { submit() } }
                         .modifier(AuthTextFieldStyle())
-                }
-
-                Text("Password: at least 6 characters.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-
-                if let msg = infoMessage, !msg.isEmpty {
-                    Text(msg)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
-                if let err = authService.lastAuthError, !err.isEmpty {
-                    Text(err)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
                 }
 
                 Button(action: submit) {
@@ -414,7 +422,7 @@ private struct EmailSignUpView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .shadow(color: AppTheme.accent.opacity(0.3), radius: 8, x: 0, y: 4)
                 }
-                .disabled(!canSubmit)
+                .opacity(canSubmit ? 1.0 : 0.5)
                 .padding(.top, 4)
 
                 if let switchIn = onSwitchToLogIn {
@@ -437,7 +445,20 @@ private struct EmailSignUpView: View {
             .padding(.bottom, 32)
             }
         }
-        .scrollDismissesKeyboard(.interactively)
+        .scrollDismissesKeyboard(.immediately)
+        .overlay(alignment: .top) {
+            if let toastMessage {
+                ToastOverlayView(message: toastMessage, onDismiss: dismissToast)
+                    .padding(.top, 8)
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
+        .onChange(of: confirmPassword) {
+            if canSubmit {
+                focusedField = nil
+                submit()
+            }
+        }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -451,31 +472,35 @@ private struct EmailSignUpView: View {
         }
     }
 
+    private func showToast(_ message: String) {
+        toastWorkItem?.cancel()
+        Haptics.notification(.warning)
+        withAnimation { toastMessage = message }
+        let work = DispatchWorkItem { withAnimation { toastMessage = nil } }
+        toastWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+    }
+
+    private func dismissToast() {
+        toastWorkItem?.cancel()
+        withAnimation { toastMessage = nil }
+    }
+
     private func submit() {
         Haptics.selection()
-        infoMessage = nil
 
         guard network.isOnline else {
             showOfflineAlert = true
             return
         }
 
-        let n = fullName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let e = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canSubmit else {
+            showToast(validationHint)
+            return
+        }
 
-        guard !n.isEmpty, !e.isEmpty else { return }
-        guard isPlausibleEmail(e) else {
-            infoMessage = "Please enter a valid email."
-            return
-        }
-        guard password.count >= 6 else {
-            infoMessage = "Password must be at least 6 characters."
-            return
-        }
-        guard password == confirmPassword else {
-            infoMessage = "Passwords don't match."
-            return
-        }
+        let n = trimmedName
+        let e = trimmedEmail
 
         isSubmitting = true
         Task {
@@ -486,8 +511,10 @@ private struct EmailSignUpView: View {
                     dismiss()
                     return
                 }
-                if case .needsEmailConfirmation = outcome, authService.lastAuthError == nil {
-                    infoMessage = "Check your email to confirm your account, then come back and log in."
+                if let err = authService.lastAuthError, !err.isEmpty {
+                    showToast(err)
+                } else if case .needsEmailConfirmation = outcome {
+                    showToast("Check your email to confirm your account, then come back and log in.")
                 }
             }
         }
