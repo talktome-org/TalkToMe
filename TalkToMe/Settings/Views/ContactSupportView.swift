@@ -113,7 +113,7 @@ struct ContactSupportView: View {
         .scrollIndicators(.hidden)
         .navigationTitle("Contact Support")
         .navigationBarTitleDisplayMode(.inline)
-        .background(Color(.systemGroupedBackground))
+        .background(AppTheme.background)
     }
 
     private func supportRow(icon: String, title: String, subtitle: String, trailing: AnyView?) -> some View {

@@ -345,6 +345,8 @@ private struct ReportConversationFlowView: View {
     var body: some View {
         NavigationStack {
             ZStack {
+                AppTheme.background.ignoresSafeArea()
+
                 // Level 0: Category selection
                 categoryListView
 
@@ -352,7 +354,7 @@ private struct ReportConversationFlowView: View {
                 if showReasonOverlay, let category = selectedCategory {
                     reasonListView(for: category)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color(.systemBackground))
+                        .background(AppTheme.background)
                         .offset(x: reasonDragOffset)
                         .overlay(alignment: .leading) {
                             Color.clear
@@ -367,7 +369,7 @@ private struct ReportConversationFlowView: View {
                 if showDetailsOverlay, let reason = selectedReason {
                     detailsView(for: reason)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color(.systemBackground))
+                        .background(AppTheme.background)
                         .offset(x: detailsDragOffset)
                         .overlay(alignment: .leading) {
                             Color.clear

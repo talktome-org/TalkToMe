@@ -11,6 +11,8 @@ class SettingsViewModel: ObservableObject {
     @Published var avatarURL: String? = nil
     @Published var showPersonalizationEdit: Bool = false
     @Published var shouldNavigateToContacts: Bool = false
+    @Published var shouldNavigateToAppearance: Bool = false
+    @Published var shouldHighlightCustomization: Bool = false
 
     private let avatarCacheManager = AvatarCacheManager.shared
 

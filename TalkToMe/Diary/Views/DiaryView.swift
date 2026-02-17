@@ -1346,7 +1346,7 @@ private struct CalendarDaySheet: View {
           .padding(.bottom, 24)
         }
       }
-      .background(Color(.systemBackground))
+      .background(AppTheme.background)
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
@@ -2025,11 +2025,11 @@ private struct DiaryNoteEditorView: View {
     .frame(maxWidth: .infinity, alignment: .leading)
   }
 
-  var body: some View {
+  private var noteEditorBase: some View {
     VStack(alignment: .leading, spacing: 10) {
       editorContent
     }
-    .background(Color(.systemBackground))
+    .background(AppTheme.background)
     .navigationBarTitleDisplayMode(.inline)
     .toolbarBackground(.hidden, for: .navigationBar)
     .ignoresSafeArea(.keyboard, edges: .bottom)
@@ -2102,6 +2102,10 @@ private struct DiaryNoteEditorView: View {
         onFiles: { showFileImporter = true }
       )
     }
+  }
+
+  var body: some View {
+    noteEditorBase
     .fileImporter(
       isPresented: $showFileImporter, allowedContentTypes: [.item, .pdf, .plainText, .image],
       allowsMultipleSelection: true
@@ -2194,8 +2198,8 @@ private struct DiaryNoteEditorView: View {
               switch d.content {
               case .text(let s):
                 loaded.append(DiaryBlock(id: d.id, content: .text(s)))
-              case .imageStoragePath(let path):
-                let img = await DiaryService.shared.loadImage(storagePath: path)
+              case .imageURL(let url, let path):
+                let img = await DiaryService.shared.loadImageFromURL(url)
                 loaded.append(DiaryBlock(id: d.id, content: .image(img, storagePath: path)))
               }
             }
@@ -2249,7 +2253,7 @@ private struct DiaryNoteEditorView: View {
         case .text(let s):
           return .text(id: block.id, content: s)
         case .image(_, let path?) where path.isEmpty == false:
-          return .imageRemote(id: block.id, storagePath: path)
+          return .imageRemote(id: block.id, remotePath: path)
         case .image(let img?, _):
           return .imageLocal(id: block.id, image: img)
         case .image(nil, _):
@@ -2547,7 +2551,7 @@ private struct NewDiaryNoteSheet: View {
         newNoteSheetContent
       }
       .scrollDismissesKeyboard(.interactively)
-      .background(Color(.systemBackground))
+      .background(AppTheme.background)
       .toolbarBackground(.hidden, for: .navigationBar)
       .ignoresSafeArea(.keyboard, edges: .bottom)
       .toolbar {
@@ -2723,7 +2727,7 @@ private struct NewDiaryNoteSheet: View {
         case .text(let s):
           return .text(id: block.id, content: s)
         case .image(_, let path?) where path.isEmpty == false:
-          return .imageRemote(id: block.id, storagePath: path)
+          return .imageRemote(id: block.id, remotePath: path)
         case .image(let img?, _):
           return .imageLocal(id: block.id, image: img)
         case .image(nil, _):
@@ -3004,7 +3008,7 @@ private struct EditDiaryNoteSheet: View {
     .frame(maxWidth: .infinity, alignment: .leading)
   }
 
-  var body: some View {
+  private var editNoteBase: some View {
     NavigationStack {
       ScrollView {
         if isLoadingBlocksFromApi && blocks.isEmpty {
@@ -3022,7 +3026,7 @@ private struct EditDiaryNoteSheet: View {
         }
       }
       .scrollDismissesKeyboard(.interactively)
-      .background(Color(.systemBackground))
+      .background(AppTheme.background)
       .toolbarBackground(.hidden, for: .navigationBar)
       .ignoresSafeArea(.keyboard, edges: .bottom)
       .toolbar {
@@ -3118,6 +3122,10 @@ private struct EditDiaryNoteSheet: View {
         )
       }
     }
+  }
+
+  var body: some View {
+    editNoteBase
     .fileImporter(
       isPresented: $showFileImporter, allowedContentTypes: [.item, .pdf, .plainText, .image],
       allowsMultipleSelection: true
@@ -3210,8 +3218,8 @@ private struct EditDiaryNoteSheet: View {
               switch d.content {
               case .text(let s):
                 loaded.append(DiaryBlock(id: d.id, content: .text(s)))
-              case .imageStoragePath(let path):
-                let img = await DiaryService.shared.loadImage(storagePath: path)
+              case .imageURL(let url, let path):
+                let img = await DiaryService.shared.loadImageFromURL(url)
                 loaded.append(DiaryBlock(id: d.id, content: .image(img, storagePath: path)))
               }
             }
@@ -3278,7 +3286,7 @@ private struct EditDiaryNoteSheet: View {
         case .text(let s):
           return .text(id: block.id, content: s)
         case .image(_, let path?) where path.isEmpty == false:
-          return .imageRemote(id: block.id, storagePath: path)
+          return .imageRemote(id: block.id, remotePath: path)
         case .image(let img?, _):
           return .imageLocal(id: block.id, image: img)
         case .image(nil, _):

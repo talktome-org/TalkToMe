@@ -41,7 +41,7 @@ struct OnboardingFlowView: View {
       .animation(.easeInOut(duration: 0.5), value: showSplash)
 
       if showSplash {
-        Color.white.ignoresSafeArea()  // Use appropriate background color
+        AppTheme.background.ignoresSafeArea()
           .opacity(splashOpacity)
         Image("AppIconDisplay")
           .resizable()

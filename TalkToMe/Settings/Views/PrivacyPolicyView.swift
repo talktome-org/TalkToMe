@@ -110,7 +110,7 @@ struct PrivacyPolicyView: View {
         .scrollIndicators(.hidden)
         .navigationTitle("Privacy Policy")
         .navigationBarTitleDisplayMode(.inline)
-        .background(Color(.systemGroupedBackground))
+        .background(AppTheme.background)
     }
 }
 
