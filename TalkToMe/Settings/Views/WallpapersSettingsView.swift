@@ -67,17 +67,11 @@ struct WallpapersSettingsView: View {
   @AppStorage(PreferenceKeys.chatWallpaperType) private var wallpaperType: String = "default"
   @AppStorage(PreferenceKeys.chatWallpaperValue) private var wallpaperValue: String = ""
 
-<<<<<<< Updated upstream
-    @State private var photoSelection: PhotosPickerItem?
-    @State private var selectedColor: Color = .black
-    @State private var showColorPicker = false
-    @State private var toastMessage: String? = nil
-    @State private var toastWorkItem: DispatchWorkItem? = nil
-=======
   @State private var photoSelection: PhotosPickerItem?
   @State private var selectedColor: Color = .black
   @State private var showColorPicker = false
->>>>>>> Stashed changes
+  @State private var toastMessage: String? = nil
+  @State private var toastWorkItem: DispatchWorkItem? = nil
 
   private let columns = [
     GridItem(.flexible(), spacing: 10),
@@ -85,38 +79,6 @@ struct WallpapersSettingsView: View {
     GridItem(.flexible(), spacing: 10),
   ]
 
-<<<<<<< Updated upstream
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                topActionsSection
-                builtInSection
-                resetSection
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 24)
-        }
-        .scrollIndicators(.hidden)
-        .navigationTitle("Wallpapers")
-        .navigationBarTitleDisplayMode(.inline)
-        .background(Color(.systemGroupedBackground))
-        .overlay(alignment: .top) {
-            if let toastMessage {
-                ToastOverlayView(message: toastMessage, onDismiss: dismissToast)
-                    .padding(.top, 8)
-            }
-        }
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
-        .onChange(of: photoSelection) { _, item in
-            guard let item else { return }
-            Task {
-                if let data = try? await item.loadTransferable(type: Data.self) {
-                    savePhotoWallpaper(data)
-                }
-            }
-        }
-=======
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
@@ -127,12 +89,18 @@ struct WallpapersSettingsView: View {
       .padding(.horizontal, 16)
       .padding(.top, 8)
       .padding(.bottom, 24)
->>>>>>> Stashed changes
     }
     .scrollIndicators(.hidden)
     .navigationTitle("Wallpapers")
     .navigationBarTitleDisplayMode(.inline)
     .background(AppTheme.background)
+    .overlay(alignment: .top) {
+      if let toastMessage {
+        ToastOverlayView(message: toastMessage, onDismiss: dismissToast)
+          .padding(.top, 8)
+      }
+    }
+    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
     .onChange(of: photoSelection) { _, item in
       guard let item else { return }
       Task {
@@ -212,77 +180,6 @@ struct WallpapersSettingsView: View {
           .background(AppTheme.surface)
           .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
-<<<<<<< Updated upstream
-    private var colorPickerSheet: some View {
-        NavigationStack {
-            VStack(spacing: 24) {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(selectedColor)
-                    .frame(height: 120)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
-                    )
-
-                ColorPicker("Choose a color", selection: $selectedColor, supportsOpacity: false)
-                    .font(.system(size: 17))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                Spacer()
-            }
-            .padding(16)
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("Solid Color")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showColorPicker = false }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Apply") {
-                        wallpaperType = "color"
-                        wallpaperValue = Self.hexFromColor(selectedColor)
-                        Haptics.selection()
-                        showColorPicker = false
-                        showToast("Background color applied")
-                    }
-                    .fontWeight(.semibold)
-                }
-            }
-        }
-        .presentationDetents([.medium])
-        .presentationDragIndicator(.visible)
-    }
-
-    // MARK: - Built-in Gradients
-
-    private var builtInSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Built-in")
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-                .padding(.horizontal, 4)
-
-            LazyVGrid(columns: columns, spacing: 10) {
-                ForEach(wallpaperPresets) { preset in
-                    Button {
-                        Haptics.selection()
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            wallpaperType = "gradient"
-                            wallpaperValue = preset.id
-                        }
-                        showToast("\(preset.name) wallpaper applied")
-                    } label: {
-                        gradientThumbnail(preset)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-=======
         Spacer()
       }
       .padding(16)
@@ -299,9 +196,9 @@ struct WallpapersSettingsView: View {
             wallpaperValue = Self.hexFromColor(selectedColor)
             Haptics.selection()
             showColorPicker = false
+            showToast("Background color applied")
           }
           .fontWeight(.semibold)
->>>>>>> Stashed changes
         }
       }
     }
@@ -327,65 +224,16 @@ struct WallpapersSettingsView: View {
               wallpaperType = "gradient"
               wallpaperValue = preset.id
             }
-<<<<<<< Updated upstream
-            removePhotoWallpaper()
-            showToast("Wallpaper reset to default")
-        } label: {
-            HStack {
-                Image(systemName: "arrow.counterclockwise")
-                    .font(.system(size: 16, weight: .medium))
-                Text("Reset to Default")
-                    .font(.system(size: 17))
-            }
-            .foregroundStyle(wallpaperType == "default" ? .secondary : .primary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-=======
+            showToast("\(preset.name) wallpaper applied")
           } label: {
             gradientThumbnail(preset)
           }
           .buttonStyle(.plain)
->>>>>>> Stashed changes
         }
       }
     }
   }
 
-<<<<<<< Updated upstream
-    // MARK: - Toast Helpers
-
-    private func showToast(_ message: String) {
-        toastWorkItem?.cancel()
-        withAnimation { toastMessage = message }
-        let work = DispatchWorkItem {
-            withAnimation { toastMessage = nil }
-        }
-        toastWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: work)
-    }
-
-    private func dismissToast() {
-        toastWorkItem?.cancel()
-        withAnimation { toastMessage = nil }
-    }
-
-    // MARK: - Photo Helpers
-
-    private func savePhotoWallpaper(_ data: Data) {
-        guard let image = UIImage(data: data),
-              let jpeg = image.jpegData(compressionQuality: 0.85) else { return }
-
-        let filename = "chat_wallpaper.jpg"
-        let url = Self.wallpaperFileURL(filename: filename)
-        try? jpeg.write(to: url)
-
-        wallpaperType = "photo"
-        wallpaperValue = filename
-        Haptics.selection()
-        showToast("Photo wallpaper applied")
-=======
   private func gradientThumbnail(_ preset: GradientPreset) -> some View {
     let isSelected = wallpaperType == "gradient" && wallpaperValue == preset.id
     return ZStack(alignment: .bottomLeading) {
@@ -397,7 +245,6 @@ struct WallpapersSettingsView: View {
         .font(.system(size: 11, weight: .medium))
         .foregroundStyle(.white.opacity(0.7))
         .padding(8)
->>>>>>> Stashed changes
     }
     .overlay(
       RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -425,6 +272,7 @@ struct WallpapersSettingsView: View {
         wallpaperValue = ""
       }
       removePhotoWallpaper()
+      showToast("Wallpaper reset to default")
     } label: {
       HStack {
         Image(systemName: "arrow.counterclockwise")
@@ -442,6 +290,23 @@ struct WallpapersSettingsView: View {
     .disabled(wallpaperType == "default")
   }
 
+  // MARK: - Toast Helpers
+
+  private func showToast(_ message: String) {
+    toastWorkItem?.cancel()
+    withAnimation { toastMessage = message }
+    let work = DispatchWorkItem {
+      withAnimation { toastMessage = nil }
+    }
+    toastWorkItem = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: work)
+  }
+
+  private func dismissToast() {
+    toastWorkItem?.cancel()
+    withAnimation { toastMessage = nil }
+  }
+
   // MARK: - Photo Helpers
 
   private func savePhotoWallpaper(_ data: Data) {
@@ -456,6 +321,7 @@ struct WallpapersSettingsView: View {
     wallpaperType = "photo"
     wallpaperValue = filename
     Haptics.selection()
+    showToast("Photo wallpaper applied")
   }
 
   private func removePhotoWallpaper() {

@@ -135,6 +135,34 @@ struct SettingsCardView: View {
                 .frame(minHeight: 44)
               }
 
+            case .info:
+              HStack(spacing: 14) {
+                iconView(for: setting)
+
+                Text(setting.title)
+                  .font(.system(size: 17, weight: .regular))
+                  .foregroundColor(.primary)
+                  .lineLimit(1)
+
+                Spacer()
+
+                if let provider = setting.subtitle {
+                  if provider == "apple" {
+                    Image(systemName: "applelogo")
+                      .font(.system(size: 16))
+                      .foregroundColor(.primary)
+                  } else if provider == "google" {
+                    Image("icons8-google-48 copy")
+                      .renderingMode(.original)
+                      .resizable()
+                      .aspectRatio(contentMode: .fit)
+                      .frame(width: 20, height: 20)
+                  }
+                }
+              }
+              .padding(.horizontal, 16)
+              .frame(minHeight: 44)
+
             case .action:
               Button(action: { onAction(index) }) {
                 HStack(spacing: 14) {
@@ -280,34 +308,11 @@ private struct FriendCodeInlineRow: View {
 
 @ViewBuilder
 private func viewForTitle(_ title: String) -> some View {
-<<<<<<< Updated upstream
-    switch title {
-    case "Contacts":
-        FriendsAndContactsSectionView()
-    case "Customize Buddies":
-        CustomizeBuddiesView()
-    case "Contact Support":
-        ContactSupportView()
-    case "Privacy Policy":
-        PrivacyPolicyView()
-    case "Wallpapers":
-        WallpapersSettingsView()
-    case "Appearance":
-        AppearanceSettingsView()
-    default:
-        EmptyView()
-    }
-=======
   switch title {
-  case "Friends & Contacts":
+  case "Contacts":
     FriendsAndContactsSectionView()
   case "Customize Buddies":
-    Text("Coming soon")
-      .font(.system(size: 16))
-      .foregroundColor(.secondary)
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(AppTheme.background)
-      .navigationTitle("Customize Buddies")
+    CustomizeBuddiesView()
   case "Contact Support":
     ContactSupportView()
   case "Privacy Policy":
@@ -319,7 +324,6 @@ private func viewForTitle(_ title: String) -> some View {
   default:
     EmptyView()
   }
->>>>>>> Stashed changes
 }
 
 #Preview {

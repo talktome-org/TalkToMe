@@ -370,7 +370,7 @@ struct MediaPickerPanelView: View {
         .onAppear {
             recentPhotos.prefetchThumbnail(
                 asset: asset,
-                targetSize: CGSize(width: 600, height: 600)
+                targetSize: CGSize(width: 200, height: 200)
             )
         }
     }
@@ -464,22 +464,26 @@ private final class RecentPhotosViewModel: ObservableObject {
 
         let options = PHImageRequestOptions()
         options.isNetworkAccessAllowed = true
-        options.deliveryMode = .highQualityFormat
-        options.resizeMode = .exact
+        options.deliveryMode = .opportunistic
+        options.resizeMode = .fast
+
+        // Use a size appropriate for the display (100pt * 2x scale)
+        let thumbSize = CGSize(width: 200, height: 200)
 
         imageManager.requestImage(
             for: asset,
-            targetSize: targetSize,
+            targetSize: thumbSize,
             contentMode: .aspectFill,
             options: options
-        ) { [weak self] image, _ in
-            guard let self else { return }
+        ) { [weak self] image, info in
+            guard let self, let image else { return }
             Task { @MainActor in
-                self.thumbnailCache.clearInflight(id)
-                if let image {
-                    self.thumbnailCache.setThumbnail(image, for: id)
-                    // Trigger view update
-                    self.thumbnailUpdateTrigger += 1
+                self.thumbnailCache.setThumbnail(image, for: id)
+                self.thumbnailUpdateTrigger += 1
+                // Clear inflight only after final (non-degraded) delivery
+                let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
+                if !isDegraded {
+                    self.thumbnailCache.clearInflight(id)
                 }
             }
         }

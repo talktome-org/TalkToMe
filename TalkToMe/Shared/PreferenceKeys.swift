@@ -6,7 +6,7 @@ enum PreferenceKeys {
     static let chatWallpaperType = "chat_wallpaper_type"
     static let chatWallpaperValue = "chat_wallpaper_value"
     static let hapticsEnabled = "haptics_enabled"
-    static let voiceModeEnabled = "voice_mode_enabled"
+    static let dictationEnabled = "dictation_enabled"
     static let elevenLabsVoiceId = "eleven_labs_voice_id"
     static let elevenLabsVoiceName = "eleven_labs_voice_name"
     static let myAvatarURL = "my_avatar_url"
