@@ -168,8 +168,9 @@ final class SharedAudioEngine: @unchecked Sendable {
     }
 
     /// Fully stop the engine and tear down. Called when exiting speak mode.
+    /// Runs synchronously so background music resumes before the call returns.
     func stop() {
-        audioQueue.async {
+        audioQueue.sync {
             if self.hasSpeakerLevelTap {
                 self.engine?.mainMixerNode.removeTap(onBus: 0)
                 self.hasSpeakerLevelTap = false
@@ -195,16 +196,17 @@ final class SharedAudioEngine: @unchecked Sendable {
         guard !hasSpeakerLevelTap else { return }
         guard !playerNode.isPlaying else { return }
 
-        // Deactivate first so iOS can notify interrupted media apps to resume.
-        deactivateVoiceSessionOnQueue()
-
-        // Stop the running engine so hardware is released, but keep the graph warm
-        // to avoid slow mic startup on the next voice interaction.
+        // Stop the running engine so hardware is released, then deactivate the
+        // session so iOS can notify interrupted media apps (e.g. Spotify) to resume.
+        // The engine must stop first — iOS rejects setActive(false) while audio
+        // resources are still held.
         playerNode.stop()
         engine?.stop()
+        deactivateVoiceSessionOnQueue()
     }
 
     private func deactivateVoiceSessionOnQueue() {
+        guard isVoiceSessionActive else { return }
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setActive(false, options: [.notifyOthersOnDeactivation])

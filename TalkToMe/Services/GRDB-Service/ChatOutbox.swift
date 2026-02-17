@@ -104,11 +104,19 @@ final class ChatOutboxProcessor {
                 default:
                     try await updateItem(item.id, status: "failed", lastError: "Unknown outbox kind")
                 }
+            } catch let error as PermanentOutboxError {
+                // Permanent failure (e.g. 403) — stop retrying this item.
+                try? await updateItem(item.id, status: "dead", lastError: error.message)
             } catch {
                 let msg = (error as NSError).localizedDescription
                 try? await updateItem(item.id, status: "failed", lastError: msg)
             }
         }
+    }
+
+    /// Error indicating a permanent failure that should not be retried.
+    private struct PermanentOutboxError: Error {
+        let message: String
     }
 
     private func flushChatMessage(_ item: OutboxItem) async throws {
@@ -185,6 +193,10 @@ final class ChatOutboxProcessor {
                 NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
                 return
             case .error(let msg):
+                // 403 means the session is invalid/not owned — retrying won't help.
+                if msg.contains("403") {
+                    throw PermanentOutboxError(message: msg)
+                }
                 throw NSError(domain: "Outbox", code: -3, userInfo: [NSLocalizedDescriptionKey: msg])
             default:
                 continue
