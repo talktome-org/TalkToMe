@@ -40,13 +40,16 @@ struct ChatView: View {
                 isInputFocused: $isInputFocused
             )
             .task {
-                async let dictationWarmup: Void = viewModel.voiceController.preconnectDictationSTTIfNeeded()
-                async let speakWarmup: Void = viewModel.voiceController.preconnectSpeakServicesIfNeeded()
-                _ = await (dictationWarmup, speakWarmup)
                 if sessionsViewModel.shouldStartInVoiceMode {
                     sessionsViewModel.shouldStartInVoiceMode = false
                     viewModel.voiceController.startSpeakMode()
+                    return
                 }
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                if Task.isCancelled { return }
+                async let dictationWarmup: Void = viewModel.voiceController.preconnectDictationSTTIfNeeded()
+                async let speakWarmup: Void = viewModel.voiceController.preconnectSpeakServicesIfNeeded()
+                _ = await (dictationWarmup, speakWarmup)
             }
             .onAppear {
                 if viewModel.sessionId == nil && !sessionsViewModel.shouldStartInVoiceMode {

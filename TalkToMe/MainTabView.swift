@@ -69,10 +69,12 @@ struct MainTabView: View {
         }
 
         Tab("Chat", systemImage: "bubble.left.and.bubble.right", value: .chat) {
-          MainAppView(
-            onOpenChat: { sid in openChat(sessionId: sid) },
-            onStartNewChat: { openChat(sessionId: nil) }
-          )
+          NavigationStack {
+            MainAppView(
+              onOpenChat: { sid in openChat(sessionId: sid) },
+              onStartNewChat: { openChat(sessionId: nil) }
+            )
+          }
         }
 
         Tab("Settings", systemImage: "gearshape", value: .settings) {
