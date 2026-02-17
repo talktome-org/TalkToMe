@@ -446,23 +446,27 @@ private struct GhostVideoContentView: View {
     return Bundle.main.url(forResource: ghostVideoName, withExtension: "mp4") != nil
   }
 
-  /// Show the animated mp4 whenever speak mode is active.
+  /// Only show the animated mp4 once past the connecting phase to avoid
+  /// decoding overhead while the audio engine and WebSocket are still starting.
   private var isSpeechActive: Bool {
-    isSpeakModeActive
+    isSpeakModeActive && speakModePhase != .connecting
   }
 
   var body: some View {
     let size: CGFloat = isSpeakModeActive ? 80 : 54
 
-    Group {
+    ZStack {
       if hasGhostVideo && isSpeechActive {
         TransparentVideoPlayerView(
           videoName: ghostVideoName,
           videoExtension: "mp4",
           startTime: ElevenLabsVoiceSuggestionsView.ghostStartTimes[ghostVideoName] ?? 0
         )
-      } else {
+      }
+
+      if !isSpeechActive {
         ghostImage
+          .transition(.opacity)
       }
     }
     .frame(width: size, height: size)

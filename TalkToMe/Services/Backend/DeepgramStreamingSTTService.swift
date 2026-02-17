@@ -3,7 +3,7 @@ import Foundation
 
 final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
     struct Config: Equatable {
-        var language: String = "en-US"
+        var language: String = "multi"
         var model: String = "nova-3"
         var endpointingMs: Int = 400
         var sampleRateHz: Int = 24_000

@@ -294,6 +294,7 @@ private struct GetStartedCardView: View {
   let completedStepIds: Set<Int>
   let onStepTap: (GetStartedStep) -> Void
   var onStepNavigate: ((GetStartedStep) -> Void)? = nil
+  var onStepReset: ((GetStartedStep) -> Void)? = nil
   var onReset: (() -> Void)? = nil
 
   @State private var dashPhase: CGFloat = 0
@@ -434,7 +435,8 @@ private struct GetStartedCardView: View {
         steps: steps,
         completedStepIds: completedStepIds,
         buddyName: buddyName,
-        onStepTap: handleCardTap
+        onStepTap: handleCardTap,
+        onStepReset: onStepReset
       )
       .padding(.bottom, 14)
     }
@@ -445,6 +447,15 @@ private struct GetStartedCardView: View {
       checkpointVisible = completedStepIds
       withAnimation(.linear(duration: 1.0).repeatForever(autoreverses: false)) {
         dashPhase = -8
+      }
+    }
+    .onChange(of: completedStepIds) { _, newIds in
+      // Remove checkpoints for steps that were reset
+      let removed = checkpointVisible.subtracting(newIds)
+      if !removed.isEmpty {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+          checkpointVisible.subtract(removed)
+        }
       }
     }
   }
@@ -477,6 +488,7 @@ private struct ArcCarouselView: View {
   let completedStepIds: Set<Int>
   let buddyName: String
   let onStepTap: (GetStartedStep) -> Void
+  var onStepReset: ((GetStartedStep) -> Void)? = nil
 
   private let maxYDrop: CGFloat = 20
   private let maxRotation: Double = 5
@@ -492,6 +504,18 @@ private struct ArcCarouselView: View {
             }
             .buttonStyle(SpringPressStyle())
             .disabled(done)
+            .overlay {
+              if done {
+                Color.clear
+                  .contentShape(Rectangle())
+                  .onLongPressGesture(minimumDuration: 0.5) {
+                    Haptics.notification(.warning)
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                      onStepReset?(step)
+                    }
+                  }
+              }
+            }
             .visualEffect { content, proxy in
               let scrollBounds = proxy.bounds(of: .scrollView(axis: .horizontal)) ?? .zero
               let scrollCenter = scrollBounds.width / 2
@@ -938,6 +962,7 @@ struct HomeView: View {
                 completedStepIds: completedStepIds,
                 onStepTap: markStepComplete,
                 onStepNavigate: navigateToStep,
+                onStepReset: resetStep,
                 onReset: resetGetStarted
               )
               .transition(.opacity.combined(with: .move(edge: .top)))
@@ -1053,6 +1078,17 @@ struct HomeView: View {
       onStartNewChat()
     case .weekReview:
       selectedTab = .diary
+    }
+  }
+
+  private func resetStep(_ step: GetStartedStep) {
+    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+      switch step {
+      case .sayHi: sayHiDone = false
+      case .connectFriend: connectFriendDone = false
+      case .writeDiary: writeDiaryDone = false
+      case .tellStory: tellStoryDone = false
+      }
     }
   }
 
