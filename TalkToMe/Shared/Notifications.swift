@@ -14,6 +14,7 @@ extension Notification.Name {
     static let partnerMessageOpen = Notification.Name("partner.message.open")
     static let partnerMessageReceived = Notification.Name("partner.message.received")
     static let partnerRequestAccepted = Notification.Name("partner.request.accepted")
+    static let friendAdded = Notification.Name("friend.added")
     static let sendPartnerMessageFromBubble = Notification.Name("chat.partner.send.from.bubble")
     static let unsendPartnerMessageFromBubble = Notification.Name("chat.partner.unsend.from.bubble")
     static let unsendPartnerMessageResult = Notification.Name("chat.partner.unsend.result")

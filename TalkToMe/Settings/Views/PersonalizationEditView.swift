@@ -23,10 +23,12 @@ struct PersonalizationEditView: View {
     @State private var avatarRefreshKey = UUID()
 
     // Save state
-    @State private var isSaving: Bool = false
-    @State private var showSaveSuccess: Bool = false
     @State private var avatarSaved: Bool = false
     @State private var isSavingAvatar: Bool = false
+
+    // Toast
+    @State private var toastMessage: String? = nil
+    @State private var toastWorkItem: DispatchWorkItem? = nil
 
     var body: some View {
         ZStack {
@@ -56,7 +58,7 @@ struct PersonalizationEditView: View {
                                             LinearGradient(
                                                 colors: [
                                                     Color(red: 0.26, green: 0.58, blue: 1.00),
-                                                    Color(red: 0.63, green: 0.32, blue: 0.98)
+                                                    Color(red: 0.18, green: 0.45, blue: 0.90)
                                                 ],
                                                 startPoint: .topLeading,
                                                 endPoint: .bottomTrailing
@@ -90,7 +92,7 @@ struct PersonalizationEditView: View {
                                                     LinearGradient(
                                                         colors: [
                                                             Color(red: 0.26, green: 0.58, blue: 1.00),
-                                                            Color(red: 0.63, green: 0.32, blue: 0.98)
+                                                            Color(red: 0.18, green: 0.45, blue: 0.90)
                                                         ],
                                                         startPoint: .topLeading,
                                                         endPoint: .bottomTrailing
@@ -137,20 +139,20 @@ struct PersonalizationEditView: View {
                         }) {
                             HStack(spacing: 8) {
                                 Image(systemName: showingAvatarSelection ? "chevron.up.circle.fill" : "person.2.circle")
-                                    .foregroundColor(Color(red: 0.4, green: 0.2, blue: 0.6))
+                                    .foregroundColor(.primary)
                                     .font(.system(size: 14, weight: .semibold))
                                 Text("Edit Avatar")
                                     .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(Color(red: 0.4, green: 0.2, blue: 0.6))
+                                    .foregroundColor(.primary)
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
                             .background(
                                 Capsule()
-                                    .fill(showingAvatarSelection ? Color(red: 0.4, green: 0.2, blue: 0.6).opacity(0.1) : Color(.systemGray6))
+                                    .fill(showingAvatarSelection ? Color.primary.opacity(0.1) : Color(.systemGray6))
                                     .overlay(
                                         Capsule()
-                                            .stroke(Color(red: 0.4, green: 0.2, blue: 0.6).opacity(showingAvatarSelection ? 0.4 : 0.12), lineWidth: showingAvatarSelection ? 2 : 1)
+                                            .stroke(Color.primary.opacity(showingAvatarSelection ? 0.4 : 0.12), lineWidth: showingAvatarSelection ? 2 : 1)
                                     )
                                     .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 3)
                             )
@@ -327,7 +329,7 @@ struct PersonalizationEditView: View {
             }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(Color(red: 0.4, green: 0.2, blue: 0.6))
+                    .foregroundColor(.primary)
                     .frame(width: 44, height: 44)
             }
             .background(
@@ -358,19 +360,11 @@ struct PersonalizationEditView: View {
                     await saveAllChanges()
                 }
             }) {
-                if isSaving {
-                    ProgressView()
-                        .scaleEffect(0.9)
-                        .tint(Color(red: 0.4, green: 0.2, blue: 0.6))
-                        .frame(height: 44)
-                        .padding(.horizontal, 18)
-                } else {
-                    Text("Save")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(Color(red: 0.4, green: 0.2, blue: 0.6))
-                        .padding(.horizontal, 18)
-                        .frame(height: 44)
-                }
+                Text("Save")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 18)
+                    .frame(height: 44)
             }
             .background(
                 Group {
@@ -388,8 +382,6 @@ struct PersonalizationEditView: View {
             .contentShape(Capsule())
             .padding(.top, 8)
             .padding(.leading, 16)
-            .opacity(isSaving && showSaveSuccess == false ? 0.8 : 1.0)
-            .disabled(isSaving)
             .zIndex(10)
         }
         .onAppear {
@@ -402,6 +394,13 @@ struct PersonalizationEditView: View {
             // Force refresh of the avatar display by changing the ID
             avatarRefreshKey = UUID()
         }
+        .overlay(alignment: .top) {
+            if let toastMessage {
+                ToastOverlayView(message: toastMessage, onDismiss: dismissToast)
+                    .padding(.top, 62)
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
     }
 
     // Helper to generate image from emoji
@@ -414,7 +413,7 @@ struct PersonalizationEditView: View {
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
                 colors: [
                     UIColor(red: 0.26, green: 0.58, blue: 1.00, alpha: 1.0).cgColor,
-                    UIColor(red: 0.63, green: 0.32, blue: 0.98, alpha: 1.0).cgColor
+                    UIColor(red: 0.18, green: 0.45, blue: 0.90, alpha: 1.0).cgColor
                 ] as CFArray,
                 locations: [0.0, 1.0]
             )!
@@ -442,6 +441,20 @@ struct PersonalizationEditView: View {
             (emoji as NSString).draw(in: rect, withAttributes: attributes)
         }
         return image.jpegData(compressionQuality: 1.0)
+    }
+
+    private func showToast(_ message: String) {
+        toastWorkItem?.cancel()
+        toastMessage = message
+        let item = DispatchWorkItem { dismissToast() }
+        toastWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: item)
+    }
+
+    private func dismissToast() {
+        toastWorkItem?.cancel()
+        toastWorkItem = nil
+        toastMessage = nil
     }
 
     // Load profile data from ViewModel
@@ -564,64 +577,54 @@ struct PersonalizationEditView: View {
         }
     }
 
-    // Save all changes (profile info + avatar)
+    // Save all changes (profile info + avatar) — non-blocking
     @MainActor
     private func saveAllChanges() async {
-        await MainActor.run {
-            isSaving = true
+        // Capture current values
+        let nameToSave = fullName
+        let bioToSave = personalInfo
+        let hasAvatarChanges = showSaveButton
+        let emojiToSave = previewEmoji
+        let imageDataToSave = previewImageData
+        let oldAvatarURL = hasAvatarChanges ? sessionsVM.myAvatarURL : nil
+
+        // Update local state immediately (optimistic)
+        viewModel.fullName = nameToSave
+        viewModel.bio = bioToSave
+        NotificationCenter.default.post(name: .profileChanged, object: nil)
+
+        if hasAvatarChanges {
+            // Update avatar in frontend immediately
+            await updateFrontendImmediately(emoji: emojiToSave, imageData: imageDataToSave, oldURL: oldAvatarURL)
+            showSaveButton = false
+            showingAvatarSelection = false
+            avatarSaved = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                avatarSaved = false
+            }
         }
 
-        // Save profile information
-        let profileSaved = await viewModel.saveProfileInfo(
-            fullName: fullName,
-            bio: personalInfo
-        )
+        // Show toast immediately — don't wait for network
+        showToast("Changes saved!")
 
-        // Save avatar if there are pending changes
-        if showSaveButton {
-            // Store old avatar URL to clear from cache
-            let oldAvatarURL = sessionsVM.myAvatarURL
+        // Fire off backend work in background
+        Task.detached { [viewModel, sessionsVM] in
+            // Save profile info
+            let _ = await viewModel.saveProfileInfo(
+                fullName: nameToSave,
+                bio: bioToSave
+            )
 
-            // Update frontend immediately with new avatar
-            await updateFrontendImmediately(emoji: previewEmoji, imageData: previewImageData, oldURL: oldAvatarURL)
-
-            // Clear avatar selection state and show success - KEEP the preview visible
-            await MainActor.run {
-                // Don't clear previewEmoji and previewImageData - keep them visible
-                showSaveButton = false
-                showingAvatarSelection = false
-                avatarSaved = true
-
-                // Reset avatarSaved after 2 seconds
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    avatarSaved = false
-                }
-            }
-
-            // Upload to backend in background
-            Task {
-                if let emoji = previewEmoji {
-                    if let emojiImage = generateEmojiImage(emoji: emoji) {
+            // Upload avatar if needed
+            if hasAvatarChanges {
+                if let emoji = emojiToSave {
+                    if let emojiImage = await MainActor.run(body: { self.generateEmojiImage(emoji: emoji) }) {
                         await viewModel.uploadAvatar(data: emojiImage)
-                        await refreshAvatarAfterUpload(oldURL: oldAvatarURL)
+                        await self.refreshAvatarAfterUpload(oldURL: oldAvatarURL)
                     }
-                } else if let data = previewImageData {
+                } else if let data = imageDataToSave {
                     await viewModel.uploadAvatar(data: data)
-                    await refreshAvatarAfterUpload(oldURL: oldAvatarURL)
-                }
-            }
-        }
-
-        await MainActor.run {
-            isSaving = false
-            if profileSaved {
-                showSaveSuccess = true
-                viewModel.fullName = fullName
-                viewModel.bio = personalInfo
-                NotificationCenter.default.post(name: .profileChanged, object: nil)
-                // Auto-hide success message after 2 seconds
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    showSaveSuccess = false
+                    await self.refreshAvatarAfterUpload(oldURL: oldAvatarURL)
                 }
             }
         }

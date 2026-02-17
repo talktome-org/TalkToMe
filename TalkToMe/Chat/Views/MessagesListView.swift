@@ -117,7 +117,7 @@ struct MessagesListView: View {
 
     var body: some View {
         ScrollView {
-            if messages.isEmpty {
+            if messages.isEmpty && chatViewModel.sessionId == nil {
                 chatEmptyState
                     .frame(maxWidth: .infinity)
                     .padding(.top, 120)
@@ -228,6 +228,12 @@ struct MessagesListView: View {
                 }, onAttach: { scrollView in
                     underlyingScrollView = scrollView
                     scrollView.clipsToBounds = true
+                    if !messages.isEmpty {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            scrollView.layoutIfNeeded()
+                            scrollToBottomUIKit(scrollView, animated: false)
+                        }
+                    }
                 })
             )
         }

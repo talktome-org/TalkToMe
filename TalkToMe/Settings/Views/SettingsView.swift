@@ -17,7 +17,7 @@ struct SettingsView: View {
   @AppStorage("get_started_say_hi") private var sayHiDone: Bool = false
   @AppStorage("get_started_connect_friend") private var connectFriendDone: Bool = false
   @AppStorage("get_started_write_diary") private var writeDiaryDone: Bool = false
-  @AppStorage("get_started_tell_story") private var tellStoryDone: Bool = false
+  @AppStorage("get_started_customize_buddy") private var customizeBuddyDone: Bool = false
 
   @State private var avatarRefreshKey = UUID()
   @State private var toastMessage: String? = nil
@@ -25,7 +25,7 @@ struct SettingsView: View {
   @State private var customizationHighlightOpacity: CGFloat = 0
 
   private var getStartedHidden: Bool {
-    getStartedDismissed || [sayHiDone, connectFriendDone, writeDiaryDone, tellStoryDone].allSatisfy { $0 }
+    getStartedDismissed || [sayHiDone, connectFriendDone, writeDiaryDone, customizeBuddyDone].allSatisfy { $0 }
   }
 
   private var avatarPlaceholder: AnyView { AnyView(Color.clear) }
@@ -124,7 +124,7 @@ struct SettingsView: View {
             sayHiDone = false
             connectFriendDone = false
             writeDiaryDone = false
-            tellStoryDone = false
+            customizeBuddyDone = false
             getStartedDismissed = false
           }
           showToast("Get Started has been reset!")
@@ -135,7 +135,7 @@ struct SettingsView: View {
               .foregroundColor(.secondary)
               .frame(width: 30, height: 30)
 
-            Text("Restart Get Started")
+            Text("Reset Roadmap")
               .font(.system(size: 17, weight: .regular))
               .foregroundColor(.primary)
 
@@ -282,15 +282,6 @@ struct SettingsView: View {
       }
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
-          Button {
-            Haptics.impact(.light)
-            viewModel.showPersonalizationEdit = true
-          } label: {
-            Text("Edit")
-          }
-        }
-
-        ToolbarItem(placement: .topBarTrailing) {
           Menu {
             if let code = friendsVM.myCode {
               Button {
@@ -311,6 +302,15 @@ struct SettingsView: View {
             Image(systemName: "textformat.123")
               .font(.system(size: 16))
               .foregroundStyle(.primary)
+          }
+        }
+
+        ToolbarItem(placement: .topBarTrailing) {
+          Button {
+            Haptics.impact(.light)
+            viewModel.showPersonalizationEdit = true
+          } label: {
+            Text("Edit")
           }
         }
       }
