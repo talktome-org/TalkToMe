@@ -13,14 +13,37 @@ cd "$SCRIPT_ROOT"
 # ---------------------------------------------------------------------------
 # Custom paths (change these to match your machine)
 # ---------------------------------------------------------------------------
-# Where your backend env file lives (default: project root .env)
-BACKEND_ENV_SOURCE="${BACKEND_ENV_SOURCE:-$SCRIPT_ROOT/.env}"
+# Where your backend env file lives.
+# If unset, we'll auto-discover from common local locations.
+BACKEND_ENV_SOURCE="${BACKEND_ENV_SOURCE:-}"
 
 # Where your Python venv lives (default: Backend/venv)
 VENV_DIR="${VENV_DIR:-$SCRIPT_ROOT/Backend/venv}"
 
 # Optional: config dir for Secrets.plist and Resources (empty = skip; set to ~/.config/talktome if you use it)
 CONFIG_DIR="${CONFIG_DIR:-}"
+
+# Auto-discover backend env when not explicitly provided.
+if [ -z "$BACKEND_ENV_SOURCE" ]; then
+  for candidate in \
+    "$SCRIPT_ROOT/.env" \
+    "$SCRIPT_ROOT/Backend/.env" \
+    "$HOME/.config/talktome/backend.env" \
+    "$HOME/myapps/TalkToMe project/TalkToMe-1/Backend/.env"
+  do
+    if [ -f "$candidate" ]; then
+      BACKEND_ENV_SOURCE="$candidate"
+      break
+    fi
+  done
+
+  if [ -z "$BACKEND_ENV_SOURCE" ] && [ -d "$HOME/myapps" ]; then
+    DISCOVERED_ENV="$(find "$HOME/myapps" -maxdepth 6 -type f -path "*/TalkToMe*/Backend/.env" -print -quit 2>/dev/null || true)"
+    if [ -n "$DISCOVERED_ENV" ]; then
+      BACKEND_ENV_SOURCE="$DISCOVERED_ENV"
+    fi
+  fi
+fi
 
 echo "🔧 Local setup (secrets + resources + python venv)"
 echo "   BACKEND_ENV_SOURCE=$BACKEND_ENV_SOURCE"
@@ -30,8 +53,10 @@ echo "   CONFIG_DIR=${CONFIG_DIR:-(skipped)}"
 # -------------------------
 # Preconditions
 # -------------------------
-if [ ! -f "$BACKEND_ENV_SOURCE" ]; then
-  echo "❌ Missing backend env: $BACKEND_ENV_SOURCE"
+if [ -z "$BACKEND_ENV_SOURCE" ] || [ ! -f "$BACKEND_ENV_SOURCE" ]; then
+  echo "❌ Missing backend env."
+  echo "   Checked: $SCRIPT_ROOT/.env, $SCRIPT_ROOT/Backend/.env, ~/.config/talktome/backend.env, ~/myapps/*/Backend/.env"
+  echo "   Set BACKEND_ENV_SOURCE=/absolute/path/to/backend.env and rerun."
   exit 1
 fi
 
