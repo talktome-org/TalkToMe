@@ -4,7 +4,6 @@ import UIKit
 
 struct AuthView: View {
     @ObservedObject private var network = NetworkMonitor.shared
-
     private let authService = AuthService.shared
 
     @State private var showOfflineAlert: Bool = false
@@ -15,122 +14,22 @@ struct AuthView: View {
             AppTheme.background
                 .ignoresSafeArea()
 
-            // App icon - centered and moved up
-            Image("AppIconDisplay")
-                .resizable()
-                .renderingMode(.original)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 100, height: 100)
-                .cornerRadius(20)
-                .offset(y: -60)
+            authBackdrop
 
-            // Sign in content
-            VStack {
-                Spacer()
-
-                // Sign in buttons
-                VStack(spacing: 12) {
-                    Button(action: {
-                        Haptics.selection()
-                        guard network.isOnline else {
-                            showOfflineAlert = true
-                            return
-                        }
-                        Task { await authService.signIn(.google) }
-                    }) {
-                        HStack(spacing: 10) {
-                            Image("icons8-google-48 copy")
-                                .renderingMode(.original)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 20, height: 20)
-                            Text("Continue with Google")
-                                .font(.system(size: 16, weight: .medium))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(AppTheme.surface)
-                        .foregroundColor(.primary)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14)
-                                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                        )
-                        .cornerRadius(14)
-                        .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
-                    }
-
-                    Button(action: {
-                        if let anchor = getPresentationAnchor() {
-                            Haptics.selection()
-                            guard network.isOnline else {
-                                showOfflineAlert = true
-                                return
-                            }
-                            Task { await authService.signIn(.apple(presentationAnchor: anchor)) }
-                        }
-                    }) {
-                        HStack(spacing: 10) {
-                            Image(systemName: "applelogo")
-                                .font(.system(size: 18, weight: .medium))
-                            Text("Continue with Apple")
-                                .font(.system(size: 16, weight: .medium))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(Color.black)
-                        .foregroundColor(.white)
-                        .cornerRadius(14)
-                        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
-                    }
-
-                    Divider()
-                        .padding(.vertical, 6)
-
-                    Button(action: {
-                        Haptics.selection()
-                        emailAuthMode = .login
-                    }) {
-                        Text("Log in with email")
-                            .font(.system(size: 16, weight: .semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(AppTheme.surface)
-                            .foregroundColor(.primary)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14)
-                                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                            )
-                            .cornerRadius(14)
-                            .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
-                    }
-
-                    Button(action: {
-                        Haptics.selection()
-                        emailAuthMode = .signUp
-                    }) {
-                        Text("Create account")
-                            .font(.system(size: 16, weight: .semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(AppTheme.accent)
-                            .foregroundColor(.white)
-                            .cornerRadius(14)
-                            .shadow(color: AppTheme.accent.opacity(0.3), radius: 8, x: 0, y: 4)
-                    }
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 24) {
+                    heroSection
+                    actionCard
+                    termsText
                 }
-                .padding(.horizontal, 40)
-
-                // Privacy policy and terms
-                Text("By continuing, you agree to our Privacy Policy and Terms of Service")
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
-                    .padding(.top, 20)
-                    .padding(.bottom, 30)
+                .frame(maxWidth: 560)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 20)
+                .padding(.top, 24)
+                .padding(.bottom, 30)
             }
         }
-        .alert("You’re offline", isPresented: $showOfflineAlert) {
+        .alert("You're offline", isPresented: $showOfflineAlert) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Connect to the internet to sign in or create an account.")
@@ -140,6 +39,157 @@ struct AuthView: View {
                 EmailAuthSheetView(initialMode: mode)
             }
         }
+    }
+
+    private var authBackdrop: some View {
+        ZStack {
+            Circle()
+                .fill(AppTheme.accent.opacity(0.14))
+                .frame(width: 260, height: 260)
+                .blur(radius: 30)
+                .offset(x: -140, y: -320)
+
+            Circle()
+                .fill(AppTheme.brand.opacity(0.2))
+                .frame(width: 300, height: 300)
+                .blur(radius: 44)
+                .offset(x: 170, y: -230)
+
+            RoundedRectangle(cornerRadius: 36, style: .continuous)
+                .fill(AppTheme.surface.opacity(0.2))
+                .frame(width: 320, height: 180)
+                .rotationEffect(.degrees(-18))
+                .blur(radius: 26)
+                .offset(x: 70, y: -50)
+        }
+        .allowsHitTesting(false)
+    }
+
+    private var heroSection: some View {
+        VStack(spacing: 12) {
+            Image("AppIconDisplay")
+                .resizable()
+                .renderingMode(.original)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 116, height: 116)
+                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                .shadow(color: AppTheme.accent.opacity(0.26), radius: 14, x: 0, y: 8)
+
+            Text("TalkToMe")
+                .font(.system(size: 31, weight: .bold, design: .rounded))
+                .foregroundStyle(AppTheme.textPrimary)
+
+            Text("Chat, reflect, and stay close to the people that matter.")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(AppTheme.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 12)
+        }
+        .padding(.top, 2)
+    }
+
+    private var actionCard: some View {
+        VStack(spacing: 14) {
+            Text("Get started")
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(AppTheme.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: signInWithGoogle) {
+                HStack(spacing: 10) {
+                    Image("icons8-google-48 copy")
+                        .renderingMode(.original)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 20, height: 20)
+                    Text("Continue with Google")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 15)
+            }
+            .buttonStyle(.plain)
+            .modifier(AuthSecondaryButtonStyle())
+
+            Button(action: signInWithApple) {
+                HStack(spacing: 10) {
+                    Image(systemName: "applelogo")
+                        .font(.system(size: 18, weight: .semibold))
+                    Text("Continue with Apple")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 15)
+            }
+            .buttonStyle(.plain)
+            .modifier(AuthAppleButtonStyle())
+
+            HStack(spacing: 12) {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.12))
+                    .frame(height: 1)
+                Text("or")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Rectangle()
+                    .fill(Color.primary.opacity(0.12))
+                    .frame(height: 1)
+            }
+            .padding(.vertical, 4)
+
+            Button(action: {
+                Haptics.selection()
+                emailAuthMode = .login
+            }) {
+                Text("Log in with email")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 15)
+            }
+            .buttonStyle(.plain)
+            .modifier(AuthSecondaryButtonStyle())
+
+            Button(action: {
+                Haptics.selection()
+                emailAuthMode = .signUp
+            }) {
+                Text("Create account")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 15)
+            }
+            .buttonStyle(.plain)
+            .modifier(AuthPrimaryButtonStyle())
+        }
+        .padding(18)
+        .modifier(AuthPanelCardStyle())
+    }
+
+    private var termsText: some View {
+        Text("By continuing, you agree to our Privacy Policy and Terms of Service")
+            .font(.footnote)
+            .foregroundColor(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 8)
+    }
+
+    private func signInWithGoogle() {
+        Haptics.selection()
+        guard network.isOnline else {
+            showOfflineAlert = true
+            return
+        }
+        Task { await authService.signIn(.google) }
+    }
+
+    private func signInWithApple() {
+        guard let anchor = getPresentationAnchor() else { return }
+        Haptics.selection()
+        guard network.isOnline else {
+            showOfflineAlert = true
+            return
+        }
+        Task { await authService.signIn(.apple(presentationAnchor: anchor)) }
     }
 
     private func getPresentationAnchor() -> ASPresentationAnchor? {
@@ -182,16 +232,110 @@ private struct EmailAuthSheetView: View {
     }
 }
 
+private struct AuthSheetHeader: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 30, weight: .bold))
+            Text(subtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct AuthPanelCardStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(AppTheme.surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .stroke(Color.primary.opacity(0.09), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.08), radius: 14, x: 0, y: 8)
+            )
+    }
+}
+
 private struct AuthTextFieldStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(.horizontal, 16)
-            .padding(.vertical, 16)
+            .padding(.vertical, 15)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(AppTheme.surface)
+                    .fill(Color(.secondarySystemBackground))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    )
             )
-            .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
+    }
+}
+
+private struct AuthPrimaryButtonStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(.white)
+            .background(
+                LinearGradient(
+                    colors: [AppTheme.accent, AppTheme.brand],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .shadow(color: AppTheme.accent.opacity(0.34), radius: 10, x: 0, y: 6)
+    }
+}
+
+private struct AuthSecondaryButtonStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(AppTheme.textPrimary)
+            .background(AppTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+            )
+    }
+}
+
+private struct AuthAppleButtonStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(.white)
+            .background(Color.black)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .shadow(color: .black.opacity(0.16), radius: 8, x: 0, y: 5)
+    }
+}
+
+private struct AuthSheetBackdrop: View {
+    var body: some View {
+        ZStack {
+            AppTheme.background.ignoresSafeArea()
+
+            Circle()
+                .fill(AppTheme.accent.opacity(0.14))
+                .frame(width: 240, height: 240)
+                .blur(radius: 26)
+                .offset(x: -110, y: -290)
+
+            Circle()
+                .fill(AppTheme.brand.opacity(0.2))
+                .frame(width: 260, height: 260)
+                .blur(radius: 36)
+                .offset(x: 160, y: -210)
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -205,77 +349,78 @@ private struct EmailLoginView: View {
     @State private var password: String = ""
     @State private var isSubmitting: Bool = false
     @State private var showOfflineAlert: Bool = false
+    @State private var localError: String? = nil
 
     var body: some View {
         ZStack {
-            AppTheme.background.ignoresSafeArea()
-            
+            AuthSheetBackdrop()
+
             ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Welcome back")
-                        .font(.system(size: 28, weight: .bold))
-                    Text("Sign in with your email and password.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
+                VStack(alignment: .leading, spacing: 22) {
+                    AuthSheetHeader(
+                        title: "Welcome back",
+                        subtitle: "Log in with your email and password."
+                    )
 
-                VStack(spacing: 14) {
-                    TextField("Email", text: $email)
-                        .keyboardType(.emailAddress)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled(true)
-                        .textContentType(.username)
-                        .modifier(AuthTextFieldStyle())
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Your account")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(AppTheme.textSecondary)
 
-                    SecureField("Password", text: $password)
-                        .textContentType(.password)
-                        .modifier(AuthTextFieldStyle())
-                }
+                        TextField("Email", text: $email)
+                            .keyboardType(.emailAddress)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                            .textContentType(.username)
+                            .modifier(AuthTextFieldStyle())
 
-                if let err = authService.lastAuthError, !err.isEmpty {
-                    Text(err)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                }
+                        SecureField("Password", text: $password)
+                            .textContentType(.password)
+                            .modifier(AuthTextFieldStyle())
+                    }
+                    .padding(16)
+                    .modifier(AuthPanelCardStyle())
 
-                Button(action: submit) {
-                    HStack(spacing: 10) {
-                        if isSubmitting {
-                            ProgressView().tint(.white)
+                    if let err = (localError ?? authService.lastAuthError), !err.isEmpty {
+                        Text(err)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+
+                    Button(action: submit) {
+                        HStack(spacing: 10) {
+                            if isSubmitting {
+                                ProgressView().tint(.white)
+                            }
+                            Text(isSubmitting ? "Signing in..." : "Sign in")
+                                .font(.system(size: 17, weight: .semibold))
                         }
-                        Text(isSubmitting ? "Signing in…" : "Sign in")
-                            .font(.system(size: 17, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(AppTheme.accent)
-                    .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .shadow(color: AppTheme.accent.opacity(0.3), radius: 8, x: 0, y: 4)
-                }
-                .disabled(isSubmitting)
-                .padding(.top, 4)
+                    .buttonStyle(.plain)
+                    .modifier(AuthPrimaryButtonStyle())
+                    .disabled(isSubmitting)
 
-                if let switchUp = onSwitchToSignUp {
-                    HStack(spacing: 4) {
-                        Text("Don't have an account?")
-                            .foregroundStyle(.secondary)
-                        Button("Create account", action: {
-                            Haptics.selection()
-                            switchUp()
-                        })
-                        .fontWeight(.semibold)
-                        .foregroundStyle(AppTheme.accent)
+                    if let switchUp = onSwitchToSignUp {
+                        HStack(spacing: 4) {
+                            Text("Don't have an account?")
+                                .foregroundStyle(.secondary)
+                            Button("Create account", action: {
+                                Haptics.selection()
+                                switchUp()
+                            })
+                            .fontWeight(.semibold)
+                            .foregroundStyle(AppTheme.accent)
+                        }
+                        .font(.subheadline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 2)
                     }
-                    .font(.subheadline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 20)
                 }
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
-            .padding(.bottom, 32)
+                .padding(.horizontal, 24)
+                .padding(.top, 20)
+                .padding(.bottom, 32)
             }
             .scrollDismissesKeyboard(.interactively)
         }
@@ -285,7 +430,7 @@ private struct EmailLoginView: View {
                 Button("Close") { dismiss() }
             }
         }
-        .alert("You’re offline", isPresented: $showOfflineAlert) {
+        .alert("You're offline", isPresented: $showOfflineAlert) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Connect to the internet to log in.")
@@ -294,13 +439,26 @@ private struct EmailLoginView: View {
 
     private func submit() {
         Haptics.selection()
+        localError = nil
+
         guard network.isOnline else {
             showOfflineAlert = true
             return
         }
 
         let e = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !e.isEmpty, !password.isEmpty else { return }
+        guard !e.isEmpty else {
+            localError = "Enter your email address."
+            return
+        }
+        guard isPlausibleEmail(e) else {
+            localError = "Enter a valid email address."
+            return
+        }
+        guard !password.isEmpty else {
+            localError = "Enter your password."
+            return
+        }
 
         isSubmitting = true
         Task {
@@ -313,6 +471,15 @@ private struct EmailLoginView: View {
             }
         }
     }
+
+    private func isPlausibleEmail(_ value: String) -> Bool {
+        let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !v.isEmpty else { return false }
+        guard v.contains("@") else { return false }
+        let parts = v.split(separator: "@", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return false }
+        return parts[1].contains(".")
+    }
 }
 
 private struct EmailSignUpView: View {
@@ -321,7 +488,6 @@ private struct EmailSignUpView: View {
     @ObservedObject private var authService = AuthService.shared
     @Environment(\.dismiss) private var dismiss
 
-    @State private var fullName: String = ""
     @State private var email: String = ""
     @State private var password: String = ""
     @State private var confirmPassword: String = ""
@@ -331,118 +497,141 @@ private struct EmailSignUpView: View {
     @State private var showOfflineAlert: Bool = false
     @State private var toastMessage: String? = nil
     @State private var toastWorkItem: DispatchWorkItem? = nil
+    @State private var emailCheckTask: Task<Void, Never>? = nil
+    @State private var emailCheckState: EmailCheckState = .idle
 
-    private enum Field { case name, email, password, confirm }
+    private enum Field { case email, password, confirm }
+    private enum EmailCheckState: Equatable {
+        case idle
+        case checking
+        case available
+        case taken
+        case failed
+    }
 
-    private var trimmedName: String { fullName.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var trimmedEmail: String { email.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var normalizedEmail: String { normalizeEmail(email) }
 
     private var hasValidDetails: Bool {
-        !trimmedName.isEmpty && isPlausibleEmail(trimmedEmail)
+        isPlausibleEmail(trimmedEmail)
     }
 
     private var hasValidPassword: Bool { password.count >= 6 }
     private var passwordsMatch: Bool { !password.isEmpty && password == confirmPassword }
-    private var canSubmit: Bool { hasValidDetails && hasValidPassword && passwordsMatch && !isSubmitting }
+    private var canSubmit: Bool {
+        hasValidDetails
+            && hasValidPassword
+            && passwordsMatch
+            && emailCheckState == .available
+            && !isSubmitting
+    }
 
     private var validationHint: String {
-        if trimmedName.isEmpty { return "Enter your full name." }
         if !isPlausibleEmail(trimmedEmail) { return "Enter a valid email address." }
+        switch emailCheckState {
+        case .idle, .checking:
+            return "Checking email..."
+        case .taken:
+            return "This email is taken."
+        case .failed:
+            return "Could not verify this email right now. Please try again."
+        case .available:
+            break
+        }
         if !hasValidPassword { return "Password: at least 6 characters." }
         if !passwordsMatch { return "Passwords don't match." }
         return ""
     }
 
-    // 0% at start → 50% when details are filled → 100% when ready to submit.
-    private var progress: CGFloat {
-        if !hasValidDetails { return 0.0 }
-        if !(hasValidPassword && passwordsMatch) { return 0.5 }
-        return 1.0
-    }
-
     var body: some View {
         ZStack {
-            AppTheme.background.ignoresSafeArea()
-            
+            AuthSheetBackdrop()
+
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Create account")
-                        .font(.system(size: 28, weight: .bold))
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 22) {
+                    AuthSheetHeader(
+                        title: "Create account",
+                        subtitle: "Name will be collected in onboarding after you sign in."
+                    )
 
-                VStack(spacing: 14) {
-                    TextField("Full name", text: $fullName)
-                        .focused($focusedField, equals: .name)
-                        .textInputAutocapitalization(.words)
-                        .autocorrectionDisabled(true)
-                        .textContentType(.name)
-                        .submitLabel(.next)
-                        .onSubmit { focusedField = .email }
-                        .modifier(AuthTextFieldStyle())
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Create credentials")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(AppTheme.textSecondary)
 
-                    TextField("Email", text: $email)
-                        .focused($focusedField, equals: .email)
-                        .keyboardType(.emailAddress)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled(true)
-                        .textContentType(.username)
-                        .submitLabel(.next)
-                        .onSubmit { focusedField = .password }
-                        .modifier(AuthTextFieldStyle())
+                        TextField("Email", text: $email)
+                            .focused($focusedField, equals: .email)
+                            .keyboardType(.emailAddress)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                            .textContentType(.username)
+                            .submitLabel(.next)
+                            .onSubmit { focusedField = .password }
+                            .modifier(AuthTextFieldStyle())
+                            .overlay(alignment: .trailing) {
+                                if emailCheckState == .checking {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                        .padding(.trailing, 14)
+                                }
+                            }
 
-                    SecureField("Password", text: $password)
-                        .focused($focusedField, equals: .password)
-                        .textContentType(.newPassword)
-                        .submitLabel(.next)
-                        .onSubmit { focusedField = .confirm }
-                        .modifier(AuthTextFieldStyle())
-
-                    SecureField("Confirm password", text: $confirmPassword)
-                        .focused($focusedField, equals: .confirm)
-                        .textContentType(.newPassword)
-                        .submitLabel(.go)
-                        .onSubmit { if canSubmit { submit() } }
-                        .modifier(AuthTextFieldStyle())
-                }
-
-                Button(action: submit) {
-                    HStack(spacing: 10) {
-                        if isSubmitting {
-                            ProgressView().tint(.white)
+                        if emailCheckState == .taken {
+                            Text("This email is taken.")
+                                .font(.footnote)
+                                .foregroundStyle(.red)
                         }
-                        Text(isSubmitting ? "Creating account…" : "Create account")
-                            .font(.system(size: 17, weight: .semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(AppTheme.accent)
-                    .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .shadow(color: AppTheme.accent.opacity(0.3), radius: 8, x: 0, y: 4)
-                }
-                .opacity(canSubmit ? 1.0 : 0.5)
-                .padding(.top, 4)
 
-                if let switchIn = onSwitchToLogIn {
-                    HStack(spacing: 4) {
-                        Text("Already have an account?")
-                            .foregroundStyle(.secondary)
-                        Button("Log in", action: { Haptics.selection(); switchIn() })
-                            .fontWeight(.semibold)
-                            .foregroundStyle(AppTheme.accent)
-                    }
-                    .font(.subheadline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 18)
-                }
+                        SecureField("Password", text: $password)
+                            .focused($focusedField, equals: .password)
+                            .textContentType(.newPassword)
+                            .submitLabel(.next)
+                            .onSubmit { focusedField = .confirm }
+                            .modifier(AuthTextFieldStyle())
 
-                Spacer(minLength: 10)
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
-            .padding(.bottom, 32)
+                        SecureField("Confirm password", text: $confirmPassword)
+                            .focused($focusedField, equals: .confirm)
+                            .textContentType(.newPassword)
+                            .submitLabel(.go)
+                            .onSubmit { if canSubmit { submit() } }
+                            .modifier(AuthTextFieldStyle())
+                    }
+                    .padding(16)
+                    .modifier(AuthPanelCardStyle())
+
+                    Button(action: submit) {
+                        HStack(spacing: 10) {
+                            if isSubmitting {
+                                ProgressView().tint(.white)
+                            }
+                            Text(isSubmitting ? "Creating account..." : "Create account")
+                                .font(.system(size: 17, weight: .semibold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                    }
+                    .buttonStyle(.plain)
+                    .modifier(AuthPrimaryButtonStyle())
+                    .opacity(canSubmit ? 1.0 : 0.5)
+
+                    if let switchIn = onSwitchToLogIn {
+                        HStack(spacing: 4) {
+                            Text("Already have an account?")
+                                .foregroundStyle(.secondary)
+                            Button("Log in", action: { Haptics.selection(); switchIn() })
+                                .fontWeight(.semibold)
+                                .foregroundStyle(AppTheme.accent)
+                        }
+                        .font(.subheadline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 2)
+                    }
+
+                    Spacer(minLength: 10)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 20)
+                .padding(.bottom, 32)
             }
         }
         .scrollDismissesKeyboard(.immediately)
@@ -453,12 +642,6 @@ private struct EmailSignUpView: View {
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
-        .onChange(of: confirmPassword) {
-            if canSubmit {
-                focusedField = nil
-                submit()
-            }
-        }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -469,6 +652,13 @@ private struct EmailSignUpView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Connect to the internet to create an account.")
+        }
+        .onChange(of: email) {
+            scheduleEmailCheck()
+        }
+        .onDisappear {
+            emailCheckTask?.cancel()
+            emailCheckTask = nil
         }
     }
 
@@ -499,29 +689,69 @@ private struct EmailSignUpView: View {
             return
         }
 
-        let n = trimmedName
         let e = trimmedEmail
 
         isSubmitting = true
         Task {
-            let outcome = await authService.signUp(fullName: n, email: e, password: password)
+            let outcome = await authService.signUp(fullName: nil, email: e, password: password)
             await MainActor.run {
                 isSubmitting = false
                 if authService.isAuthenticated {
                     dismiss()
                     return
                 }
-                if let err = authService.lastAuthError, !err.isEmpty {
-                    showToast(err)
-                } else if case .needsEmailConfirmation = outcome {
-                    showToast("Check your email to confirm your account, then come back and log in.")
+                switch outcome {
+                case .signedIn:
+                    break
+                case .needsEmailConfirmation:
+                    showToast("Check your email and tap the confirmation link to continue onboarding.")
+                case .emailAlreadyExists:
+                    emailCheckState = .taken
+                    showToast(authService.lastAuthError ?? "An account with this email already exists. Try a different one or log in.")
+                case .failed:
+                    showToast(authService.lastAuthError ?? "Could not create account. Please try again.")
                 }
             }
         }
     }
 
+    private func scheduleEmailCheck() {
+        emailCheckTask?.cancel()
+
+        guard isPlausibleEmail(trimmedEmail) else {
+            emailCheckState = .idle
+            return
+        }
+
+        let emailToCheck = normalizedEmail
+        emailCheckState = .checking
+
+        emailCheckTask = Task {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+
+            do {
+                let exists = try await authService.checkEmailExists(email: emailToCheck)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard normalizeEmail(email) == emailToCheck else { return }
+                    emailCheckState = exists ? .taken : .available
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard normalizeEmail(email) == emailToCheck else { return }
+                    emailCheckState = .failed
+                }
+            }
+        }
+    }
+
+    private func normalizeEmail(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
     private func isPlausibleEmail(_ value: String) -> Bool {
-        // Lightweight check: good UX without over-validating.
         let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !v.isEmpty else { return false }
         guard v.contains("@") else { return false }

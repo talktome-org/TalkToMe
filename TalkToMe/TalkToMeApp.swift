@@ -71,7 +71,9 @@ struct TalkToMeApp: App {
         // .preferredColorScheme(.dark) -- Removed to allow dynamic theme switching
         .onOpenURL { url in
           print("[URL] onOpenURL received: \(url.absoluteString)")
-          AuthService.shared.client.auth.handle(url)
+          Task {
+            await AuthService.shared.handleAuthCallbackURL(url)
+          }
           if url.scheme?.hasPrefix("supabase-") == true && url.path == "/auth/callback" {
             print("[URL] Supabase auth callback detected")
           }
