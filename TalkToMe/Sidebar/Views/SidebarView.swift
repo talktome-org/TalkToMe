@@ -27,11 +27,15 @@ struct SidebarView: View {
     }
   }
 
+  private var isSearching: Bool {
+    !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+
   private var groupedSessions: [SessionSection] {
     let sessions = filteredSessions
     guard !sessions.isEmpty else { return [] }
 
-    if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    if isSearching {
       return [SessionSection(id: "results", title: "Matching Chats", sessions: sessions)]
     }
 
@@ -146,7 +150,10 @@ struct SidebarView: View {
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
       ToolbarItem(placement: .topBarLeading) {
-        EditButton()
+        Text(" \(sessionsViewModel.sessions.count) Chats ")
+          .font(.system(size: 15, weight: .semibold))
+          .foregroundStyle(Color(.label))
+          .fixedSize()
       }
 
       ToolbarItem(placement: .principal) {
@@ -173,6 +180,8 @@ struct SidebarView: View {
     }
   }
 
+  @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var selectedVoiceName: String = ""
+
   private var headerNewChatButton: some View {
     Button(action: {
       Haptics.impact(.light)
@@ -192,14 +201,32 @@ struct SidebarView: View {
       Haptics.impact(.light)
       startVoiceChat()
     }) {
-      Image(systemName: "waveform")
-        .font(.system(size: 18, weight: .semibold))
+      ghostToolbarImage
         .frame(width: 38, height: 38)
         .contentShape(Circle())
     }
     .buttonStyle(.plain)
     .accessibilityLabel("Talk Now")
     .accessibilityHint("Start a new voice chat")
+  }
+
+  @ViewBuilder
+  private var ghostToolbarImage: some View {
+    if let videoName = ElevenLabsVoiceSuggestionsView.ghostVideoName(for: selectedVoiceName),
+       Bundle.main.url(forResource: videoName, withExtension: "mp4") != nil {
+      TransparentVideoPlayerView(
+        videoName: videoName,
+        videoExtension: "mp4",
+        startTime: ElevenLabsVoiceSuggestionsView.ghostStartTimes[videoName] ?? 0
+      )
+    } else if let uiImage = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: selectedVoiceName) {
+      Image(uiImage: uiImage)
+        .resizable()
+        .scaledToFit()
+    } else {
+      Image(systemName: "waveform")
+        .font(.system(size: 18, weight: .semibold))
+    }
   }
 
   // MARK: - Session Row

@@ -23,6 +23,11 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
     @Published var isUserSpeaking: Bool = false
     @Published var lastFinalUtterance: String?
 
+    /// When true, mic audio is NOT sent to Deepgram (preventing echo
+    /// transcription during TTS) but mic levels still update for
+    /// energy-based barge-in detection.
+    var isEchoGated: Bool = false
+
     private let urlSession: URLSession
     private var wsTask: URLSessionWebSocketTask?
 
@@ -376,6 +381,7 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             guard let self else { return }
             guard !self.isPaused else { return }
             self.updateSpawnLevel(from: buffer)
+            guard !self.isEchoGated else { return }
             self.convertAndSend(buffer: buffer, targetFormat: target)
         }
     }

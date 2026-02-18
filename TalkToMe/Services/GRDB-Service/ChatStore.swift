@@ -715,4 +715,5 @@ final class ChatStore {
             }
         } catch {}
     }
+
 }
