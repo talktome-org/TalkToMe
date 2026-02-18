@@ -32,10 +32,7 @@ struct ContentView: View {
                         .transition(.opacity)
                 }
             } else if authService.isAuthenticated {
-                if !onboardingLoaded {
-                    onboardingLoadingView
-                        .transition(.opacity)
-                } else if onboardingVM.step != .completed {
+                if onboardingLoaded && onboardingVM.step != .completed {
                     OnboardingFlowView(viewModel: onboardingVM)
                         .transition(.opacity)
                 } else {
@@ -72,11 +69,26 @@ struct ContentView: View {
                 return
             }
 
-            onboardingLoaded = false
+            // Skip the loading screen for returning users who already completed onboarding.
+            let userId = authService.currentUserId ?? ""
+            let cacheKey = "onboarding_completed_\(userId)"
+            if !userId.isEmpty && UserDefaults.standard.bool(forKey: cacheKey) {
+                onboardingVM.step = .completed
+                onboardingLoaded = true
+            } else {
+                onboardingLoaded = false
+            }
+
             onboardingLoadTask = Task {
                 await onboardingVM.load()
                 await MainActor.run {
                     guard authService.isAuthenticated else { return }
+                    // Update the cache based on the server response.
+                    if onboardingVM.step == .completed && !userId.isEmpty {
+                        UserDefaults.standard.set(true, forKey: cacheKey)
+                    } else if !userId.isEmpty {
+                        UserDefaults.standard.removeObject(forKey: cacheKey)
+                    }
                     onboardingLoaded = true
                 }
             }
@@ -85,13 +97,6 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.3), value: authService.isCheckingAuth)
     }
 
-    private var onboardingLoadingView: some View {
-        ZStack {
-            AppTheme.background.ignoresSafeArea()
-            ProgressView("Preparing your account...")
-                .foregroundStyle(AppTheme.textSecondary)
-        }
-    }
 }
 
 #Preview {

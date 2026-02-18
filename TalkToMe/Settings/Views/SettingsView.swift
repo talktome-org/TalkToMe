@@ -218,6 +218,11 @@ struct SettingsView: View {
       }
 
       ForEach(Array(section.settings.enumerated()), id: \.element.id) { settingIndex, setting in
+        if settingIndex > 0 {
+          Divider()
+            .padding(.leading, 60)
+        }
+
         Button(action: { viewModel.handleSettingAction(for: sectionIndex, settingIndex: settingIndex) }) {
           HStack(spacing: 14) {
             Image(systemName: setting.icon)
@@ -235,6 +240,7 @@ struct SettingsView: View {
           .frame(minHeight: 44)
         }
         .buttonStyle(PlainButtonStyle())
+        .disabled(setting.title == "Delete Account" && viewModel.isDeletingAccount)
       }
     }
     .padding(.vertical, 6)
@@ -324,6 +330,14 @@ struct SettingsView: View {
       .environmentObject(sessionsVM)
       .presentationDetents([.large])
       .presentationDragIndicator(.visible)
+    }
+    .alert("Delete Account", isPresented: $viewModel.showDeleteAccountConfirmation) {
+      Button("Delete", role: .destructive) {
+        viewModel.deleteAccount()
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("This will permanently delete your account and all your data. This action cannot be undone.")
     }
     .preferredColorScheme(
       appearance == "Light" ? .light : appearance == "Dark" ? .dark : nil
