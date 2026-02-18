@@ -4,18 +4,13 @@ struct ChatScreenView: View {
 
   @ObservedObject var chatViewModel: ChatViewModel
 
-  @AppStorage(PreferenceKeys.chatWallpaperType) private var wallpaperType: String = "default"
-  @AppStorage(PreferenceKeys.chatWallpaperValue) private var wallpaperValue: String = ""
   @AppStorage(PreferenceKeys.dictationEnabled) private var dictationEnabled: Bool = false
-  @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var selectedVoiceName: String = "mira"
 
   let onSend: () -> Void
   let isInputFocused: FocusState<Bool>.Binding
 
   @State private var toastMessage: String? = nil
   @State private var toastWorkItem: DispatchWorkItem? = nil
-  @State private var wallpaperPhoto: UIImage? = nil
-
   private var inputAreaHeight: CGFloat {
     chatViewModel.pendingAttachments.isEmpty ? 68 : 220
   }
@@ -101,26 +96,10 @@ struct ChatScreenView: View {
       }
     }
     .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
-    .task(id: wallpaperLoadKey) {
-      await refreshWallpaperPhoto()
-    }
     .background {
-      ZStack {
-        chatBackground
-          .ignoresSafeArea()
-
-        if wallpaperType == "default" {
-          ChatFloatingGhostBackdrop(ghostName: selectedVoiceName)
-            .opacity(0.42)
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
-        }
-      }
+      AppTheme.background
+        .ignoresSafeArea()
     }
-  }
-
-  private var wallpaperLoadKey: String {
-    "\(wallpaperType)::\(wallpaperValue)"
   }
 
   private func showDictationToast() {
@@ -138,142 +117,6 @@ struct ChatScreenView: View {
     toastMessage = nil
   }
 
-  @ViewBuilder
-  private var chatBackground: some View {
-    switch wallpaperType {
-    case "gradient":
-      if let preset = wallpaperPresets.first(where: { $0.id == wallpaperValue }) {
-        preset.gradient
-      } else {
-        AppTheme.background
-      }
-    case "color":
-      WallpapersSettingsView.colorFromHex(wallpaperValue)
-    case "photo":
-      if let image = wallpaperPhoto {
-        Image(uiImage: image)
-          .resizable()
-          .scaledToFill()
-      } else {
-        AppTheme.background
-      }
-    default:
-      AppTheme.background
-    }
-  }
-
-  @MainActor
-  private func refreshWallpaperPhoto() async {
-    guard wallpaperType == "photo", !wallpaperValue.isEmpty else {
-      wallpaperPhoto = nil
-      return
-    }
-
-    let requestedKey = wallpaperLoadKey
-    let filename = wallpaperValue
-    let data = await Task.detached(priority: .utility) {
-      let url = WallpapersSettingsView.wallpaperFileURL(filename: filename)
-      return try? Data(contentsOf: url)
-    }.value
-
-    guard requestedKey == wallpaperLoadKey else { return }
-    wallpaperPhoto = data.flatMap(UIImage.init(data:))
-  }
-
-}
-
-private struct ChatFloatingGhostBackdrop: View {
-  let ghostName: String
-
-  var body: some View {
-    if let ghostImage = resolvedGhostImage {
-      GeometryReader { proxy in
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
-          let time = context.date.timeIntervalSinceReferenceDate
-          let size = proxy.size
-
-          ZStack {
-            ghostLayer(
-              image: ghostImage,
-              size: size,
-              time: time,
-              baseX: 0.20,
-              baseY: 0.24,
-              xAmplitude: size.width * 0.10,
-              yAmplitude: size.height * 0.08,
-              driftX: 0.16,
-              driftY: 0.13,
-              phase: 0.3,
-              widthFactor: 0.95,
-              blur: 42,
-              opacity: 0.22
-            )
-
-            ghostLayer(
-              image: ghostImage,
-              size: size,
-              time: time,
-              baseX: 0.76,
-              baseY: 0.72,
-              xAmplitude: size.width * 0.12,
-              yAmplitude: size.height * 0.09,
-              driftX: 0.12,
-              driftY: 0.15,
-              phase: 2.2,
-              widthFactor: 0.82,
-              blur: 36,
-              opacity: 0.20
-            )
-          }
-        }
-      }
-      .clipped()
-    }
-  }
-
-  private var resolvedGhostImage: UIImage? {
-    if let image = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: ghostName) {
-      return image
-    }
-    for buddy in ElevenLabsVoiceSuggestionsView.requiredBuddies {
-      if let image = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: buddy.key) {
-        return image
-      }
-    }
-    return nil
-  }
-
-  private func ghostLayer(
-    image: UIImage,
-    size: CGSize,
-    time: TimeInterval,
-    baseX: CGFloat,
-    baseY: CGFloat,
-    xAmplitude: CGFloat,
-    yAmplitude: CGFloat,
-    driftX: Double,
-    driftY: Double,
-    phase: Double,
-    widthFactor: CGFloat,
-    blur: CGFloat,
-    opacity: Double
-  ) -> some View {
-    let x = size.width * baseX + CGFloat(sin(time * driftX + phase)) * xAmplitude
-    let y = size.height * baseY + CGFloat(cos(time * driftY + phase)) * yAmplitude
-    let pulse = 1 + CGFloat(sin(time * 0.1 + phase)) * 0.04
-
-    return Image(uiImage: image)
-      .resizable()
-      .scaledToFit()
-      .frame(width: max(size.width * widthFactor, 220))
-      .scaleEffect(pulse)
-      .saturation(0)
-      .contrast(1.18)
-      .brightness(-0.14)
-      .opacity(opacity)
-      .blur(radius: blur)
-      .position(x: x, y: y)
-  }
 }
 
 #Preview("Chat Screen") {
