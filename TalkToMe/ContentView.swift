@@ -15,6 +15,7 @@ struct ContentView: View {
 
     @StateObject private var onboardingVM = OnboardingViewModel()
     @State private var onboardingLoaded = false
+    @State private var onboardingLoadTask: Task<Void, Never>? = nil
 
     @Namespace private var profileNamespace
     @Environment(\.scenePhase) private var scenePhase
@@ -31,7 +32,10 @@ struct ContentView: View {
                         .transition(.opacity)
                 }
             } else if authService.isAuthenticated {
-                if onboardingLoaded, onboardingVM.step != .completed {
+                if !onboardingLoaded {
+                    onboardingLoadingView
+                        .transition(.opacity)
+                } else if onboardingVM.step != .completed {
                     OnboardingFlowView(viewModel: onboardingVM)
                         .transition(.opacity)
                 } else {
@@ -59,18 +63,34 @@ struct ContentView: View {
             }
         }
         .onChange(of: authService.isAuthenticated, initial: true) { _, isAuthed in
+            onboardingLoadTask?.cancel()
+            onboardingLoadTask = nil
+
             if !isAuthed {
                 onboardingLoaded = false
                 onboardingVM.reset()
                 return
             }
-            Task {
+
+            onboardingLoaded = false
+            onboardingLoadTask = Task {
                 await onboardingVM.load()
-                await MainActor.run { onboardingLoaded = true }
+                await MainActor.run {
+                    guard authService.isAuthenticated else { return }
+                    onboardingLoaded = true
+                }
             }
         }
         .animation(.easeInOut(duration: 0.3), value: authService.isAuthenticated)
         .animation(.easeInOut(duration: 0.3), value: authService.isCheckingAuth)
+    }
+
+    private var onboardingLoadingView: some View {
+        ZStack {
+            AppTheme.background.ignoresSafeArea()
+            ProgressView("Preparing your account...")
+                .foregroundStyle(AppTheme.textSecondary)
+        }
     }
 }
 

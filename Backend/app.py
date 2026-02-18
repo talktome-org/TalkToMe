@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from .subapps.apple_router import router as aasa_router
+from .subapps.auth_router import router as auth_router
 from .subapps.apns_router import router as notifications_router
 from .subapps.chat_router import router as chat_router
 from .subapps.diary_router import router as diary_router
@@ -23,6 +24,7 @@ app.add_middleware(PresenceMiddleware)
 # Keep router wiring centralized so the exposed API surface is easy to audit.
 # Router include order does not affect route matching for these static prefixes.
 app.include_router(aasa_router)
+app.include_router(auth_router)
 app.include_router(diary_router)
 app.include_router(files_router)
 app.include_router(friends_router)
