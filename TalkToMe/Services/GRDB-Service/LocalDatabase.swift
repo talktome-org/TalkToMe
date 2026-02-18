@@ -48,6 +48,19 @@ final class LocalDatabase {
         return String(cleaned)
     }
 
+    /// Closes and deletes the SQLite database for the current user.
+    func destroyCurrentUserDatabase() {
+        let key = currentUserKey()
+        lock.lock()
+        queuesByKey.removeValue(forKey: key)
+        lock.unlock()
+
+        let path = databaseURL(for: key).path
+        for suffix in ["", "-wal", "-shm"] {
+            try? fm.removeItem(atPath: path + suffix)
+        }
+    }
+
     private func baseDir() -> URL {
         let appSupport = try! fm.url(
             for: .applicationSupportDirectory,

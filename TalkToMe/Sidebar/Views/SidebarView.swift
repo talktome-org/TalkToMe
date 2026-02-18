@@ -116,7 +116,7 @@ struct SidebarView: View {
           }
 
           if filteredSessions.isEmpty {
-            loadingState
+            emptyState
           } else {
             ForEach(groupedSessions) { section in
               Text(section.title)
@@ -149,11 +149,13 @@ struct SidebarView: View {
     }
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
-      ToolbarItem(placement: .topBarLeading) {
-        Text(" \(sessionsViewModel.sessions.count) Chats ")
-          .font(.system(size: 15, weight: .semibold))
-          .foregroundStyle(Color(.label))
-          .fixedSize()
+      if !sessionsViewModel.sessions.isEmpty {
+        ToolbarItem(placement: .topBarLeading) {
+          Text(" \(sessionsViewModel.sessions.count) \(sessionsViewModel.sessions.count == 1 ? "chat" : "chats") ")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(Color(.label))
+            .fixedSize()
+        }
       }
 
       ToolbarItem(placement: .principal) {
@@ -210,16 +212,20 @@ struct SidebarView: View {
     .accessibilityHint("Start a new voice chat")
   }
 
+  private var effectiveVoiceName: String {
+    selectedVoiceName.isEmpty ? "luma" : selectedVoiceName
+  }
+
   @ViewBuilder
   private var ghostToolbarImage: some View {
-    if let videoName = ElevenLabsVoiceSuggestionsView.ghostVideoName(for: selectedVoiceName),
+    if let videoName = ElevenLabsVoiceSuggestionsView.ghostVideoName(for: effectiveVoiceName),
        Bundle.main.url(forResource: videoName, withExtension: "mp4") != nil {
       TransparentVideoPlayerView(
         videoName: videoName,
         videoExtension: "mp4",
         startTime: ElevenLabsVoiceSuggestionsView.ghostStartTimes[videoName] ?? 0
       )
-    } else if let uiImage = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: selectedVoiceName) {
+    } else if let uiImage = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: effectiveVoiceName) {
       Image(uiImage: uiImage)
         .resizable()
         .scaledToFit()
@@ -389,48 +395,55 @@ struct SidebarView: View {
     }
   }
 
-  private var loadingState: some View {
-    VStack(spacing: 10) {
-      ForEach(0..<4, id: \.self) { index in
-        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-        HStack(spacing: 12) {
-          RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(Color(.systemGray5))
-            .frame(width: 36, height: 36)
+  private var emptyState: some View {
+    VStack(spacing: 24) {
+      ZStack {
+        ghostCard(name: "hex", size: 140)
+          .rotationEffect(.degrees(-8))
+          .offset(x: -60, y: 6)
 
-          VStack(alignment: .leading, spacing: 8) {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-              .fill(Color(.systemGray5))
-              .frame(width: index.isMultiple(of: 2) ? 150 : 110, height: 12)
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-              .fill(Color(.systemGray6))
-              .frame(maxWidth: .infinity)
-              .frame(height: 10)
-          }
+        ghostCard(name: "jay", size: 110)
+          .rotationEffect(.degrees(5))
+          .offset(x: 0, y: -4)
 
-          Spacer()
+        ghostCard(name: "luma", size: 110)
+          .rotationEffect(.degrees(10))
+          .offset(x: 60, y: 6)
+      }
+      .frame(height: 140)
 
-          RoundedRectangle(cornerRadius: 5, style: .continuous)
-            .fill(Color(.systemGray5))
-            .frame(width: 34, height: 10)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 13)
-        .background {
-          if #available(iOS 26.0, *) {
-            Color.clear.glassEffect(.regular, in: shape)
-          } else {
-            shape.fill(AppTheme.surface.opacity(0.68))
-          }
-        }
-        .overlay {
-          shape.stroke(Color(.separator).opacity(0.16), lineWidth: 0.5)
-        }
-        .redacted(reason: .placeholder)
+      VStack(spacing: 8) {
+        Text("Your buddies are waiting!")
+          .font(.system(size: 17, weight: .bold))
+          .foregroundStyle(.primary)
+
+        let buddyName = ElevenLabsVoiceSuggestionsView.requiredBuddies.first(where: { $0.key == effectiveVoiceName })?.name ?? "Luma"
+        Text("Tap \(buddyName) to open a voice chat or tap + to start a regular chat.")
+          .font(.system(size: 14))
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+          .padding(.horizontal, 20)
+      }
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.top, 160)
+  }
+
+  private func ghostCard(name: String, size: CGFloat = 110) -> some View {
+    Group {
+      if let uiImage = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: name) {
+        Image(uiImage: uiImage)
+          .resizable()
+          .scaledToFit()
+          .frame(width: size, height: size)
+      } else {
+        Image(systemName: "sparkles")
+          .font(.system(size: size * 0.33, weight: .semibold))
+          .foregroundStyle(.secondary)
+          .frame(width: size, height: size)
       }
     }
   }
-
 
   // MARK: - Rename Sheet
 

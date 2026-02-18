@@ -252,31 +252,10 @@ struct FriendsAndContactsSectionView: View {
         }
     }
 
+    @ViewBuilder
     private var friendsSection: some View {
-        Section(header: Text("Friends")) {
-            if friendsViewModel.isLoadingFriends && friendsViewModel.friends.isEmpty {
-                HStack(spacing: 10) {
-                    ProgressView()
-                    Text("Loading...")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                }
-            } else if friendsViewModel.friends.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "person.2.slash")
-                        .font(.system(size: 28, weight: .light))
-                        .foregroundStyle(.tertiary)
-                    Text("No buddies yet")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    Text("Share your code or enter a friend's code above")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.tertiary)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-            } else {
+        if !friendsViewModel.friends.isEmpty {
+            Section(header: Text("Friends")) {
                 ForEach(friendsViewModel.friends) { friend in
                     HStack(spacing: 14) {
                         ZStack(alignment: .bottomTrailing) {

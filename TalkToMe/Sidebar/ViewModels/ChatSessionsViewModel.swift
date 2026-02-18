@@ -216,10 +216,17 @@ final class ChatSessionsViewModel: ObservableObject {
             if url.hasPrefix("http://") || url.hasPrefix("https://") {
                 UserDefaults.standard.set(url, forKey: PreferenceKeys.myAvatarURL)
             }
-            myAvatarURL = url
-            if oldURL != url {
-                NotificationCenter.default.post(name: .avatarChanged, object: nil)
+
+            // If the signed URL changed but the underlying image is the same,
+            // carry the cached image over to the new URL so the avatar doesn't flash.
+            if let oldURL, oldURL != url,
+               let existingImage = AvatarCacheManager.shared.getImageIfCached(urlString: oldURL) {
+                await AvatarCacheManager.shared.cacheImageImmediately(urlString: url, image: existingImage)
             }
+
+            myAvatarURL = url
+            // Only post avatarChanged when the user actually uploaded a new avatar,
+            // not when the signed URL simply rotated.
         } catch { }
     }
 

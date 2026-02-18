@@ -211,6 +211,22 @@ extension BackendService {
         return (try? jsonDecoder.decode(SimpleSuccess.self, from: data).success) ?? true
     }
 
+    // MARK: - Account Deletion
+
+    func deleteAccount(accessToken: String) async throws {
+        let url = baseURL
+            .appendingPathComponent("profile")
+            .appendingPathComponent("account")
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let serverMessage = decodeSimpleDetail(from: data) ?? String(data: data, encoding: .utf8) ?? "Unknown server error"
+            throw NSError(domain: "Backend", code: (response as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: serverMessage])
+        }
+    }
+
     // MARK: - Presence
 
     func updatePresence(online: Bool, accessToken: String) async throws {

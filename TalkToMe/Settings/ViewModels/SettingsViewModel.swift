@@ -13,6 +13,8 @@ class SettingsViewModel: ObservableObject {
     @Published var shouldNavigateToContacts: Bool = false
     @Published var shouldNavigateToAppearance: Bool = false
     @Published var shouldHighlightCustomization: Bool = false
+    @Published var showDeleteAccountConfirmation: Bool = false
+    @Published var isDeletingAccount: Bool = false
 
     private let avatarCacheManager = AvatarCacheManager.shared
 
@@ -111,6 +113,7 @@ class SettingsViewModel: ObservableObject {
                 icon: "",
                 gradient: [],
                 settings: [
+                    SettingItem(title: "Delete Account", subtitle: nil, type: .action, icon: "trash"),
                     SettingItem(title: "Sign Out", subtitle: nil, type: .action, icon: "rectangle.portrait.and.arrow.right")
                 ]
             )
@@ -147,12 +150,76 @@ class SettingsViewModel: ObservableObject {
         let setting = section.settings[settingIndex]
 
         switch setting.title {
+        case "Delete Account":
+            showDeleteAccountConfirmation = true
         case "Sign Out":
             Task {
                 await AuthService.shared.signOut()
             }
         default:
             break
+        }
+    }
+
+    func deleteAccount() {
+        // Grab token before signing out
+        let token = Task { await AuthService.shared.getAccessToken() }
+
+        // Sign out and purge local data immediately — don't block the UI
+        Self.purgeAllLocalData()
+        Task { await AuthService.shared.signOut() }
+
+        // Fire-and-forget backend deletion
+        Task.detached {
+            guard let token = await token.value else { return }
+            do {
+                try await BackendService.shared.deleteAccount(accessToken: token)
+            } catch {
+                print("Failed to delete account on server: \(error)")
+            }
+        }
+    }
+
+    /// Wipes every piece of locally-persisted user data: GRDB database, avatar cache, UserDefaults.
+    static func purgeAllLocalData() {
+        // 1. Destroy the local GRDB chat database (must happen while currentUserId is still set)
+        LocalDatabase.shared.destroyCurrentUserDatabase()
+
+        // 2. Clear avatar disk + memory cache
+        AvatarCacheManager.shared.clearCache()
+
+        // 3. Remove all UserDefaults keys set by the app
+        let keysToRemove = [
+            PreferenceKeys.appearancePreference,
+            PreferenceKeys.fontSizePreference,
+            PreferenceKeys.chatWallpaperType,
+            PreferenceKeys.chatWallpaperValue,
+            PreferenceKeys.hapticsEnabled,
+            PreferenceKeys.dictationEnabled,
+            PreferenceKeys.elevenLabsVoiceId,
+            PreferenceKeys.elevenLabsVoiceName,
+            PreferenceKeys.myAvatarURL,
+            PreferenceKeys.partnerUserId,
+            PreferenceKeys.partnerName,
+            PreferenceKeys.partnerAvatarURL,
+            PreferenceKeys.partnerDisplayName,
+            PreferenceKeys.partnerVoiceName,
+            PreferenceKeys.ttsVoiceIdentifier,
+            "talktome_profile_full_name",
+            "cached_notifications",
+            "get_started_dismissed",
+            "get_started_say_hi",
+            "get_started_connect_friend",
+            "get_started_write_diary",
+            "get_started_customize_buddy",
+        ]
+        for key in keysToRemove {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+
+        // Onboarding cache is keyed per-user
+        if let userId = AuthService.shared.currentUserId {
+            UserDefaults.standard.removeObject(forKey: "onboarding_completed_\(userId)")
         }
     }
 

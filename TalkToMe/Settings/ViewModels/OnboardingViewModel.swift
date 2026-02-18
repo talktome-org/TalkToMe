@@ -83,7 +83,12 @@ final class OnboardingViewModel: ObservableObject {
         // Verify via GET so we don't dismiss unless Supabase really has it.
         let refreshed = try await BackendService.shared.fetchOnboarding(accessToken: token)
         if Step(rawValue: refreshed.onboarding_step) == .completed {
-            await MainActor.run { self.step = .completed }
+            await MainActor.run {
+                self.step = .completed
+                if let userId = AuthService.shared.currentUserId, !userId.isEmpty {
+                    UserDefaults.standard.set(true, forKey: "onboarding_completed_\(userId)")
+                }
+            }
         } else {
             throw NSError(domain: "Onboarding", code: -1, userInfo: [NSLocalizedDescriptionKey: "Onboarding completion was not saved."])
         }

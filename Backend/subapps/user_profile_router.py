@@ -361,6 +361,77 @@ async def update_onboarding(payload: dict = Body(...), current_user: dict = Depe
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
 
+@router.delete("/account")
+async def delete_account(current_user: dict = Depends(get_current_user)):
+    try:
+        try:
+            user_id = uuid.UUID(current_user.get("sub"))
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid user ID in token")
+
+        db = SessionLocal()
+        try:
+            from Backend.models.chat.chat_models import UserChatMessage, UserChatSession
+            from Backend.models.diary.diary_models import DiaryEntry, DiarySettings
+            from Backend.models.apns.device_token_model import DeviceToken
+            from Backend.models.client_uploads.upload_model import Upload
+            from Backend.models.friends.friend_code_model import FriendCode
+            from Backend.models.friends.friendship_model import Friendship
+            from Backend.models.friends.friend_invite_model import FriendInvite
+            from sqlalchemy import delete, or_
+
+            # Clear linked_session_id references before deleting sessions
+            db.execute(
+                UserChatSession.__table__.update()
+                .where(UserChatSession.user_id == user_id)
+                .values(linked_session_id=None)
+            )
+            # Also clear inbound linked_session_id pointing at this user's sessions
+            user_session_ids = db.execute(
+                UserChatSession.__table__.select()
+                .where(UserChatSession.user_id == user_id)
+                .with_only_columns(UserChatSession.id)
+            ).scalars().all()
+            if user_session_ids:
+                db.execute(
+                    UserChatSession.__table__.update()
+                    .where(UserChatSession.linked_session_id.in_(user_session_ids))
+                    .values(linked_session_id=None)
+                )
+
+            db.execute(delete(UserChatMessage).where(UserChatMessage.user_id == user_id))
+            db.execute(delete(UserChatSession).where(UserChatSession.user_id == user_id))
+            db.execute(delete(DiaryEntry).where(DiaryEntry.user_id == user_id))
+            db.execute(delete(DiarySettings).where(DiarySettings.user_id == user_id))
+            db.execute(delete(DeviceToken).where(DeviceToken.user_id == user_id))
+            db.execute(delete(Upload).where(Upload.user_id == user_id))
+            db.execute(delete(FriendCode).where(FriendCode.user_id == user_id))
+            db.execute(delete(Friendship).where(
+                or_(Friendship.user_low_id == user_id, Friendship.user_high_id == user_id)
+            ))
+            db.execute(delete(Profile).where(Profile.user_id == user_id))
+
+            db.execute(delete(FriendInvite).where(
+                or_(FriendInvite.inviter_user_id == user_id, FriendInvite.used_by_user_id == user_id)
+            ))
+
+            # Remove the Supabase auth record
+            db.execute(text("DELETE FROM auth.users WHERE id = :id"), {"id": str(user_id)})
+
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/presence")
 async def update_presence(payload: dict = Body(...), current_user: dict = Depends(get_current_user)):
     try:
