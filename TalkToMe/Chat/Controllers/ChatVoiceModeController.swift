@@ -48,6 +48,7 @@ final class ChatVoiceModeController: ObservableObject {
 
     private var pendingSpeakAutoSendTask: Task<Void, Never>?
     private var isSpeakComposerLocked: Bool = false
+    private var bargeinEnergyCount: Int = 0
     private var speakModeVoiceName: String?
     private var speakModeVoiceId: String?
 
@@ -107,8 +108,9 @@ final class ChatVoiceModeController: ObservableObject {
             .store(in: &cancellables)
 
         // Speak mode: lastFinalUtterance triggers sending a message.
-        // STT stays active during TTS playback (SharedAudioEngine AEC removes echo),
-        // so transcripts during TTS = real user speech = barge-in interrupt.
+        // During TTS, mic audio is echo-gated (not sent to Deepgram).
+        // Energy-based barge-in lifts the gate when real speech is detected,
+        // so any transcript arriving here is genuine user speech.
         speakSTTService.$lastFinalUtterance
             .compactMap { $0 }
             .receive(on: DispatchQueue.main)
@@ -117,12 +119,6 @@ final class ChatVoiceModeController: ObservableObject {
                 guard self.isSpeakModeActive else { return }
                 let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return }
-
-                // During TTS playback, require a longer utterance to confirm
-                // it's real speech (safety net in case AEC leaks a short fragment).
-                if self.elevenLabsStreamingTTS.isSpeaking {
-                    guard trimmed.count >= 8 else { return }
-                }
 
                 isSpeakComposerLocked = true
 
@@ -152,11 +148,6 @@ final class ChatVoiceModeController: ObservableObject {
                 guard let self else { return }
                 guard self.isSpeakModeActive else { return }
                 if speaking {
-                    // During TTS playback, do NOT cancel TTS from interim
-                    // transcripts — AEC leakage can sustain isUserSpeaking
-                    // with the ghost's own speech. Only the lastFinalUtterance
-                    // handler (with its 8-char guard) triggers barge-in.
-                    // Just update the visual phase here.
                     self.updatePhase(.listening)
                 }
             }
@@ -170,10 +161,14 @@ final class ChatVoiceModeController: ObservableObject {
                 guard self.isSpeakModeActive else { return }
 
                 if speaking {
-                    // STT stays active — SharedAudioEngine voice processing
-                    // handles echo cancellation at the hardware level.
+                    // Gate mic audio so Deepgram never receives echo.
+                    // Mic levels still update for energy-based barge-in.
+                    self.speakSTTService.isEchoGated = true
+                    self.bargeinEnergyCount = 0
                     self.updatePhase(.answering)
                 } else {
+                    self.speakSTTService.isEchoGated = false
+                    self.bargeinEnergyCount = 0
                     if self.speakModePhase == .answering {
                         if !self.isStreamingCheck() {
                             self.updatePhase(.listening)
@@ -186,7 +181,31 @@ final class ChatVoiceModeController: ObservableObject {
         speakSTTService.$spawnLevel
             .receive(on: DispatchQueue.main)
             .sink { [weak self] level in
-                self?.micLevel = level
+                guard let self else { return }
+                self.micLevel = level
+
+                // Energy-based barge-in: while echo gate is active (TTS playing),
+                // mic audio isn't sent to Deepgram, but spawnLevel still updates
+                // from the AEC-processed input. Real speech punches through AEC
+                // much louder than residual echo. When we detect sustained energy
+                // above threshold, lift the echo gate and cancel TTS so Deepgram
+                // picks up the user's voice.
+                guard self.speakSTTService.isEchoGated else {
+                    self.bargeinEnergyCount = 0
+                    return
+                }
+                if level > 0.25 {
+                    self.bargeinEnergyCount += 1
+                    if self.bargeinEnergyCount >= 5 {
+                        self.bargeinEnergyCount = 0
+                        self.speakSTTService.isEchoGated = false
+                        self.streamingController?.stopGeneration()
+                        self.elevenLabsStreamingTTS.cancel()
+                        self.updatePhase(.listening)
+                    }
+                } else {
+                    self.bargeinEnergyCount = 0
+                }
             }
             .store(in: &cancellables)
 

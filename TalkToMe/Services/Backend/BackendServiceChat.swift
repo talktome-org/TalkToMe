@@ -299,6 +299,7 @@ extension BackendService {
         let decoded = try jsonDecoder.decode(UploadRes.self, from: data)
         return (decoded.path ?? "", decoded.url)
     }
+
 }
 
 private struct ChatRequestBody: Codable {
@@ -322,4 +323,5 @@ private struct MessagesResponseBody: Codable {
 private struct SessionsResponseBody: Codable {
     let sessions: [BackendService.ChatSessionDTO]
 }
+
 

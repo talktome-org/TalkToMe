@@ -577,7 +577,27 @@ final class ChatStreamingController {
                 case .session(let sid):
                     streamSessionId = sid
                     Task { @MainActor in
-                        if let local = createdLocalSessionIdForSend, delegate.sessionId == local, sid != local {
+                        let isRekey = createdLocalSessionIdForSend != nil
+                            && delegate.sessionId == createdLocalSessionIdForSend
+                            && sid != createdLocalSessionIdForSend
+
+                        // Update session tracking state synchronously BEFORE any
+                        // async work so that token/done handlers arriving during
+                        // the DB rekey see streamSessionId == delegate.sessionId
+                        // and update delegate.messages (not just the cache).
+                        // Without this, the .done handler takes the wrong branch
+                        // and never calls streamingDidFinish → TTS hangs.
+                        if isRekey || delegate.sessionId == nil {
+                            delegate.sessionId = sid
+                            delegate.setChatMessagesVMSessionId(sid)
+                        }
+                        delegate.setCachedMessages(initialMessagesForStream, for: sid)
+                        if let placeholderId = initialAssistantPlaceholderId {
+                            self.assistantMessageIdBySession[sid] = placeholderId
+                        }
+                        self.currentStreamingSessionId = sid
+
+                        if isRekey, let local = createdLocalSessionIdForSend {
                             await ChatStore.shared.rekeySession(oldId: local, newId: sid)
                             if let ghostName = self.ghostNameBySession[local] {
                                 self.ghostNameBySession[sid] = ghostName
@@ -592,17 +612,7 @@ final class ChatStreamingController {
                                 "lastUsedISO8601": ISO8601DateFormatter().string(from: Date()),
                                 "lastMessageContent": ""
                             ])
-                            delegate.sessionId = sid
-                            delegate.setChatMessagesVMSessionId(sid)
-                        } else if delegate.sessionId == nil {
-                            delegate.sessionId = sid
-                            delegate.setChatMessagesVMSessionId(sid)
                         }
-                        delegate.setCachedMessages(initialMessagesForStream, for: sid)
-                        if let placeholderId = initialAssistantPlaceholderId {
-                            self.assistantMessageIdBySession[sid] = placeholderId
-                        }
-                        self.currentStreamingSessionId = sid
                     }
                 case .token(let token):
                     Task { @MainActor in

@@ -28,6 +28,8 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
     private var finishSent: Bool = false
     private var pendingFinish: Bool = false
     private var pendingText: String = ""
+    /// All text sent to TTS during this response, used to detect echo.
+    private(set) var recentlySpokenText: String = ""
     private var flushWorkItem: DispatchWorkItem?
     private var keepAliveTask: Task<Void, Never>?
     private let keepAliveIntervalSeconds: TimeInterval = 15.0
@@ -77,6 +79,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         self.speakerLevel = 0
         self.finishSent = false
         self.pendingFinish = false
+        self.recentlySpokenText = ""
 
         audioQueue.async {
             self.startedPlayback = false
@@ -127,6 +130,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         guard !finishSent else { return }
 
         pendingText += delta
+        recentlySpokenText += delta
         let shouldFlush: Bool = {
             if pendingText.count >= 48 { return true }
             if delta.contains(where: { $0 == " " || $0 == "\n" }) { return true }

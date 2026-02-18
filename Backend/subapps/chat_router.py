@@ -37,7 +37,9 @@ from Backend.crud.chat.chat_session_crud import (
     mark_session_read,
     update_session_title,
 )
-from Backend.schemas.chat_models import ChatRequest, MessageDTO, MessagesResponse, SessionDTO, SessionsResponse
+from Backend.schemas.chat_models import (
+    ChatRequest, MessageDTO, MessagesResponse, SessionDTO, SessionsResponse,
+)
 from Backend.crud.client_uploads.uploads_crud import create_upload
 from Backend.database import SessionLocal
 from Backend.models.client_uploads.upload_model import Upload
