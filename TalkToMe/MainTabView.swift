@@ -12,7 +12,6 @@ enum AppTab: Hashable {
   case diary
   case chat
   case settings
-  case search
 }
 
 struct MainTabView: View {
@@ -22,8 +21,6 @@ struct MainTabView: View {
   @State private var selectedTab: AppTab = .home
   @State private var showChat: Bool = false
   @State private var chatDragOffset: CGFloat = 0
-  @State private var searchString: String = ""
-
   private let dismissThreshold: CGFloat = 100
 
   private func openChat(sessionId: UUID?) {
@@ -79,18 +76,6 @@ struct MainTabView: View {
 
         Tab("Settings", systemImage: "gearshape", value: .settings) {
           SettingsTabWrapper()
-        }
-
-        Tab(value: .search, role: .search) {
-          NavigationStack {
-            MainAppView(
-              onOpenChat: { sid in openChat(sessionId: sid) },
-              onStartNewChat: { openChat(sessionId: nil) },
-              searchText: searchString
-            )
-            .searchable(text: $searchString)
-            .navigationBarHidden(true)
-          }
         }
       }
 

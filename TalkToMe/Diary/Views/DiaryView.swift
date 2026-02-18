@@ -73,7 +73,7 @@ struct DiaryView: View {
       .navigationTitle("")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
-        ToolbarItem(placement: .topBarTrailing) {
+        ToolbarItem(placement: .topBarLeading) {
           Button("Edit") {
             Haptics.impact(.light)
             showDiaryEditor = true
@@ -374,7 +374,7 @@ private struct DiaryHeroCardView: View {
           .foregroundStyle(.white.opacity(0.94))
       }
       .padding(.horizontal, 18)
-      .padding(.top, 92)
+      .padding(.top, 136)
       .padding(.bottom, 22)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }

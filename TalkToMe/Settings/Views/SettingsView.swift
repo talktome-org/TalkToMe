@@ -282,6 +282,15 @@ struct SettingsView: View {
       }
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
+          Button {
+            Haptics.impact(.light)
+            viewModel.showPersonalizationEdit = true
+          } label: {
+            Text("Edit")
+          }
+        }
+
+        ToolbarItem(placement: .topBarTrailing) {
           Menu {
             if let code = friendsVM.myCode {
               Button {
@@ -302,15 +311,6 @@ struct SettingsView: View {
             Image(systemName: "textformat.123")
               .font(.system(size: 16))
               .foregroundStyle(.primary)
-          }
-        }
-
-        ToolbarItem(placement: .topBarTrailing) {
-          Button {
-            Haptics.impact(.light)
-            viewModel.showPersonalizationEdit = true
-          } label: {
-            Text("Edit")
           }
         }
       }
