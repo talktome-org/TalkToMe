@@ -149,6 +149,13 @@ struct SidebarView: View {
     }
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
+      ToolbarItem(placement: .topBarLeading) {
+        Text(" \(sessionsViewModel.sessions.count) Chats ")
+          .font(.system(size: 15, weight: .semibold))
+          .foregroundStyle(Color(.label))
+          .fixedSize()
+      }
+
       ToolbarItem(placement: .principal) {
         ConnectionStatusPillView()
       }
