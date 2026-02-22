@@ -141,10 +141,20 @@ struct FriendsAndContactsSectionView: View {
             .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
             .onAppear {
                 shimmerEnabled = true
+                // Reset before starting to avoid stacking repeat-forever drivers
                 shimmerPhase = -1.0
-                withAnimation(.linear(duration: 1.8).repeatForever(autoreverses: false)) {
-                    shimmerPhase = 1.0
+                DispatchQueue.main.async {
+                    withAnimation(.linear(duration: 1.8).repeatForever(autoreverses: false)) {
+                        shimmerPhase = 1.0
+                    }
                 }
+            }
+            .onDisappear {
+                // Cancel the repeating animation to free the main thread
+                withAnimation(nil) {
+                    shimmerPhase = -1.0
+                }
+                shimmerEnabled = false
             }
         }
     }
