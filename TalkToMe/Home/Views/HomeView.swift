@@ -480,8 +480,18 @@ private struct GetStartedCardView: View {
     .onAppear {
       // Seed checkpointVisible with already-completed steps
       checkpointVisible = completedStepIds
-      withAnimation(.linear(duration: 1.0).repeatForever(autoreverses: false)) {
-        dashPhase = -8
+      // Reset before starting to avoid stacking repeat-forever drivers
+      dashPhase = 0
+      DispatchQueue.main.async {
+        withAnimation(.linear(duration: 1.0).repeatForever(autoreverses: false)) {
+          dashPhase = -8
+        }
+      }
+    }
+    .onDisappear {
+      // Cancel the repeating animation to free the main thread
+      withAnimation(nil) {
+        dashPhase = 0
       }
     }
     .onChange(of: completedStepIds) { _, newIds in
