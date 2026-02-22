@@ -151,10 +151,13 @@ struct SidebarView: View {
     .toolbar {
       if !sessionsViewModel.sessions.isEmpty {
         ToolbarItem(placement: .topBarLeading) {
-          Text(" \(sessionsViewModel.sessions.count) \(sessionsViewModel.sessions.count == 1 ? "chat" : "chats") ")
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(Color(.label))
-            .fixedSize()
+          Button {} label: {
+            Text("\(sessionsViewModel.sessions.count) \(sessionsViewModel.sessions.count == 1 ? "chat" : "chats")")
+              .font(.system(size: 17, weight: .semibold))
+              .foregroundStyle(Color(.label))
+              .fixedSize()
+          }
+          .disabled(true)
         }
       }
 
@@ -396,7 +399,7 @@ struct SidebarView: View {
   }
 
   private var emptyState: some View {
-    VStack(spacing: 24) {
+    VStack(spacing: 10) {
       ZStack {
         ghostCard(name: "hex", size: 140)
           .rotationEffect(.degrees(-8))
@@ -417,7 +420,8 @@ struct SidebarView: View {
           .font(.system(size: 17, weight: .bold))
           .foregroundStyle(.primary)
 
-        let buddyName = ElevenLabsVoiceSuggestionsView.requiredBuddies.first(where: { $0.key == effectiveVoiceName })?.name ?? "Luma"
+        let normalizedVoice = effectiveVoiceName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let buddyName = ElevenLabsVoiceSuggestionsView.requiredBuddies.first(where: { $0.key == normalizedVoice || $0.aliases.contains(normalizedVoice) })?.name ?? "Luma"
         Text("Tap \(buddyName) to open a voice chat or tap + to start a regular chat.")
           .font(.system(size: 14))
           .foregroundStyle(.secondary)
@@ -914,7 +918,9 @@ private struct ConnectionStatusPillView: View {
         <= recentFailureWindowSeconds)
     if sessionsFailedRecently { return .connecting }
 
-    if sessionsViewModel.isLoadingSessions && sessionsViewModel.sessions.isEmpty {
+    if sessionsViewModel.isLoadingSessions && sessionsViewModel.sessions.isEmpty
+      && sessionsViewModel.lastSessionsSyncSucceeded != true
+    {
       return .updating
     }
     return nil

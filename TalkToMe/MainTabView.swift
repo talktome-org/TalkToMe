@@ -11,17 +11,58 @@ enum AppTab: Hashable {
   case home
   case diary
   case chat
-  case settings
+  case buddy
 }
 
 struct MainTabView: View {
   @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
   @EnvironmentObject private var navigationViewModel: SidebarNavigationViewModel
 
+  @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var buddyVoiceName: String = ""
   @State private var selectedTab: AppTab = .home
   @State private var showChat: Bool = false
   @State private var chatDragOffset: CGFloat = 0
   private let dismissThreshold: CGFloat = 100
+
+  private struct BuddyTabConfig {
+    let pointSize: CGFloat
+    let offsetX: CGFloat  // positive = right, negative = left
+    let offsetY: CGFloat  // positive = down, negative = up
+    init(pointSize: CGFloat, offsetX: CGFloat = 0, offsetY: CGFloat) {
+      self.pointSize = pointSize
+      self.offsetX = offsetX
+      self.offsetY = offsetY
+    }
+  }
+
+  private static let buddyTabConfigs: [String: BuddyTabConfig] = [
+    "jay":  BuddyTabConfig(pointSize: 24, offsetY: 4),
+    "hex":  BuddyTabConfig(pointSize: 32, offsetY: 2.5),
+    "mira": BuddyTabConfig(pointSize: 23, offsetX: -1, offsetY: 3),
+    "pax":  BuddyTabConfig(pointSize: 26, offsetX: 1, offsetY: 4),
+    "luma": BuddyTabConfig(pointSize: 25, offsetX: 1, offsetY: 2),
+    "snow": BuddyTabConfig(pointSize: 26, offsetY: 2),
+  ]
+
+  private static let defaultTabConfig = BuddyTabConfig(pointSize: 24, offsetY: 3)
+
+  private var buddyTabImage: UIImage? {
+    guard let source = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: buddyVoiceName) else { return nil }
+    let key = buddyVoiceName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    let config = Self.buddyTabConfigs[key] ?? Self.defaultTabConfig
+    let scale = UIScreen.main.scale
+    let canvasWidth = (config.pointSize + abs(config.offsetX)) * scale
+    let canvasHeight = (config.pointSize + abs(config.offsetY)) * scale
+    let canvasSize = CGSize(width: canvasWidth, height: canvasHeight)
+    let imageSize = CGSize(width: config.pointSize * scale, height: config.pointSize * scale)
+    let xOrigin = max(config.offsetX, 0) * scale
+    let yOrigin = max(config.offsetY, 0) * scale
+    let renderer = UIGraphicsImageRenderer(size: canvasSize)
+    let resized = renderer.image { _ in
+      source.draw(in: CGRect(origin: CGPoint(x: xOrigin, y: yOrigin), size: imageSize))
+    }
+    return resized.withRenderingMode(.alwaysOriginal)
+  }
 
   private func openChat(sessionId: UUID?) {
     if let sid = sessionId {
@@ -50,9 +91,23 @@ struct MainTabView: View {
     }
   }
 
+  private var tabSelection: Binding<AppTab> {
+    Binding(
+      get: { selectedTab },
+      set: { newTab in
+        if newTab == .buddy {
+          Haptics.impact(.light)
+          openChat(sessionId: nil)
+        } else {
+          selectedTab = newTab
+        }
+      }
+    )
+  }
+
   var body: some View {
     ZStack {
-      TabView(selection: $selectedTab) {
+      TabView(selection: tabSelection) {
         Tab("Home", systemImage: "house", value: .home) {
           HomeView(
             selectedTab: $selectedTab,
@@ -74,9 +129,16 @@ struct MainTabView: View {
           }
         }
 
-        Tab("Settings", systemImage: "gearshape", value: .settings) {
-          SettingsTabWrapper()
+        Tab(value: .buddy, role: .search) {
+          Color.clear
+        } label: {
+          if let img = buddyTabImage {
+            Image(uiImage: img)
+          } else {
+            Image(systemName: "bubble.left.fill")
+          }
         }
+
       }
 
       if showChat {
@@ -141,23 +203,6 @@ struct MainTabView: View {
         }
         .zIndex(1)
       }
-    }
-  }
-}
-
-/// Wraps SettingsView so it can live inside a tab instead of a sheet.
-private struct SettingsTabWrapper: View {
-  @Namespace private var profileNamespace
-  @State private var isPresented: Bool = true
-
-  var body: some View {
-    SettingsView(
-      profileNamespace: profileNamespace,
-      isPresented: $isPresented
-    )
-    .onChange(of: isPresented) { _, newValue in
-      // In a tab, we can't dismiss — keep it presented.
-      if !newValue { isPresented = true }
     }
   }
 }

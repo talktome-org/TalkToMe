@@ -443,6 +443,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
             Haptics.impact(.light)
             localVoiceName = buddy.definition.name
             UserDefaults.standard.set(buddy.definition.name, forKey: PreferenceKeys.elevenLabsVoiceName)
+            UserDefaults.standard.set(true, forKey: PreferenceKeys.buddyExplicitlyChosen)
             // Only write voiceId when a real backend ID is available so we don't
             // overwrite a previously-valid ID with "".  loadVoices() will back-fill
             // the ID once voices arrive from the network.

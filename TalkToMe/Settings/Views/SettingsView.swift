@@ -3,7 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
 
-  let profileNamespace: Namespace.ID
+  var embedded: Bool = false
 
   @EnvironmentObject private var friendsVM: FriendsViewModel
   @EnvironmentObject private var sessionsVM: ChatSessionsViewModel
@@ -71,42 +71,53 @@ struct SettingsView: View {
 
     return HStack(alignment: .top, spacing: 0) {
       // Left column: User
-      VStack(spacing: 6) {
-        avatarView
-          .frame(height: 120)
-        Text(preferredName.components(separatedBy: " ").first ?? preferredName)
-          .font(.system(size: 18, weight: .semibold))
-          .foregroundColor(.primary)
-          .lineLimit(1)
-          .frame(height: 22)
-        Text("You")
-          .font(.system(size: 13, weight: .medium))
-          .foregroundColor(.secondary)
-          .lineLimit(1)
-          .padding(.horizontal, 14)
-          .padding(.vertical, 6)
-          .background(AppTheme.surface)
-          .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+      Button {
+        Haptics.impact(.light)
+        viewModel.showPersonalizationEdit = true
+      } label: {
+        VStack(spacing: 6) {
+          avatarView
+            .frame(height: 120)
+          Text(preferredName.components(separatedBy: " ").first ?? preferredName)
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundColor(.primary)
+            .lineLimit(1)
+            .frame(height: 22)
+          Text("You")
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(AppTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
       }
+      .buttonStyle(.plain)
       .frame(maxWidth: .infinity)
 
       // Right column: Buddy
-      VStack(spacing: 6) {
-        buddyDisplay.ghostVideoView
-        Text(buddyDisplay.buddyDisplayName)
-          .font(.system(size: 18, weight: .semibold))
-          .foregroundColor(.primary)
-          .lineLimit(1)
-          .frame(height: 22)
-        Text("Buddy")
-          .font(.system(size: 13, weight: .medium))
-          .foregroundColor(.secondary)
-          .lineLimit(1)
-          .padding(.horizontal, 14)
-          .padding(.vertical, 6)
-          .background(AppTheme.surface)
-          .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+      Button {
+        viewModel.shouldNavigateToBuddyChooser = true
+      } label: {
+        VStack(spacing: 6) {
+          buddyDisplay.ghostVideoView
+          Text(buddyDisplay.buddyDisplayName)
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundColor(.primary)
+            .lineLimit(1)
+            .frame(height: 22)
+          Text("Buddy")
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(AppTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
       }
+      .buttonStyle(.plain)
       .frame(maxWidth: .infinity)
     }
     .padding(.horizontal, 16)
@@ -248,88 +259,89 @@ struct SettingsView: View {
     .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
   }
 
-  var body: some View {
-    NavigationStack {
-      ZStack {
-        AppTheme.background.ignoresSafeArea()
+  @ViewBuilder
+  private var settingsContent: some View {
+    ZStack {
+      AppTheme.background.ignoresSafeArea()
 
-        ScrollViewReader { proxy in
-          ScrollView {
-            VStack(spacing: 0) {
-              profileHeader
-              sectionsListView
-            }
-          }
-          .scrollIndicators(.hidden)
-          .onChange(of: viewModel.shouldHighlightCustomization) { _, shouldHighlight in
-            guard shouldHighlight else { return }
-            viewModel.shouldHighlightCustomization = false
-            withAnimation(.easeOut(duration: 0.3)) {
-              proxy.scrollTo("customization", anchor: .center)
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-              animateCustomizationHighlight()
-            }
+      ScrollViewReader { proxy in
+        ScrollView {
+          VStack(spacing: 0) {
+            profileHeader
+            sectionsListView
           }
         }
-      }
-      .overlay(alignment: .top) {
-        if let toastMessage {
-          ToastOverlayView(message: toastMessage, onDismiss: dismissToast)
-            .padding(.top, 8)
-        }
-      }
-      .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
-      .navigationDestination(isPresented: $viewModel.shouldNavigateToContacts) {
-        FriendsAndContactsSectionView()
-      }
-      .navigationDestination(isPresented: $viewModel.shouldNavigateToAppearance) {
-        AppearanceSettingsView()
-      }
-      .toolbar {
-        ToolbarItem(placement: .topBarLeading) {
-          Button {
-            Haptics.impact(.light)
-            viewModel.showPersonalizationEdit = true
-          } label: {
-            Text("Edit")
+        .scrollIndicators(.hidden)
+        .onChange(of: viewModel.shouldHighlightCustomization) { _, shouldHighlight in
+          guard shouldHighlight else { return }
+          viewModel.shouldHighlightCustomization = false
+          withAnimation(.easeOut(duration: 0.3)) {
+            proxy.scrollTo("customization", anchor: .center)
           }
-        }
-
-        ToolbarItem(placement: .topBarTrailing) {
-          Menu {
-            if let code = friendsVM.myCode {
-              Button {
-                UIPasteboard.general.string = code
-                Haptics.impact(.light)
-                showToast("Add a Friend code copied to clipboard!")
-              } label: {
-                Label(code, systemImage: "square.on.square")
-              }
-            } else {
-              Button {
-                Task { await friendsVM.refreshMyCode(force: true) }
-              } label: {
-                Label("Load Code", systemImage: "arrow.clockwise")
-              }
-            }
-          } label: {
-            Image(systemName: "textformat.123")
-              .font(.system(size: 16))
-              .foregroundStyle(.primary)
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            animateCustomizationHighlight()
           }
         }
       }
     }
+    .overlay(alignment: .top) {
+      if let toastMessage {
+        ToastOverlayView(message: toastMessage, onDismiss: dismissToast)
+          .padding(.top, 8)
+      }
+    }
+    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
+    .navigationDestination(isPresented: $viewModel.shouldNavigateToContacts) {
+      FriendsAndContactsSectionView()
+    }
+    .navigationDestination(isPresented: $viewModel.shouldNavigateToAppearance) {
+      AppearanceSettingsView()
+    }
+    .sheet(isPresented: $viewModel.shouldNavigateToBuddyChooser) {
+      BuddyChooserView()
+    }
+    .toolbar {
+      ToolbarItem(placement: .topBarTrailing) {
+        Menu {
+          if let code = friendsVM.myCode {
+            Button {
+              UIPasteboard.general.string = code
+              Haptics.impact(.light)
+              showToast("Add a Friend code copied to clipboard!")
+            } label: {
+              Label(code, systemImage: "square.on.square")
+            }
+          } else {
+            Button {
+              Task { await friendsVM.refreshMyCode(force: true) }
+            } label: {
+              Label("Load Code", systemImage: "arrow.clockwise")
+            }
+          }
+        } label: {
+          Image(systemName: "textformat.123")
+            .font(.system(size: 16))
+            .foregroundStyle(.primary)
+        }
+      }
+    }
+  }
+
+  var body: some View {
+    Group {
+      if embedded {
+        settingsContent
+      } else {
+        NavigationStack {
+          settingsContent
+        }
+      }
+    }
     .sheet(isPresented: $viewModel.showPersonalizationEdit) {
-      PersonalizationEditView(
-        isPresented: $viewModel.showPersonalizationEdit,
-        profileNamespace: profileNamespace,
-        viewModel: viewModel
-      )
-      .environmentObject(sessionsVM)
-      .presentationDetents([.large])
-      .presentationDragIndicator(.visible)
+      PersonalizationEditView(viewModel: viewModel)
+        .environmentObject(sessionsVM)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
     }
     .alert("Delete Account", isPresented: $viewModel.showDeleteAccountConfirmation) {
       Button("Delete", role: .destructive) {
@@ -395,10 +407,8 @@ struct SettingsView: View {
 
 #Preview {
   @Previewable @State var isPresented = true
-  @Previewable @Namespace var namespace
 
   SettingsView(
-    profileNamespace: namespace,
     isPresented: $isPresented
   )
   .environmentObject(FriendsViewModel(accessTokenProvider: { "" }))

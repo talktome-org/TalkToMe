@@ -632,7 +632,10 @@ final class ChatStore {
                 }
 
                 let nowISO = isoFormatter.string(from: Date())
-                for dto in dtos {
+                // Sort by created_at so user messages are inserted before their
+                // corresponding assistant messages within this transaction.
+                let sortedDtos = dtos.sorted { ($0.created_at ?? nowISO) < ($1.created_at ?? nowISO) }
+                for dto in sortedDtos {
                     let created = dto.created_at ?? nowISO
                     // Preserve local-only metadata when upserting server messages.
                     // First try matching by ID; if not found, fall back to matching by
@@ -646,6 +649,38 @@ final class ChatStore {
                             """, arguments: [dto.session_id.uuidString, dto.role, dto.content, dto.id.uuidString])
                     // If voice metadata targets this message, apply it in the same transaction
                     let isVoiceTarget = voiceMetadata.map { $0.messageId == dto.id } ?? false
+
+                    // For assistant messages without voice metadata, infer from the
+                    // preceding user message.  The user message is always persisted
+                    // with correct voice metadata before streaming starts, so this
+                    // reliably recovers the flag even when the post-stream detached
+                    // task is interrupted (app killed, speak-mode stopped, etc.).
+                    var resolvedVoiceMode: Bool
+                    var resolvedGhostName: String?
+                    if isVoiceTarget {
+                        resolvedVoiceMode = true
+                        resolvedGhostName = voiceMetadata?.ghostName
+                    } else if existing?.is_voice_mode == true {
+                        resolvedVoiceMode = true
+                        resolvedGhostName = existing?.ghost_name
+                    } else if dto.role == "assistant" {
+                        let precedingUser = try ChatMessageRecord.fetchOne(db, sql: """
+                            SELECT * FROM messages
+                            WHERE session_id = ? AND role = 'user' AND created_at <= ?
+                            ORDER BY created_at DESC LIMIT 1
+                            """, arguments: [dto.session_id.uuidString, created])
+                        if precedingUser?.is_voice_mode == true {
+                            resolvedVoiceMode = true
+                            resolvedGhostName = existing?.ghost_name ?? precedingUser?.ghost_name
+                        } else {
+                            resolvedVoiceMode = false
+                            resolvedGhostName = existing?.ghost_name
+                        }
+                    } else {
+                        resolvedVoiceMode = existing?.is_voice_mode ?? false
+                        resolvedGhostName = existing?.ghost_name
+                    }
+
                     let rec = ChatMessageRecord(
                         id: dto.id.uuidString,
                         session_id: dto.session_id.uuidString,
@@ -654,9 +689,9 @@ final class ChatStore {
                         content: dto.content,
                         created_at: created,
                         regeneration_count: existing?.regeneration_count ?? 0,
-                        ghost_name: isVoiceTarget ? voiceMetadata?.ghostName : existing?.ghost_name,
+                        ghost_name: resolvedGhostName,
                         thinking_summary: existing?.thinking_summary,
-                        is_voice_mode: isVoiceTarget ? true : (existing?.is_voice_mode ?? false)
+                        is_voice_mode: resolvedVoiceMode
                     )
                     try rec.save(db)
                 }

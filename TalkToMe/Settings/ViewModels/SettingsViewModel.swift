@@ -13,6 +13,8 @@ class SettingsViewModel: ObservableObject {
     @Published var shouldNavigateToContacts: Bool = false
     @Published var shouldNavigateToAppearance: Bool = false
     @Published var shouldHighlightCustomization: Bool = false
+    @Published var shouldNavigateToBuddyChooser: Bool = false
+    @Published var shouldNavigateToEditProfile: Bool = false
     @Published var showDeleteAccountConfirmation: Bool = false
     @Published var isDeletingAccount: Bool = false
 
@@ -212,6 +214,7 @@ class SettingsViewModel: ObservableObject {
             "get_started_connect_friend",
             "get_started_write_diary",
             "get_started_customize_buddy",
+            PreferenceKeys.buddyExplicitlyChosen,
         ]
         for key in keysToRemove {
             UserDefaults.standard.removeObject(forKey: key)
