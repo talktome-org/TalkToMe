@@ -17,7 +17,6 @@ struct ContentView: View {
     @State private var onboardingLoaded = false
     @State private var onboardingLoadTask: Task<Void, Never>? = nil
 
-    @Namespace private var profileNamespace
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -43,16 +42,6 @@ struct ContentView: View {
                 AuthView()
                     .transition(.opacity)
             }
-        }
-        .sheet(isPresented: $navigationViewModel.showSettingsSheet) {
-            SettingsView(
-                profileNamespace: profileNamespace,
-                isPresented: $navigationViewModel.showSettingsSheet
-            )
-            .environmentObject(sessionsViewModel)
-            .environmentObject(friendsVM)
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
         }
         .onChange(of: scenePhase, initial: false) { _, newPhase in
             if newPhase == .active {

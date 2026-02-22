@@ -991,6 +991,7 @@ struct HomeView: View {
   @EnvironmentObject private var settingsViewModel: SettingsViewModel
   @EnvironmentObject private var sessionsVM: ChatSessionsViewModel
 
+  @State private var showSettings: Bool = false
   @State private var showNotifications: Bool = false
   @State private var showContacts: Bool = false
   @State private var showCustomizeBuddies: Bool = false
@@ -1099,6 +1100,12 @@ struct HomeView: View {
         }
       }
       .navigationBarTitleDisplayMode(.inline)
+      .navigationDestination(isPresented: $showSettings) {
+        SettingsView(
+          embedded: true,
+          isPresented: $showSettings
+        )
+      }
       .navigationDestination(isPresented: $showNotifications) {
         NotificationsView(
           sessions: unreadSessions,
@@ -1121,7 +1128,7 @@ struct HomeView: View {
         ToolbarItem(placement: .topBarLeading) {
           Button {
             Haptics.impact(.light)
-            selectedTab = .settings
+            showSettings = true
           } label: {
             if let url = sessionsVM.myAvatarURL, !url.isEmpty {
               AvatarCacheManager.shared.cachedAsyncImage(
@@ -1143,10 +1150,15 @@ struct HomeView: View {
         }
 
         ToolbarItem(placement: .topBarLeading) {
-          Text(" \(displayName) ")
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(Color(.label))
-            .fixedSize()
+          Button {
+            Haptics.impact(.light)
+            showSettings = true
+          } label: {
+            Text(displayName)
+              .font(.system(size: 15, weight: .semibold))
+              .foregroundStyle(Color(.label))
+              .fixedSize()
+          }
         }
 
         ToolbarItem(placement: .topBarTrailing) {
@@ -1179,7 +1191,7 @@ struct HomeView: View {
       sessionsVM.shouldStartInVoiceMode = true
       onStartNewChat()
     case .customize:
-      selectedTab = .settings
+      showSettings = true
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
         settingsViewModel.shouldHighlightCustomization = true
       }

@@ -18,6 +18,7 @@ enum PreferenceKeys {
     static let ttsVoiceIdentifier = "tts_voice_identifier"
     static let currentUserId = "current_user_id"
     static let didExplicitSignOut = "did_explicit_sign_out"
+    static let buddyExplicitlyChosen = "buddy_explicitly_chosen"
 
     static func buddyCustomPromptKey(_ buddyKey: String) -> String {
         "buddy_custom_prompt_\(buddyKey)"

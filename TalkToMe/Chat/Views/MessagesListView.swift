@@ -19,6 +19,8 @@ struct MessagesListView: View {
     var outgoingAnimatingMessageId: UUID? = nil
     var outgoingSourceMessageId: UUID? = nil
 
+    @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var currentBuddyName: String = ""
+
     @State private var isNearBottom: Bool = true
     @State private var followBottom: Bool = false
     @State private var scrollToBottomToken: Int = 0
@@ -344,9 +346,22 @@ struct MessagesListView: View {
         }
     }
 
+    @AppStorage(PreferenceKeys.buddyExplicitlyChosen) private var buddyExplicitlyChosen: Bool = false
+
+    private var hasBuddy: Bool {
+        buddyExplicitlyChosen
+    }
+
     @ViewBuilder
     private var chatEmptyState: some View {
-        VStack(spacing: 24) {
+        if !hasBuddy {
+            buddyPickerEmptyState
+        }
+    }
+
+    @ViewBuilder
+    private var buddyPickerEmptyState: some View {
+        VStack(spacing: 10) {
             // Static domino of ghost buddy cards
             Button {
                 Haptics.impact(.light)

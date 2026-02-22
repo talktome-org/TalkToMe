@@ -816,8 +816,13 @@ final class ChatStreamingController {
                                 let capturedGhostName = self.ghostNameBySession[sid]
                                 let capturedThinkingSummary = accumulatedThinking.trimmingCharacters(in: .whitespacesAndNewlines)
                                 let skipReconciliation = isRegeneration
+                                // Reconcile with server and persist local metadata
+                                // immediately (no sleep).  The server has already saved
+                                // the assistant message before sending the .done event,
+                                // so the GET endpoint should return it right away.
+                                // Previously this task slept 900ms, creating a window
+                                // where app termination could lose voice metadata.
                                 Task.detached {
-                                    try? await Task.sleep(nanoseconds: 900_000_000)
                                     // Skip server reconciliation after regeneration: the local
                                     // DB already has the correct messages and reconciling risks
                                     // restoring old messages that failed to delete on the server.

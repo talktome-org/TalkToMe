@@ -2,8 +2,8 @@ import SwiftUI
 import PhotosUI
 
 struct PersonalizationEditView: View {
-    @Binding var isPresented: Bool
-    let profileNamespace: Namespace.ID
+    @Environment(\.dismiss) private var dismiss
+    @Namespace private var profileNamespace
 
     @ObservedObject var viewModel: SettingsViewModel
     @EnvironmentObject private var sessionsVM: ChatSessionsViewModel
@@ -31,13 +31,12 @@ struct PersonalizationEditView: View {
     @State private var toastWorkItem: DispatchWorkItem? = nil
 
     var body: some View {
-        ZStack {
-            NavigationStack {
+        NavigationStack {
                 ScrollView {
                     VStack(spacing: 0) {
                         // Top gap
                         Color.clear
-                            .frame(height: 40)
+                            .frame(height: 16)
 
                         // Current profile picture
                         ZStack {
@@ -168,15 +167,7 @@ struct PersonalizationEditView: View {
                                     .font(.system(size: 16, weight: .medium))
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 12)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .fill(colorScheme == .dark ? Color(.systemGray6) : Color.white)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 12)
-                                                    .stroke(colorScheme == .dark ? Color.white.opacity(0.1) : Color.gray.opacity(0.1), lineWidth: 1)
-                                            )
-                                            .shadow(color: colorScheme == .dark ? .black.opacity(0.2) : .black.opacity(0.05), radius: 2, x: 0, y: 1)
-                                    )
+                                    .modifier(EditProfileGlassModifier(shape: RoundedRectangle(cornerRadius: 12)))
                                     .onChange(of: fullName) { _, newValue in
                                         let limit = 22
                                         if newValue.count > limit {
@@ -204,15 +195,7 @@ struct PersonalizationEditView: View {
                                     .font(.system(size: 16, weight: .medium))
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 12)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .fill(colorScheme == .dark ? Color(.systemGray6) : Color.white)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 12)
-                                                    .stroke(colorScheme == .dark ? Color.white.opacity(0.1) : Color.gray.opacity(0.1), lineWidth: 1)
-                                            )
-                                            .shadow(color: colorScheme == .dark ? .black.opacity(0.2) : .black.opacity(0.05), radius: 2, x: 0, y: 1)
-                                    )
+                                    .modifier(EditProfileGlassModifier(shape: RoundedRectangle(cornerRadius: 12)))
                                     .lineLimit(3...6)
 
                                 // Helper text
@@ -251,10 +234,29 @@ struct PersonalizationEditView: View {
                 .onChange(of: viewModel.isProfileLoaded, initial: false) { _, loaded in
                     if loaded { loadProfileData() }
                 }
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            Haptics.impact(.light)
+                            Task { await saveAllChanges() }
+                        } label: {
+                            Text("Save")
+                                .font(.system(size: 17, weight: .semibold))
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            Haptics.impact(.light)
+                            dismiss()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                }
             }
-        }
         .background(AppTheme.background.ignoresSafeArea())
-        .animation(.spring(response: 0.45, dampingFraction: 0.9, blendDuration: 0), value: isPresented)
         .overlay(alignment: .top) {
             GeometryReader { proxy in
                 let topInset: CGFloat = proxy.safeAreaInsets.top
@@ -320,69 +322,6 @@ struct PersonalizationEditView: View {
             .animation(.spring(response: 0.25, dampingFraction: 0.8), value: showingAvatarSelection)
             .zIndex(showingAvatarSelection ? 1 : -1)
             .opacity(showingAvatarSelection ? 1.0 : 0.0)
-        }
-        .overlay(alignment: .topTrailing) {
-            // Close button in top right
-            Button(action: {
-                Haptics.impact(.light)
-                isPresented = false
-            }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(.primary)
-                    .frame(width: 44, height: 44)
-            }
-            .background(
-                Group {
-                    if #available(iOS 26.0, *) {
-                        // iOS 26+ Glass effect
-                        Color.clear
-                            .glassEffect(.regular.interactive(), in: Circle())
-                    } else {
-                        // Fallback for older iOS versions
-                        Color(.systemGray6)
-                            .opacity(0.8)
-                    }
-                }
-            )
-            .clipShape(Circle())
-            .buttonStyle(.plain)
-            .contentShape(Circle())
-            .padding(.top, 8)
-            .padding(.trailing, 16)
-            .zIndex(10)
-        }
-        .overlay(alignment: .topLeading) {
-            // Save button in top left
-            Button(action: {
-                Haptics.impact(.light)
-                Task {
-                    await saveAllChanges()
-                }
-            }) {
-                Text("Save")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(.primary)
-                    .padding(.horizontal, 18)
-                    .frame(height: 44)
-            }
-            .background(
-                Group {
-                    if #available(iOS 26.0, *) {
-                        Color.clear
-                            .glassEffect(.regular.interactive(), in: Capsule())
-                    } else {
-                        Color(.systemGray6)
-                            .opacity(0.8)
-                    }
-                }
-            )
-            .clipShape(Capsule())
-            .buttonStyle(.plain)
-            .contentShape(Capsule())
-            .padding(.top, 8)
-            .padding(.leading, 16)
-            .zIndex(10)
         }
         .onAppear {
             // Clear any preview states when view appears
@@ -631,14 +570,24 @@ struct PersonalizationEditView: View {
     }
 }
 
-#Preview {
-    @Previewable @State var isPresented = true
-    @Previewable @Namespace var namespace
+private struct EditProfileGlassModifier<S: Shape>: ViewModifier {
+    let shape: S
 
-    PersonalizationEditView(
-        isPresented: $isPresented,
-        profileNamespace: namespace,
-        viewModel: SettingsViewModel()
-    )
-    .environmentObject(ChatSessionsViewModel())
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .glassEffect(.regular.interactive(), in: shape)
+        } else {
+            content
+                .background(shape.fill(Color(.secondarySystemGroupedBackground)))
+                .overlay(shape.stroke(Color(.separator).opacity(0.2), lineWidth: 0.5))
+        }
+    }
+}
+
+#Preview {
+    NavigationStack {
+        PersonalizationEditView(viewModel: SettingsViewModel())
+            .environmentObject(ChatSessionsViewModel())
+    }
 }
