@@ -56,6 +56,7 @@ class ChatViewModel: ObservableObject {
         return messages.contains(where: { msg in
             msg.segments.contains(where: { seg in
                 if case .partnerReceived(_) = seg { return true }
+                if case .partnerMessage(_, _) = seg { return true }
                 return false
             })
         })
@@ -101,6 +102,16 @@ class ChatViewModel: ObservableObject {
             .sink { [weak self] newMessages in
                 guard let self else { return }
                 self.messages = newMessages
+                // Auto-detect friend from incoming partner messages
+                if self.selectedFriendUserId == nil, let sid = self.sessionId {
+                    for msg in newMessages where msg.isFromPartnerUser {
+                        if let senderId = msg.senderUserId {
+                            self.selectedFriendUserId = senderId
+                            self.persistFriendUserId(senderId, for: sid)
+                            break
+                        }
+                    }
+                }
                 if self.pendingInitialJump, !newMessages.isEmpty {
                     self.pendingInitialJump = false
                     self.initialJumpToken &+= 1
@@ -273,6 +284,10 @@ class ChatViewModel: ObservableObject {
         let sid = await ensureSessionId()
         guard let sid else { return }
 
+        if let friendId = selectedFriendUserId {
+            persistFriendUserId(friendId, for: sid)
+        }
+
         // Optimistically persist sent state so it survives refreshes
         partnerDrafts.markPartnerDraftAsSent(sessionId: sid, messageContent: trimmed)
         objectWillChange.send()
@@ -282,7 +297,7 @@ class ChatViewModel: ObservableObject {
             _ = try await backend.sendPartnerMessage(
                 message: trimmed,
                 sessionId: sid,
-                friendUserId: nil,
+                friendUserId: selectedFriendUserId,
                 accessToken: accessToken
             )
         } catch {

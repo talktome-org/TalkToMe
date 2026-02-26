@@ -148,6 +148,7 @@ struct SidebarView: View {
         .ignoresSafeArea()
     }
     .navigationBarTitleDisplayMode(.inline)
+    .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search chats")
     .toolbar {
       if !sessionsViewModel.sessions.isEmpty {
         ToolbarItem(placement: .topBarLeading) {

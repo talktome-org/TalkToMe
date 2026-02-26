@@ -23,9 +23,19 @@ final class APNSService: NSObject, ObservableObject {
             let center = UNUserNotificationCenter.current()
             center.requestAuthorization(options: [.alert, .badge, .sound]) { [weak self] granted, _ in
                 DispatchQueue.main.async {
-                    self?.authorizationGranted = granted
-                    if granted, self?.isPushEnabled ?? true {
-                        UIApplication.shared.registerForRemoteNotifications()
+                    guard let self else { return }
+                    self.authorizationGranted = granted
+                    if granted {
+                        // Auto-enable only if the user has never explicitly set the toggle
+                        // (i.e. first launch). Respect their choice if they turned it off.
+                        let neverExplicitlySet = UserDefaults.standard.object(forKey: self.pushEnabledDefaultsKey) == nil
+                        if neverExplicitlySet && !self.isPushEnabled {
+                            self.isPushEnabled = true
+                            UserDefaults.standard.set(true, forKey: self.pushEnabledDefaultsKey)
+                        }
+                        if self.isPushEnabled {
+                            UIApplication.shared.registerForRemoteNotifications()
+                        }
                     }
                 }
             }
@@ -45,17 +55,28 @@ final class APNSService: NSObject, ObservableObject {
     }
 
     private func registerTokenWithBackendIfPossible(_ token: String) async {
+        let bundleId = Bundle.main.bundleIdentifier ?? ""
         do {
             let session = try await AuthService.shared.client.auth.session
-            let accessToken = session.accessToken
-            guard isPushEnabled else { return }
             try await BackendService.shared.registerPushToken(
                 token: token,
                 platform: "ios",
-                bundleId: Bundle.main.bundleIdentifier ?? "",
-                accessToken: accessToken
+                bundleId: bundleId,
+                accessToken: session.accessToken
             )
-        } catch {}
+        } catch {
+            // Retry once after a short delay
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            do {
+                let session = try await AuthService.shared.client.auth.session
+                try await BackendService.shared.registerPushToken(
+                    token: token,
+                    platform: "ios",
+                    bundleId: bundleId,
+                    accessToken: session.accessToken
+                )
+            } catch {}
+        }
     }
 
     func setPushEnabled(_ enabled: Bool) {
@@ -88,8 +109,9 @@ final class APNSService: NSObject, ObservableObject {
         if UserDefaults.standard.object(forKey: pushEnabledDefaultsKey) != nil {
             isPushEnabled = UserDefaults.standard.bool(forKey: pushEnabledDefaultsKey)
         } else {
+            // Don't write to UserDefaults yet — leave the key absent so
+            // requestAuthorizationAndRegister() can auto-enable on first OS grant.
             isPushEnabled = false
-            UserDefaults.standard.set(false, forKey: pushEnabledDefaultsKey)
         }
     }
 }

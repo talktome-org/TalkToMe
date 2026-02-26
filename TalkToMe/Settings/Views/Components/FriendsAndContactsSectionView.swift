@@ -22,7 +22,7 @@ struct FriendsAndContactsSectionView: View {
 
     private var inviteMessage: String {
         let code = friendsViewModel.myCode ?? "----"
-        return "Hey, I'm using TalkToMe to chat with friends - join us here! Add me to your friends list with the code: \(code)."
+        return "Hey, I'm using TalkToMe to chat with friends - join us here! Download it from TestFlight: https://testflight.apple.com/join/BRdUfYmv and add me to your friends list with the code: \(code)."
     }
 
     private var filteredContacts: [ContactRow] {

@@ -20,6 +20,8 @@ struct DiaryView: View {
   @State private var draftBody: String = ""
   @State private var deleteErrorMessage: String?
   @State private var showPastCalendar: Bool = false
+  @AppStorage("diary_friend_card_dismissed") private var friendCardDismissed: Bool = false
+  @State private var showFriendsSection: Bool = false
 
   var body: some View {
     NavigationStack {
@@ -33,6 +35,13 @@ struct DiaryView: View {
             pendingCount: viewModel.todoPendingCount,
             completedCount: viewModel.todoCompletedCount
           )
+
+          if !friendCardDismissed {
+            addFriendCard
+              .padding(.horizontal, 16)
+              .padding(.bottom, 4)
+              .zIndex(1)
+          }
 
           JournalSheetView(
             tab: $tab,
@@ -170,6 +179,9 @@ struct DiaryView: View {
     }
     .onAppear { viewModel.loadIfNeeded() }
     .onChange(of: AuthService.shared.currentUserId) { _, _ in viewModel.loadIfNeeded() }
+    .onReceive(NotificationCenter.default.publisher(for: .openNewDiaryEntry)) { _ in
+      newEntrySession = NewEntrySession(initialDate: Date())
+    }
     .alert(
       "Couldn't delete note",
       isPresented: Binding(
@@ -181,6 +193,55 @@ struct DiaryView: View {
     } message: {
       if let msg = deleteErrorMessage { Text(msg) }
     }
+    .navigationDestination(isPresented: $showFriendsSection) {
+      FriendsAndContactsSectionView()
+    }
+  }
+
+  private var addFriendCard: some View {
+    let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+    let gradient = LinearGradient(
+      colors: [Color(red: 0.63, green: 0.32, blue: 0.98), Color(red: 0.90, green: 0.40, blue: 0.65)],
+      startPoint: .leading,
+      endPoint: .trailing
+    )
+
+    return Button {
+      Haptics.impact(.light)
+      withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+        friendCardDismissed = true
+      }
+      showFriendsSection = true
+    } label: {
+      HStack(spacing: 12) {
+        Image(systemName: "person.2.fill")
+          .font(.system(size: 16, weight: .semibold))
+          .foregroundStyle(gradient)
+
+        Text("Add a friend")
+          .font(.system(size: 14, weight: .semibold))
+          .foregroundStyle(.primary)
+
+        Spacer(minLength: 0)
+
+        Image(systemName: "chevron.right")
+          .font(.system(size: 12, weight: .semibold))
+          .foregroundStyle(.tertiary)
+      }
+      .padding(.horizontal, 14)
+      .padding(.vertical, 11)
+      .background { GlassCardBackground(shape: shape) }
+      .clipShape(shape)
+      .overlay(
+        shape
+          .stroke(gradient.opacity(0.2), lineWidth: 0.6)
+      )
+    }
+    .buttonStyle(.plain)
+    .transition(.asymmetric(
+      insertion: .scale(scale: 0.95).combined(with: .opacity),
+      removal: .scale(scale: 0.95).combined(with: .opacity)
+    ))
   }
 
   private var heroGradientColors: [Color] {
@@ -396,17 +457,9 @@ private struct DiaryHeroCardView: View {
         VStack(alignment: .leading, spacing: 12) {
           HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-              HStack(spacing: 0) {
-                Text("To-Do")
-                  .font(.system(size: 24, weight: .bold))
-                  .foregroundStyle(.primary)
-                Text(" · ")
-                  .font(.system(size: 14, weight: .semibold))
-                  .foregroundStyle(.secondary)
-                Text(subtitle)
-                  .font(.system(size: 14, weight: .semibold))
-                  .foregroundStyle(.secondary)
-              }
+              Text("To-Do")
+                .font(.system(size: 24, weight: .bold))
+                .foregroundStyle(.primary)
 
               Text(
                 pendingCount == 0
@@ -434,12 +487,12 @@ private struct DiaryHeroCardView: View {
           }
 
           HStack(spacing: 16) {
-            heroTodoPill(icon: "circle", title: "Pending", value: "\(pendingCount)", tint: AppTheme.brand)
-            heroTodoPill(icon: "checkmark.circle.fill", title: "Done", value: "\(completedCount)", tint: Color.green)
+            heroTodoPill(icon: "circle", title: "Pending", value: "\(pendingCount)", tint: gradientColors.first ?? .primary)
+            heroTodoPill(icon: "checkmark.circle.fill", title: "Done", value: "\(completedCount)", tint: .green)
           }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
         .clipShape(cardShape)
         .modifier(HeroGlassModifier(shape: cardShape))
       }
@@ -871,7 +924,7 @@ private struct JournalSheetView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      JournalTabBar(tab: $tab)
+      JournalTabBar(tab: $tab, accentColor: accentColor)
 
       Rectangle()
         .fill(Color(.separator).opacity(0.4))
@@ -928,6 +981,7 @@ private struct JournalSheetView: View {
 
 private struct JournalTabBar: View {
   @Binding var tab: JournalTab
+  let accentColor: Color
   @State private var isKeyboardVisible: Bool = false
 
   var body: some View {
@@ -976,14 +1030,23 @@ private struct JournalTabBar: View {
         .font(.system(size: 11, weight: .semibold))
         .lineLimit(1)
         .minimumScaleFactor(0.76)
-      .foregroundStyle(isActive ? .primary : .secondary)
+      .foregroundStyle(isActive ? .white : .secondary)
       .padding(.horizontal, 8)
       .padding(.vertical, 9)
       .frame(maxWidth: .infinity)
       .background {
         if isActive {
           Capsule(style: .continuous)
-            .fill(AppTheme.background)
+            .fill(
+              LinearGradient(
+                colors: [
+                  accentColor,
+                  accentColor.blended(with: Color(red: 0.86, green: 0.80, blue: 1.00), amount: 0.35),
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+              )
+            )
         } else {
           GlassCardBackground(shape: Capsule(style: .continuous))
         }
@@ -991,7 +1054,7 @@ private struct JournalTabBar: View {
       .clipShape(Capsule(style: .continuous))
       .overlay(
         Capsule(style: .continuous)
-          .stroke(Color(.separator).opacity(isActive ? 0.4 : 0.25), lineWidth: isActive ? 1.2 : 0.5)
+          .stroke(Color(.separator).opacity(isActive ? 0.0 : 0.25), lineWidth: isActive ? 0 : 0.5)
       )
     }
     .buttonStyle(.plain)
@@ -1057,7 +1120,7 @@ private struct JournalOverviewTab: View {
     let months = monthDates
 
     ScrollView {
-      VStack(alignment: .leading, spacing: 28) {
+      VStack(alignment: .leading, spacing: 20) {
         VStack(alignment: .leading, spacing: 10) {
           overviewAddTaskCard
           overviewTodosPreview
@@ -1065,7 +1128,7 @@ private struct JournalOverviewTab: View {
         .padding(.horizontal, 16)
 
         VStack(alignment: .leading, spacing: 8) {
-          Text("Statistics")
+          Text("Trends")
             .font(.system(size: 18, weight: .bold))
             .foregroundStyle(.primary)
             .padding(.horizontal, 4)
@@ -1132,7 +1195,7 @@ private struct JournalOverviewTab: View {
       .padding(.top, 12)
     }
     .scrollIndicators(.hidden)
-    .scrollDismissesKeyboard(.interactively)
+    .scrollDismissesKeyboard(.immediately)
     .onAppear {
       currentPage = currentMonthIndex
     }
@@ -1164,25 +1227,10 @@ private struct JournalOverviewTab: View {
   private var overviewAddTaskCard: some View {
     let trimmed = newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
     let canAdd = !trimmed.isEmpty
-    let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+    let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
 
     return HStack(spacing: 10) {
-      ZStack {
-        Circle()
-          .fill(
-            LinearGradient(
-              colors: [AppTheme.brand, AppTheme.accent],
-              startPoint: .topLeading,
-              endPoint: .bottomTrailing
-            )
-          )
-        Image(systemName: "sparkles")
-          .font(.system(size: 13, weight: .semibold))
-          .foregroundStyle(.white)
-      }
-      .frame(width: 30, height: 30)
-
-      TextField("Add a task", text: $newTodoTitle)
+      TextField("Add a task...", text: $newTodoTitle)
         .font(.system(size: 16, weight: .regular))
         .focused($isAddFieldFocused)
         .submitLabel(.done)
@@ -1191,36 +1239,29 @@ private struct JournalOverviewTab: View {
       Button {
         addTodo()
       } label: {
-        Image(systemName: "plus")
-          .font(.system(size: 15, weight: .bold))
-          .foregroundStyle(canAdd ? .white : .secondary)
-          .frame(width: 34, height: 34)
-          .background(
-            Group {
-              if canAdd {
-                LinearGradient(
-                  colors: [AppTheme.brand, AppTheme.accent],
-                  startPoint: .topLeading,
-                  endPoint: .bottomTrailing
-                )
-              } else {
-                Color(.tertiarySystemFill)
-              }
-            }
-          )
-          .clipShape(Circle())
+        Text("Add")
+          .font(.system(size: 14, weight: .semibold))
+          .foregroundStyle(canAdd ? .primary : .tertiary)
+          .padding(.horizontal, 14)
+          .padding(.vertical, 7)
+          .background(Color(.tertiarySystemFill))
+          .clipShape(Capsule())
       }
       .buttonStyle(.plain)
       .disabled(!canAdd)
     }
-    .padding(.horizontal, 14)
-    .padding(.vertical, 13)
+    .padding(.horizontal, 16)
+    .padding(.vertical, 14)
     .background { GlassCardBackground(shape: shape) }
     .clipShape(shape)
     .overlay(
       shape
         .stroke(Color(.separator).opacity(0.22), lineWidth: 0.6)
     )
+    .contentShape(shape)
+    .onTapGesture {
+      isAddFieldFocused = true
+    }
   }
 
   private func addTodo() {
@@ -1237,27 +1278,53 @@ private struct JournalOverviewTab: View {
   private var overviewTodosPreview: some View {
     let previewItems = Array(todoItems.prefix(2))
     if !previewItems.isEmpty {
-      VStack(spacing: 8) {
+      VStack(spacing: 6) {
         ForEach(previewItems) { item in
-          HStack(spacing: 12) {
+          let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+          HStack(spacing: 10) {
             Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-              .font(.system(size: 20, weight: .semibold))
-              .foregroundStyle(item.isCompleted ? Color.green.opacity(0.9) : Color.primary.opacity(0.26))
+              .font(.system(size: 18, weight: .medium))
+              .foregroundStyle(item.isCompleted ? Color.primary.opacity(0.5) : Color.primary.opacity(0.2))
+              .contentTransition(.symbolEffect(.replace))
 
             Text(item.title)
-              .font(.system(size: 16, weight: .medium))
-              .strikethrough(item.isCompleted, color: item.isCompleted ? Color.secondary : nil)
-              .foregroundStyle(item.isCompleted ? .secondary : .primary)
+              .font(.system(size: 15, weight: .medium))
+              .strikethrough(item.isCompleted)
+              .foregroundStyle(item.isCompleted ? .tertiary : .primary)
               .frame(maxWidth: .infinity, alignment: .leading)
+              .transaction { $0.animation = nil }
           }
           .padding(.horizontal, 14)
           .padding(.vertical, 12)
-          .background { GlassCardBackground(shape: RoundedRectangle(cornerRadius: 16, style: .continuous)) }
-          .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+          .background { GlassCardBackground(shape: shape) }
+          .clipShape(shape)
           .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-              .stroke(Color(.separator).opacity(item.isCompleted ? 0.12 : 0.22), lineWidth: 0.6)
+            shape
+              .stroke(Color(.separator).opacity(0.18), lineWidth: 0.5)
           )
+          .contentShape(shape)
+          .onTapGesture {
+            Haptics.impact(.light)
+            if let index = todoItems.firstIndex(where: { $0.id == item.id }) {
+              withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
+                todoItems[index].isCompleted.toggle()
+              }
+              onTodoChange()
+            }
+          }
+          .contextMenu {
+            Button(role: .destructive) {
+              if let index = todoItems.firstIndex(where: { $0.id == item.id }) {
+                Haptics.impact(.light)
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                  todoItems.remove(at: index)
+                }
+                onTodoChange()
+              }
+            } label: {
+              Label("Delete Task", systemImage: "trash")
+            }
+          }
         }
       }
     }
@@ -1544,11 +1611,23 @@ private struct JournalListTab: View {
   let onDeleteEntry: (JournalEntry) -> Void
   @State private var pendingDeleteEntry: JournalEntry?
   @State private var showDeleteEntryConfirm: Bool = false
+  @State private var searchText: String = ""
+  @FocusState private var isSearchFocused: Bool
+
+  private var filteredEntries: [JournalEntry] {
+    guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return entries }
+    let query = searchText.lowercased()
+    return entries.filter { entry in
+      entry.title.lowercased().contains(query)
+        || entry.body.lowercased().contains(query)
+    }
+  }
 
   private var grouped: [(key: String, value: [JournalEntry])] {
+    let source = filteredEntries
     let formatter = DateFormatter()
     formatter.dateFormat = "LLLL yyyy"
-    let dict = Dictionary(grouping: entries) { entry in
+    let dict = Dictionary(grouping: source) { entry in
       formatter.string(from: entry.date)
     }
     // Keep stable chronological ordering (newest month first).
@@ -1565,47 +1644,94 @@ private struct JournalListTab: View {
 
   var body: some View {
     ScrollView {
-      if entries.isEmpty {
-        VStack(spacing: 10) {
-          Spacer().frame(height: 36)
-          Image(systemName: "book.closed")
-            .font(.system(size: 28, weight: .semibold))
-            .foregroundStyle(.secondary)
-          Text("No entries yet")
-            .font(.system(size: 16, weight: .semibold))
-          Text("Tap + to add your first entry.")
-            .font(.system(size: 14))
-            .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-      } else {
-        LazyVStack(alignment: .leading, spacing: 10) {
-          ForEach(grouped, id: \.key) { section in
-            Text(section.key)
-              .font(.system(size: 14, weight: .semibold))
+      VStack(spacing: 0) {
+        // Search bar
+        if !entries.isEmpty {
+          HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+              .font(.system(size: 15, weight: .medium))
               .foregroundStyle(.secondary)
-              .padding(.horizontal, 18)
-              .padding(.top, 16)
 
-            ForEach(section.value) { entry in
-              JournalEntryRowLink(
-                entry: entry,
-                onSelect: onSelectEntry,
-                onLongPress: {
-                  Haptics.impact(.light)
-                  pendingDeleteEntry = entry
-                  showDeleteEntryConfirm = true
-                },
-                onDelete: onDeleteEntry
-              )
-                .padding(.horizontal, 18)
+            TextField("Search entries...", text: $searchText)
+              .font(.system(size: 16))
+              .focused($isSearchFocused)
+
+            if !searchText.isEmpty {
+              Button {
+                searchText = ""
+              } label: {
+                Image(systemName: "xmark.circle.fill")
+                  .font(.system(size: 15))
+                  .foregroundStyle(.tertiary)
+              }
+              .buttonStyle(.plain)
             }
           }
-          Spacer().frame(height: 120)
+          .padding(.horizontal, 12)
+          .padding(.vertical, 10)
+          .background(Color(.tertiarySystemFill))
+          .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+          .padding(.horizontal, 18)
+          .padding(.top, 12)
+          .padding(.bottom, 4)
+        }
+
+        if entries.isEmpty {
+          VStack(spacing: 10) {
+            Spacer().frame(height: 36)
+            Image(systemName: "book.closed")
+              .font(.system(size: 28, weight: .semibold))
+              .foregroundStyle(.secondary)
+            Text("No entries yet")
+              .font(.system(size: 16, weight: .semibold))
+            Text("Tap + to add your first entry.")
+              .font(.system(size: 14))
+              .foregroundStyle(.secondary)
+          }
+          .frame(maxWidth: .infinity)
+        } else if filteredEntries.isEmpty {
+          VStack(spacing: 10) {
+            Spacer().frame(height: 36)
+            Image(systemName: "magnifyingglass")
+              .font(.system(size: 28, weight: .semibold))
+              .foregroundStyle(.secondary)
+            Text("No results")
+              .font(.system(size: 16, weight: .semibold))
+            Text("Try a different search term.")
+              .font(.system(size: 14))
+              .foregroundStyle(.secondary)
+          }
+          .frame(maxWidth: .infinity)
+        } else {
+          LazyVStack(alignment: .leading, spacing: 10) {
+            ForEach(grouped, id: \.key) { section in
+              Text(section.key)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 18)
+                .padding(.top, 16)
+
+              ForEach(section.value) { entry in
+                JournalEntryRowLink(
+                  entry: entry,
+                  onSelect: onSelectEntry,
+                  onLongPress: {
+                    Haptics.impact(.light)
+                    pendingDeleteEntry = entry
+                    showDeleteEntryConfirm = true
+                  },
+                  onDelete: onDeleteEntry
+                )
+                  .padding(.horizontal, 18)
+              }
+            }
+            Spacer().frame(height: 120)
+          }
         }
       }
     }
     .scrollIndicators(.hidden)
+    .scrollDismissesKeyboard(.interactively)
     .confirmationDialog(
       "Delete note?",
       isPresented: $showDeleteEntryConfirm,
@@ -1727,36 +1853,18 @@ private struct JournalTodoTab: View {
   }
 
   private var emptyStateCard: some View {
-    let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
-
-    return VStack(spacing: 8) {
-      Spacer().frame(height: 40)
+    VStack(spacing: 10) {
+      Spacer().frame(height: 22)
       Image(systemName: "checklist.checked")
-        .font(.system(size: 26, weight: .medium))
-        .foregroundStyle(AppTheme.accent.opacity(0.8))
-      Text("No tasks yet")
-        .font(.system(size: 17, weight: .semibold))
-        .foregroundStyle(.primary)
-      Text("Add your first task to start a clean, focused plan.")
-        .font(.system(size: 14, weight: .medium))
-        .multilineTextAlignment(.center)
+        .font(.system(size: 28, weight: .semibold))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 22)
-      Spacer().frame(height: 34)
+      Text("No tasks yet")
+        .font(.system(size: 16, weight: .semibold))
+      Text("Add your first task above.")
+        .font(.system(size: 14))
+        .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity)
-    .background {
-      LinearGradient(
-        colors: [AppTheme.surface, AppTheme.brand.opacity(0.07)],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-      )
-    }
-    .clipShape(shape)
-    .overlay(
-      shape
-        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.6)
-    )
   }
 
   private func removeTodo(id: UUID) {
@@ -1862,12 +1970,12 @@ private struct TodoRowView: View {
   var onDelete: (() -> Void)?
 
   var body: some View {
-    let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+    let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
     let isElevated = isBeingReordered
     let borderColor: Color = isBeingReordered
-      ? AppTheme.accent.opacity(0.78)
-      : (item.isCompleted ? Color.green.opacity(0.2) : Color(.separator).opacity(0.22))
-    let borderWidth: CGFloat = isBeingReordered ? 1.3 : 0.6
+      ? Color.primary.opacity(0.35)
+      : Color(.separator).opacity(item.isCompleted ? 0.12 : 0.22)
+    let borderWidth: CGFloat = isBeingReordered ? 1.2 : 0.5
 
     HStack(alignment: .center, spacing: 12) {
       Button {
@@ -1876,25 +1984,20 @@ private struct TodoRowView: View {
           item.isCompleted.toggle()
         }
       } label: {
-        ZStack {
-          Circle()
-            .fill(item.isCompleted ? Color.green.opacity(0.18) : Color.clear)
-            .frame(width: 28, height: 28)
-
-          Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-            .font(.system(size: 20, weight: .semibold))
-            .foregroundStyle(item.isCompleted ? Color.green.opacity(0.9) : Color.primary.opacity(0.26))
-            .symbolRenderingMode(.hierarchical)
-        }
+        Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+          .font(.system(size: 20, weight: .medium))
+          .foregroundStyle(item.isCompleted ? Color.primary.opacity(0.5) : Color.primary.opacity(0.2))
+          .contentTransition(.symbolEffect(.replace))
       }
       .buttonStyle(.plain)
 
       Text(item.title)
         .font(.system(size: 16, weight: .medium))
-        .strikethrough(item.isCompleted, color: item.isCompleted ? Color.secondary : nil)
-        .foregroundStyle(item.isCompleted ? .secondary : .primary)
+        .strikethrough(item.isCompleted)
+        .foregroundStyle(item.isCompleted ? .tertiary : .primary)
         .frame(maxWidth: .infinity, alignment: .leading)
         .multilineTextAlignment(.leading)
+        .transaction { $0.animation = nil }
 
       if let onDelete = onDelete {
         Menu {
@@ -1912,9 +2015,10 @@ private struct TodoRowView: View {
             Label("Delete Task", systemImage: "trash")
           }
         } label: {
-          Image(systemName: "ellipsis.circle")
-            .font(.system(size: 18, weight: .semibold))
-            .foregroundStyle(.secondary.opacity(0.8))
+          Image(systemName: "ellipsis")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(.tertiary)
+            .frame(width: 28, height: 28)
         }
         .disabled(isBeingReordered)
       }
@@ -1925,13 +2029,10 @@ private struct TodoRowView: View {
     .clipShape(shape)
     .overlay(
       shape
-        .stroke(
-          borderColor,
-          lineWidth: borderWidth
-        )
+        .stroke(borderColor, lineWidth: borderWidth)
     )
     .shadow(
-      color: isElevated ? AppTheme.accent.opacity(0.22) : .black.opacity(0.03),
+      color: isElevated ? .black.opacity(0.12) : .black.opacity(0.03),
       radius: isElevated ? 10 : 4,
       x: 0,
       y: isElevated ? 4 : 1
@@ -2230,8 +2331,19 @@ private struct DayCell: View {
           let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
 
           ZStack {
-            Color(.secondarySystemBackground)
-              .opacity(0.32)
+            if isSelected && !hasPhoto {
+              LinearGradient(
+                colors: [
+                  accentColor.opacity(0.55),
+                  accentColor.blended(with: Color(red: 0.86, green: 0.80, blue: 1.00), amount: 0.35).opacity(0.45),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+              )
+            } else {
+              Color(.secondarySystemBackground)
+                .opacity(0.32)
+            }
 
             if let firstPhotoURL {
               AsyncImage(url: firstPhotoURL) { phase in
@@ -2312,6 +2424,7 @@ private struct DayCell: View {
 
   private var textColor: Color {
     if hasPhoto { return .white }
+    if isSelected { return .primary }
     if isToday { return accentColor.opacity(0.95) }
     return .primary
   }
@@ -2433,13 +2546,18 @@ private struct CalendarDaySheet: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 15)
             .background(
-              LinearGradient(
-                colors: isFutureDay
-                  ? [Color(.systemGray3), Color(.systemGray2)]
-                  : [AppTheme.brand, AppTheme.accent],
-                startPoint: .leading,
-                endPoint: .trailing
-              )
+              isFutureDay
+                ? AnyShapeStyle(Color(.systemGray3))
+                : AnyShapeStyle(
+                    LinearGradient(
+                      colors: [
+                        accentColor,
+                        accentColor.blended(with: Color(red: 0.86, green: 0.80, blue: 1.00), amount: 0.35),
+                      ],
+                      startPoint: .leading,
+                      endPoint: .trailing
+                    )
+                  )
             )
             .clipShape(shape)
             .overlay(
@@ -2453,7 +2571,6 @@ private struct CalendarDaySheet: View {
           .padding(.bottom, 24)
         }
       }
-      .background(AppTheme.background)
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
@@ -2565,26 +2682,15 @@ private struct DiaryEditorSheet: View {
     self.onSave = onSave
   }
 
+  private let fieldShape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+
   var body: some View {
     NavigationStack {
-      ZStack {
-        DiaryEditorBackdrop(accentColor: color)
-
-        ScrollView {
-          VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
-              Text("Customize your diary")
-                .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(.primary)
-              Text("Update the title, description, and header color.")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 4)
-            .padding(.bottom, 2)
-
-            VStack(alignment: .leading, spacing: 10) {
-              Text("Diary name")
+      ScrollView {
+          VStack(alignment: .leading, spacing: 24) {
+            // Name
+            VStack(alignment: .leading, spacing: 8) {
+              Text("Name")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
 
@@ -2593,37 +2699,26 @@ private struct DiaryEditorSheet: View {
                 .textInputAutocapitalization(.words)
                 .autocorrectionDisabled()
                 .focused($focusedField, equals: .name)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 17))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
-                .background(editorInputBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background { GlassCardBackground(shape: fieldShape) }
+                .clipShape(fieldShape)
                 .overlay(
-                  RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(
-                      focusedField == .name
-                        ? AppTheme.accent.opacity(0.95)
-                        : Color(.separator).opacity(0.34),
-                      lineWidth: focusedField == .name ? 1.6 : 1
-                    )
+                  fieldShape
+                    .stroke(Color(.separator).opacity(0.25), lineWidth: 0.5)
                 )
             }
-            .padding(14)
-            .background(editorCardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-              RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color(.separator).opacity(0.2), lineWidth: 0.7)
-            )
 
-            VStack(alignment: .leading, spacing: 10) {
+            // Description
+            VStack(alignment: .leading, spacing: 8) {
               Text("Description")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
 
               ZStack(alignment: .topLeading) {
                 if description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                  Text("Add a short description for your diary.")
+                  Text("What\u{2019}s this diary about?")
                     .font(.system(size: 16))
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 16)
@@ -2634,9 +2729,9 @@ private struct DiaryEditorSheet: View {
                 TextEditor(text: $description)
                   .focused($focusedField, equals: .description)
                   .font(.system(size: 16))
-                  .frame(minHeight: 170)
+                  .frame(minHeight: 100)
                   .padding(.horizontal, 10)
-                  .padding(.vertical, 8)
+                  .padding(.vertical, 6)
                   .scrollContentBackground(.hidden)
                   .onChange(of: description) { _, newValue in
                     if newValue.count > descriptionMaxLength {
@@ -2644,55 +2739,34 @@ private struct DiaryEditorSheet: View {
                     }
                   }
               }
-              .background(editorInputBackground)
-              .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+              .background { GlassCardBackground(shape: fieldShape) }
+              .clipShape(fieldShape)
               .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                  .stroke(
-                    focusedField == .description
-                      ? AppTheme.accent.opacity(0.95)
-                      : Color(.separator).opacity(0.34),
-                    lineWidth: focusedField == .description ? 1.6 : 1
-                  )
+                fieldShape
+                  .stroke(Color(.separator).opacity(0.25), lineWidth: 0.5)
               )
 
               Text("\(description.count)/\(descriptionMaxLength)")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .padding(14)
-            .background(editorCardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-              RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color(.separator).opacity(0.2), lineWidth: 0.7)
-            )
 
-            VStack(alignment: .leading, spacing: 10) {
+            // Color
+            VStack(alignment: .leading, spacing: 8) {
               Text("Header color")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-              Text("Changes the top section tint above the tabs.")
-                .font(.system(size: 12))
-                .foregroundStyle(.tertiary)
-
               DiaryColorPicker(selected: $color)
             }
-            .padding(14)
-            .background(editorCardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-              RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color(.separator).opacity(0.2), lineWidth: 0.7)
-            )
 
             Spacer(minLength: 10)
           }
-          .padding(16)
+          .padding(.horizontal, 20)
+          .padding(.top, 8)
         }
-      }
+      .background(AppTheme.background)
       .navigationTitle("Edit Diary")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
@@ -2712,20 +2786,6 @@ private struct DiaryEditorSheet: View {
         }
       }
     }
-  }
-
-  private var editorCardBackground: Color {
-    if colorScheme == .dark {
-      return AppTheme.surface.blended(with: Color.black, amount: 0.12).opacity(0.96)
-    }
-    return Color.white.opacity(0.82)
-  }
-
-  private var editorInputBackground: Color {
-    if colorScheme == .dark {
-      return AppTheme.surface.blended(with: .white, amount: 0.08).opacity(0.98)
-    }
-    return Color(.systemBackground)
   }
 }
 

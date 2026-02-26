@@ -19,27 +19,33 @@ struct ContentView: View {
 
     @Environment(\.scenePhase) private var scenePhase
 
+    /// Show the main tab view when we have a cached user (during auth check)
+    /// OR when fully authenticated with onboarding complete. Keeping this in a
+    /// single computed property ensures SwiftUI sees one `MainTabView` branch,
+    /// avoiding a fade-out/fade-in flash on launch.
+    private var shouldShowMainTab: Bool {
+        if authService.isCheckingAuth {
+            return authService.currentUserId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+        return authService.isAuthenticated
+            && !(onboardingLoaded && onboardingVM.step != .completed)
+    }
+
     var body: some View {
         Group {
-            if authService.isCheckingAuth {
-                if authService.currentUserId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-                    MainTabView()
-                        .transition(.opacity)
-                } else {
-                    AppTheme.background
-                        .ignoresSafeArea()
-                        .transition(.opacity)
-                }
-            } else if authService.isAuthenticated {
-                if onboardingLoaded && onboardingVM.step != .completed {
-                    OnboardingFlowView(viewModel: onboardingVM)
-                        .transition(.opacity)
-                } else {
-                    MainTabView()
-                        .transition(.opacity)
-                }
-            } else {
+            if shouldShowMainTab {
+                MainTabView()
+                    .transition(.opacity)
+            } else if !authService.isCheckingAuth && authService.isAuthenticated
+                        && onboardingLoaded && onboardingVM.step != .completed {
+                OnboardingFlowView(viewModel: onboardingVM)
+                    .transition(.opacity)
+            } else if !authService.isCheckingAuth && !authService.isAuthenticated {
                 AuthView()
+                    .transition(.opacity)
+            } else {
+                AppTheme.background
+                    .ignoresSafeArea()
                     .transition(.opacity)
             }
         }

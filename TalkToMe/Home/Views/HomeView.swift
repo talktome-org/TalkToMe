@@ -11,71 +11,71 @@ import UserNotifications
 // MARK: - Feature Model
 
 private enum HomeFeature: Int, CaseIterable, Identifiable {
+  case chat
+  case diary
   case voiceMode
-  case customize
   case capturePhoto
-  case lateNight
-  case weekReview
+  case customize
 
   var id: Int { rawValue }
 
   var title: String {
     switch self {
+    case .chat: return "Someone Who Gets You"
+    case .diary: return "Think Out Loud"
     case .voiceMode: return "Talk, Don\u{2019}t Type"
+    case .capturePhoto: return "Snap It, Keep It"
     case .customize: return "Make It Yours"
-    case .capturePhoto: return "Capture Moments"
-    case .lateNight: return "Late Night Thoughts"
-    case .weekReview: return "Your Week in Review"
     }
   }
 
   var subtitle: String {
     switch self {
+    case .chat:
+      return "Not a chatbot. A buddy who remembers last Tuesday, knows your humor, and actually listens."
+    case .diary:
+      return "Dump your thoughts, track your mood, notice patterns. Your buddy helps you make sense of it all."
     case .voiceMode:
-      return "Have a real conversation using your voice. Your buddy speaks back — each one sounds different."
-    case .customize:
-      return "Wallpapers, themes, and colors — design your perfect chat space."
+      return "Have a real conversation using your voice. Your buddy speaks back \u{2014} each one sounds different."
     case .capturePhoto:
-      return "Add photos to your diary entries. Snap a moment, write a thought, look back anytime."
-    case .lateNight:
-      return "Can\u{2019}t sleep? Your buddy is always awake. No judgment, just good conversation at any hour."
-    case .weekReview:
-      return "Your buddy remembers everything you\u{2019}ve talked about. Ask for a recap of your week\u{2019}s highlights."
+      return "Pair photos with your entries. A sunset, a meal, a random Tuesday \u{2014} worth remembering."
+    case .customize:
+      return "Wallpapers, themes, and colors \u{2014} design your perfect chat space."
     }
   }
 
   var actionLabel: String {
     switch self {
+    case .chat: return "Start Chat"
+    case .diary: return "Open Diary"
     case .voiceMode: return "Try Voice Mode"
+    case .capturePhoto: return "New Entry"
     case .customize: return "Customize"
-    case .capturePhoto: return "Open Diary"
-    case .lateNight: return "Start Chat"
-    case .weekReview: return "Open Diary"
     }
   }
 
   var iconName: String {
     switch self {
+    case .chat: return "bubble.left.and.bubble.right.fill"
+    case .diary: return "book.fill"
     case .voiceMode: return "waveform"
-    case .customize: return "paintpalette.fill"
     case .capturePhoto: return "camera.fill"
-    case .lateNight: return "moon.stars.fill"
-    case .weekReview: return "calendar.badge.clock"
+    case .customize: return "paintpalette.fill"
     }
   }
 
   var gradientColors: [Color] {
     switch self {
+    case .chat:
+      return [Color(red: 0.38, green: 0.30, blue: 0.92), Color(red: 0.58, green: 0.40, blue: 1.00)]
+    case .diary:
+      return [Color(red: 0.25, green: 0.72, blue: 0.68), Color(red: 0.40, green: 0.85, blue: 0.55)]
     case .voiceMode:
       return [Color(red: 0.95, green: 0.45, blue: 0.25), Color(red: 0.98, green: 0.65, blue: 0.30)]
+    case .capturePhoto:
+      return [Color(red: 0.20, green: 0.65, blue: 0.75), Color(red: 0.30, green: 0.80, blue: 0.70)]
     case .customize:
       return [Color(red: 0.63, green: 0.32, blue: 0.98), Color(red: 0.90, green: 0.40, blue: 0.65)]
-    case .capturePhoto:
-      return [Color(red: 0.25, green: 0.72, blue: 0.68), Color(red: 0.40, green: 0.85, blue: 0.55)]
-    case .lateNight:
-      return [Color(red: 0.20, green: 0.22, blue: 0.55), Color(red: 0.40, green: 0.30, blue: 0.75)]
-    case .weekReview:
-      return [Color(red: 0.26, green: 0.58, blue: 1.00), Color(red: 0.30, green: 0.78, blue: 0.95)]
     }
   }
 }
@@ -600,92 +600,77 @@ private struct HomeFeatureCardView: View {
   let feature: HomeFeature
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      // Gradient header with icon
-      ZStack {
-        LinearGradient(
-          colors: feature.gradientColors,
-          startPoint: .topLeading,
-          endPoint: .bottomTrailing
-        )
+    ZStack(alignment: .bottomLeading) {
+      // Full gradient background
+      LinearGradient(
+        colors: feature.gradientColors,
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+      )
 
-        // Decorative circles
-        Circle()
-          .fill(.white.opacity(0.08))
-          .frame(width: 120, height: 120)
-          .offset(x: -80, y: -40)
+      // Decorative shapes
+      Circle()
+        .fill(.white.opacity(0.08))
+        .frame(width: 180, height: 180)
+        .offset(x: -60, y: -50)
 
-        Circle()
-          .fill(.white.opacity(0.06))
-          .frame(width: 80, height: 80)
-          .offset(x: 100, y: 30)
+      Circle()
+        .fill(.white.opacity(0.06))
+        .frame(width: 120, height: 120)
+        .offset(x: 200, y: 40)
 
-        // Main icon
-        Image(systemName: feature.iconName)
-          .font(.system(size: 38, weight: .medium))
-          .foregroundStyle(.white)
-          .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
-
-        // Feature number badge
-        VStack {
-          HStack {
-            Spacer()
-            Text("\(feature.rawValue + 1) / \(HomeFeature.allCases.count)")
-              .font(.system(size: 12, weight: .semibold, design: .rounded))
-              .foregroundStyle(.white.opacity(0.7))
-              .padding(.horizontal, 10)
-              .padding(.vertical, 5)
-              .background(.white.opacity(0.15))
-              .clipShape(Capsule())
-          }
+      // Large background icon (watermark style, right-aligned)
+      VStack {
+        HStack {
           Spacer()
+          Image(systemName: feature.iconName)
+            .font(.system(size: 72, weight: .thin))
+            .foregroundStyle(.white.opacity(0.15))
+            .rotationEffect(.degrees(-8))
         }
-        .padding(14)
+        Spacer()
       }
-      .frame(height: 170)
-      .clipped()
+      .padding(.top, 16)
+      .padding(.trailing, 20)
 
-      // Content area
-      VStack(alignment: .leading, spacing: 10) {
-        Text(feature.title)
-          .font(.system(size: 20, weight: .semibold))
-          .foregroundStyle(Color(.label))
-
-        Text(feature.subtitle)
-          .font(.system(size: 14))
-          .foregroundStyle(Color(.secondaryLabel))
-          .lineLimit(2)
-
-        // CTA button
-        HStack(spacing: 6) {
+      // Content overlay
+      VStack(alignment: .leading, spacing: 8) {
+        // Small icon + label row
+        HStack(spacing: 8) {
+          Image(systemName: feature.iconName)
+            .font(.system(size: 15, weight: .semibold))
           Text(feature.actionLabel)
-            .font(.system(size: 14, weight: .semibold))
-          Image(systemName: "arrow.right")
-            .font(.system(size: 12, weight: .semibold))
+            .font(.system(size: 13, weight: .semibold))
         }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(
-          LinearGradient(
-            colors: feature.gradientColors,
-            startPoint: .leading,
-            endPoint: .trailing
-          )
-        )
+        .foregroundStyle(.white.opacity(0.8))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(.white.opacity(0.15))
         .clipShape(Capsule())
-        .padding(.top, 4)
+
+        Spacer()
+
+        // Title
+        Text(feature.title)
+          .font(.system(size: 24, weight: .bold))
+          .foregroundStyle(.white)
+
+        // Subtitle
+        Text(feature.subtitle)
+          .font(.system(size: 14, weight: .medium))
+          .foregroundStyle(.white.opacity(0.8))
+          .lineLimit(3)
+          .fixedSize(horizontal: false, vertical: true)
       }
-      .padding(.horizontal, 16)
-      .padding(.vertical, 14)
+      .padding(18)
     }
-    .background(AppTheme.surface)
-    .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+    .frame(height: 210)
+    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     .overlay(
-      RoundedRectangle(cornerRadius: 26, style: .continuous)
-        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
+      RoundedRectangle(cornerRadius: 24, style: .continuous)
+        .stroke(.white.opacity(0.12), lineWidth: 0.5)
     )
-    .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 4)
+    .shadow(color: feature.gradientColors.first?.opacity(0.3) ?? .clear, radius: 12, x: 0, y: 6)
   }
 }
 
@@ -719,6 +704,7 @@ private struct NotificationsView: View {
   let sessions: [ChatSession]
   let onTap: (UUID) -> Void
 
+  @EnvironmentObject private var friendsViewModel: FriendsViewModel
   @ObservedObject private var apns = APNSService.shared
   @State private var notifications: [NotificationItem] = {
     guard let data = UserDefaults.standard.data(forKey: "cached_notifications"),
@@ -806,7 +792,6 @@ private struct NotificationsView: View {
 
                 Button {
                   Haptics.impact(.light)
-                  APNSService.shared.setPushEnabled(true)
                 } label: {
                   Text("Later")
                     .font(.system(size: 14, weight: .semibold))
@@ -879,6 +864,7 @@ private struct NotificationsView: View {
 
   private func loadNotifications() {
     // 1. Build items from delivered OS push notifications.
+    let friends = friendsViewModel.friends
     UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
       var items: [NotificationItem] = []
       var coveredSessionIds = Set<UUID>()
@@ -912,9 +898,18 @@ private struct NotificationsView: View {
       //    (e.g. user was in foreground, or notifications were cleared).
       for session in sessions where !coveredSessionIds.contains(session.id) {
         let date = Self.parseISO8601(session.lastUsedISO8601) ?? Date()
-        let partnerName = UserDefaults.standard.string(forKey: PreferenceKeys.partnerName)
+        let friendName: String = {
+          let key = "session_friend_user_id_\(session.id.uuidString)"
+          if let raw = UserDefaults.standard.string(forKey: key),
+             let friendId = UUID(uuidString: raw),
+             let friend = friends.first(where: { $0.id == friendId }) {
+            let name = friend.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { return name }
+          }
+          return UserDefaults.standard.string(forKey: PreferenceKeys.partnerName) ?? "Partner Message"
+        }()
         items.append(NotificationItem(
-          title: partnerName ?? "Partner Message",
+          title: friendName,
           body: session.lastMessageContent ?? "",
           date: date,
           icon: "bubble.left.fill",
@@ -1197,20 +1192,23 @@ struct HomeView: View {
   private func handleCardTap(_ feature: HomeFeature) {
     if feature != .customize { Haptics.impact(.light) }
     switch feature {
+    case .chat:
+      onStartNewChat()
+    case .diary:
+      selectedTab = .diary
     case .voiceMode:
       sessionsVM.shouldStartInVoiceMode = true
       onStartNewChat()
+    case .capturePhoto:
+      selectedTab = .diary
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        NotificationCenter.default.post(name: .openNewDiaryEntry, object: nil)
+      }
     case .customize:
       showSettings = true
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
         settingsViewModel.shouldHighlightCustomization = true
       }
-    case .capturePhoto:
-      selectedTab = .diary
-    case .lateNight:
-      onStartNewChat()
-    case .weekReview:
-      selectedTab = .diary
     }
   }
 
