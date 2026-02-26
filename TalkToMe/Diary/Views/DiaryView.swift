@@ -19,7 +19,7 @@ struct DiaryView: View {
   @State private var draftTitle: String = ""
   @State private var draftBody: String = ""
   @State private var deleteErrorMessage: String?
-  @State private var isKeyboardVisible: Bool = false
+  @State private var showPastCalendar: Bool = false
 
   var body: some View {
     NavigationStack {
@@ -28,18 +28,18 @@ struct DiaryView: View {
 
         VStack(spacing: 0) {
           DiaryHeroCardView(
-            title: diaryDisplayTitle,
-            subtitle: "\(viewModel.displayTodayString) • \(viewModel.displayYearString)",
-            gradientColors: heroGradientColors
+            subtitle: viewModel.displayHeroDateString,
+            gradientColors: heroGradientColors,
+            pendingCount: viewModel.todoPendingCount,
+            completedCount: viewModel.todoCompletedCount
           )
 
           JournalSheetView(
             tab: $tab,
-            description: viewModel.diaryDescription,
             stats: viewModel.stats,
             entries: $viewModel.entries,
+            todoItems: $viewModel.todoItems,
             accentColor: viewModel.diaryColor,
-            onEditDiary: { showDiaryEditor = true },
             onAddEntryForDate: { date in
               newEntrySession = NewEntrySession(initialDate: date)
             },
@@ -48,37 +48,57 @@ struct DiaryView: View {
             },
             onDeleteEntry: { entry in
               deleteEntry(entry)
+            },
+            onTodoChange: {
+              viewModel.saveTodos()
             }
           )
           .frame(maxWidth: .infinity, maxHeight: .infinity)
-          .padding(.top, -24)
+          .padding(.top, -70)
         }
         .padding(.top, 0)
         .padding(.bottom, 0)
         .ignoresSafeArea(edges: [.top, .bottom])
 
-        GlassFloatingActionButton(systemName: "plus") {
-          Haptics.impact(.light)
-          newEntrySession = NewEntrySession(initialDate: Date())
-        }
-        .opacity(isKeyboardVisible ? 0 : 1)
-        .scaleEffect(isKeyboardVisible ? 0.92 : 1)
-        .offset(y: isKeyboardVisible ? 22 : 0)
-        .allowsHitTesting(!isKeyboardVisible)
-        .accessibilityHidden(isKeyboardVisible)
-        .animation(.easeInOut(duration: 0.2), value: isKeyboardVisible)
-        .padding(.trailing, 18)
-        .padding(.bottom, 50)
       }
       .navigationTitle("")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
-          Button("Edit") {
+          Button {
+            Haptics.impact(.light)
+            newEntrySession = NewEntrySession(initialDate: Date())
+          } label: {
+            Image(systemName: "plus")
+              .font(.system(size: 17, weight: .semibold))
+              .foregroundStyle(Color(.label))
+          }
+        }
+
+        if #available(iOS 26.0, *) {
+          ToolbarSpacer(.fixed, placement: .topBarLeading)
+        }
+
+        ToolbarItem(placement: .topBarLeading) {
+          Button {
             Haptics.impact(.light)
             showDiaryEditor = true
+          } label: {
+            Image(systemName: "wand.and.stars")
+              .font(.system(size: 16, weight: .semibold))
+              .foregroundStyle(Color(.label))
           }
-          .font(.system(size: 17, weight: .semibold))
+        }
+
+        ToolbarItem(placement: .topBarTrailing) {
+          Button {
+            Haptics.impact(.light)
+            showPastCalendar = true
+          } label: {
+            Image(systemName: "calendar")
+              .font(.system(size: 16, weight: .semibold))
+              .foregroundStyle(Color(.label))
+          }
         }
       }
     }
@@ -132,14 +152,24 @@ struct DiaryView: View {
       .presentationDetents([.large])
       .presentationDragIndicator(.visible)
     }
+    .sheet(isPresented: $showPastCalendar) {
+      PastCalendarSheet(
+        entries: $viewModel.entries,
+        accentColor: viewModel.diaryColor,
+        selectedDay: Binding(
+          get: { Calendar.current.startOfDay(for: Date()) },
+          set: { _ in }
+        ),
+        onAddEntryForDate: { date in
+          newEntrySession = NewEntrySession(initialDate: date)
+        },
+        onSelectEntry: { entry in
+          editEntrySession = EditEntrySession(entry: entry)
+        }
+      )
+    }
     .onAppear { viewModel.loadIfNeeded() }
     .onChange(of: AuthService.shared.currentUserId) { _, _ in viewModel.loadIfNeeded() }
-    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-      isKeyboardVisible = true
-    }
-    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-      isKeyboardVisible = false
-    }
     .alert(
       "Couldn't delete note",
       isPresented: Binding(
@@ -151,11 +181,6 @@ struct DiaryView: View {
     } message: {
       if let msg = deleteErrorMessage { Text(msg) }
     }
-  }
-
-  private var diaryDisplayTitle: String {
-    let trimmed = viewModel.diaryName.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.isEmpty ? "My Diary" : trimmed
   }
 
   private var heroGradientColors: [Color] {
@@ -237,9 +262,16 @@ private extension Color {
 
 private struct DiaryHeroCardView: View {
   @Environment(\.colorScheme) private var colorScheme
-  let title: String
   let subtitle: String
   let gradientColors: [Color]
+  var pendingCount: Int = 0
+  var completedCount: Int = 0
+
+  private var completionRatio: CGFloat {
+    let total = pendingCount + completedCount
+    guard total > 0 else { return 0 }
+    return CGFloat(completedCount) / CGFloat(total)
+  }
 
   private var baseGradientColors: [Color] {
     [
@@ -358,28 +390,101 @@ private struct DiaryHeroCardView: View {
         duration: 7.4
       )
 
-      VStack(alignment: .leading, spacing: 12) {
-        HStack(spacing: 10) {
-          Image(systemName: "book.closed.fill")
-            .font(.system(size: 22, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.95))
-          Text(title)
-            .font(.system(size: 32, weight: .bold))
-            .lineLimit(1)
-            .foregroundStyle(.white)
-        }
+      VStack(alignment: .leading, spacing: 10) {
+        let cardShape = RoundedRectangle(cornerRadius: 22, style: .continuous)
 
-        Text(subtitle)
-          .font(.system(size: 14, weight: .semibold))
-          .foregroundStyle(.white.opacity(0.94))
+        VStack(alignment: .leading, spacing: 12) {
+          HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+              HStack(spacing: 0) {
+                Text("To-Do")
+                  .font(.system(size: 24, weight: .bold))
+                  .foregroundStyle(.primary)
+                Text(" · ")
+                  .font(.system(size: 14, weight: .semibold))
+                  .foregroundStyle(.secondary)
+                Text(subtitle)
+                  .font(.system(size: 14, weight: .semibold))
+                  .foregroundStyle(.secondary)
+              }
+
+              Text(
+                pendingCount == 0
+                  ? "All tasks are done."
+                  : "\(pendingCount) \(pendingCount == 1 ? "task" : "tasks") pending"
+              )
+              .font(.system(size: 13, weight: .medium))
+              .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            ZStack {
+              Circle()
+                .stroke(Color.primary.opacity(0.15), lineWidth: 3.5)
+              Circle()
+                .trim(from: 0, to: completionRatio)
+                .stroke(
+                  Color.primary.opacity(0.85),
+                  style: StrokeStyle(lineWidth: 3.5, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+            }
+            .frame(width: 38, height: 38)
+          }
+
+          HStack(spacing: 16) {
+            heroTodoPill(icon: "circle", title: "Pending", value: "\(pendingCount)", tint: AppTheme.brand)
+            heroTodoPill(icon: "checkmark.circle.fill", title: "Done", value: "\(completedCount)", tint: Color.green)
+          }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .clipShape(cardShape)
+        .modifier(HeroGlassModifier(shape: cardShape))
       }
-      .padding(.horizontal, 18)
-      .padding(.top, 136)
-      .padding(.bottom, 22)
+      .padding(.horizontal, 16)
+      .padding(.top, 120)
+      .padding(.bottom, 14)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
-    .frame(height: 260)
+    .frame(height: 340)
     .ignoresSafeArea(edges: .top)
+  }
+
+  private func heroTodoPill(icon: String, title: String, value: String, tint: Color) -> some View {
+    HStack(spacing: 4) {
+      Image(systemName: icon)
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(tint)
+
+      Text(title)
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(.secondary)
+
+      Text(value)
+        .font(.system(size: 13, weight: .bold, design: .rounded))
+        .foregroundStyle(.primary)
+        .monospacedDigit()
+    }
+  }
+}
+
+private struct HeroGlassModifier<S: Shape>: ViewModifier {
+  let shape: S
+
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, *) {
+      content
+        .glassEffect(.regular.interactive(), in: shape)
+    } else {
+      content
+        .background(.ultraThinMaterial)
+        .overlay(
+          shape
+            .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
+        )
+    }
   }
 }
 
@@ -420,7 +525,6 @@ private struct FloatingOrb: View {
 private enum JournalTab: Hashable {
   case overview
   case list
-  case calendar
   case todo
 }
 
@@ -474,21 +578,51 @@ private final class DiaryViewModel: ObservableObject {
   @Published var diaryDescription: String = ""
   @Published var diaryColor: Color = AppTheme.brand
   @Published var entries: [JournalEntry] = []
+  @Published var todoItems: [DiaryTodoItem] = []
   @Published var isLoading: Bool = false
   @Published var loadError: String?
 
-  init() {}
+  var todoPendingCount: Int {
+    max(0, todoItems.count - todoItems.filter(\.isCompleted).count)
+  }
+
+  var todoCompletedCount: Int {
+    todoItems.filter(\.isCompleted).count
+  }
+
+  init() {
+    loadTodos()
+  }
 
   func loadIfNeeded() {
     guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else {
       entries = []
       return
     }
+    loadTodos()
     Task {
       await loadCachedData(userId: uid)
       await loadSettings(userId: uid)
       await loadEntries(userId: uid)
     }
+  }
+
+  func loadTodos() {
+    let defaults = UserDefaults.standard
+    guard let data = defaults.data(forKey: diaryTodoStorageKey),
+      let decoded = try? JSONDecoder().decode([DiaryTodoItem].self, from: data)
+    else {
+      if defaults.object(forKey: diaryTodoStorageKey) == nil {
+        todoItems = diaryDefaultTodoItems
+      }
+      return
+    }
+    todoItems = decoded
+  }
+
+  func saveTodos() {
+    guard let data = try? JSONEncoder().encode(todoItems) else { return }
+    UserDefaults.standard.set(data, forKey: diaryTodoStorageKey)
   }
 
   private func loadCachedData(userId: UUID) async {
@@ -595,6 +729,24 @@ private final class DiaryViewModel: ObservableObject {
     let f = DateFormatter()
     f.dateFormat = "EEEE, MMM d"
     return f.string(from: Date())
+  }
+
+  var displayHeroDateString: String {
+    let now = Date()
+    let cal = Calendar.current
+    let day = cal.component(.day, from: now)
+    let year = cal.component(.year, from: now)
+    let f = DateFormatter()
+    f.dateFormat = "EEEE"
+    let weekday = f.string(from: now)
+    let suffix: String
+    switch day {
+    case 1, 21, 31: suffix = "st"
+    case 2, 22: suffix = "nd"
+    case 3, 23: suffix = "rd"
+    default: suffix = "th"
+    }
+    return "\(weekday) \(day)\(suffix), \(year)"
   }
 
   var stats: JournalStats {
@@ -706,14 +858,14 @@ private final class DiaryViewModel: ObservableObject {
 
 private struct JournalSheetView: View {
   @Binding var tab: JournalTab
-  let description: String
   let stats: JournalStats
   @Binding var entries: [JournalEntry]
+  @Binding var todoItems: [DiaryTodoItem]
   let accentColor: Color
-  let onEditDiary: () -> Void
   let onAddEntryForDate: (Date) -> Void
   let onSelectEntry: (JournalEntry) -> Void
   let onDeleteEntry: (JournalEntry) -> Void
+  let onTodoChange: () -> Void
 
   @State private var selectedCalendarDay: Date? = Calendar.current.startOfDay(for: Date())
 
@@ -721,17 +873,22 @@ private struct JournalSheetView: View {
     VStack(spacing: 0) {
       JournalTabBar(tab: $tab)
 
-      Divider()
-        .opacity(0.22)
+      Rectangle()
+        .fill(Color(.separator).opacity(0.4))
+        .frame(height: 1.2)
 
       Group {
         switch tab {
         case .overview:
           JournalOverviewTab(
-            description: description,
+            entries: $entries,
+            todoItems: $todoItems,
             stats: stats,
             accentColor: accentColor,
-            onEditDiary: onEditDiary
+            selectedDay: $selectedCalendarDay,
+            onAddEntryForDate: onAddEntryForDate,
+            onSelectEntry: onSelectEntry,
+            onTodoChange: onTodoChange
           )
         case .list:
           JournalListTab(
@@ -739,21 +896,13 @@ private struct JournalSheetView: View {
             onSelectEntry: onSelectEntry,
             onDeleteEntry: onDeleteEntry
           )
-        case .calendar:
-          JournalCalendarTab(
-            entries: $entries,
-            accentColor: accentColor,
-            selectedDay: $selectedCalendarDay,
-            onAddEntryForDate: onAddEntryForDate,
-            onSelectEntry: onSelectEntry
-          )
         case .todo:
-          JournalTodoTab()
+          JournalTodoTab(todoItems: $todoItems, onTodoChange: onTodoChange)
         }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
-    .background(AppTheme.surface)
+    .background(AppTheme.background)
     .clipShape(
       UnevenRoundedRectangle(
         topLeadingRadius: 30,
@@ -784,11 +933,10 @@ private struct JournalTabBar: View {
   var body: some View {
     HStack(spacing: 8) {
       tabButton(.overview, title: "Overview")
-      tabButton(.list, title: "List")
-      tabButton(.calendar, title: "Calendar")
+      tabButton(.list, title: "Entries")
       tabButton(.todo, title: "To-Do")
     }
-    .padding(.horizontal, 10)
+    .padding(.horizontal, 30)
     .padding(.top, 18)
     .padding(.bottom, 10)
     .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
@@ -828,27 +976,22 @@ private struct JournalTabBar: View {
         .font(.system(size: 11, weight: .semibold))
         .lineLimit(1)
         .minimumScaleFactor(0.76)
-      .foregroundStyle(isActive ? Color.white : Color(.secondaryLabel))
+      .foregroundStyle(isActive ? .primary : .secondary)
       .padding(.horizontal, 8)
       .padding(.vertical, 9)
       .frame(maxWidth: .infinity)
-      .background(
-        Group {
-          if isActive {
-            LinearGradient(
-              colors: [AppTheme.brand, AppTheme.accent],
-              startPoint: .leading,
-              endPoint: .trailing
-            )
-          } else {
-            Color(.tertiarySystemBackground)
-          }
+      .background {
+        if isActive {
+          Capsule(style: .continuous)
+            .fill(AppTheme.background)
+        } else {
+          GlassCardBackground(shape: Capsule(style: .continuous))
         }
-      )
-      .clipShape(Capsule())
+      }
+      .clipShape(Capsule(style: .continuous))
       .overlay(
-        Capsule()
-          .stroke(Color(.separator).opacity(isActive ? 0.0 : 0.35), lineWidth: 0.5)
+        Capsule(style: .continuous)
+          .stroke(Color(.separator).opacity(isActive ? 0.4 : 0.25), lineWidth: isActive ? 1.2 : 0.5)
       )
     }
     .buttonStyle(.plain)
@@ -858,102 +1001,266 @@ private struct JournalTabBar: View {
 // MARK: - Overview tab
 
 private struct JournalOverviewTab: View {
-  let description: String
+  @Binding var entries: [JournalEntry]
+  @Binding var todoItems: [DiaryTodoItem]
   let stats: JournalStats
   let accentColor: Color
-  let onEditDiary: () -> Void
+  @Binding var selectedDay: Date?
+  let onAddEntryForDate: (Date) -> Void
+  let onSelectEntry: (JournalEntry) -> Void
+  let onTodoChange: () -> Void
+
+  @State private var newTodoTitle: String = ""
+  @FocusState private var isAddFieldFocused: Bool
+  @State private var currentPage: Int?
+  @State private var showDaySheet: Bool = false
+  @State private var sheetDay: Date?
+  private let cal = Calendar.current
+
+  private var currentMonthIndex: Int {
+    cal.component(.month, from: Date()) - 1
+  }
+
+  private var monthDates: [Date] {
+    let year = cal.component(.year, from: Date())
+    return (1...12).compactMap { month in
+      cal.date(from: DateComponents(year: year, month: month, day: 1))
+    }
+  }
+
+  private var dayVisuals: [Date: CalendarDayVisual] {
+    var grouped: [Date: [JournalEntry]] = [:]
+    for entry in entries {
+      let day = cal.startOfDay(for: entry.date)
+      grouped[day, default: []].append(entry)
+    }
+    var result: [Date: CalendarDayVisual] = [:]
+    for (day, dayEntries) in grouped {
+      let sorted = dayEntries.sorted { $0.createdAt < $1.createdAt }
+      let firstPhotoURL = sorted.compactMap { entry -> String? in
+        guard let url = entry.firstPhotoURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !url.isEmpty
+        else { return nil }
+        return url
+      }.first
+      let hasPhoto = sorted.contains { $0.photoCount > 0 || (($0.firstPhotoURL ?? "").isEmpty == false) }
+      result[day] = CalendarDayVisual(
+        notesCount: dayEntries.count,
+        hasPhoto: hasPhoto,
+        firstPhotoURL: firstPhotoURL
+      )
+    }
+    return result
+  }
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 14) {
-        JournalDescriptionCard(
-          description: description,
-          accentColor: accentColor,
-          onEditDiary: onEditDiary
-        )
+    let months = monthDates
 
+    ScrollView {
+      VStack(alignment: .leading, spacing: 28) {
         VStack(alignment: .leading, spacing: 10) {
+          overviewAddTaskCard
+          overviewTodosPreview
+        }
+        .padding(.horizontal, 16)
+
+        VStack(alignment: .leading, spacing: 8) {
           Text("Statistics")
-            .font(.system(size: 20, weight: .bold))
+            .font(.system(size: 18, weight: .bold))
             .foregroundStyle(.primary)
             .padding(.horizontal, 4)
 
           JournalStatisticsCards(stats: stats, accentColor: accentColor)
         }
+        .padding(.horizontal, 16)
+
+        VStack(spacing: 8) {
+          if months.count > 1 {
+            HStack(spacing: 4) {
+              ForEach(months.indices, id: \.self) { index in
+                Capsule()
+                  .fill(index == (currentPage ?? currentMonthIndex) ? Color.primary.opacity(0.7) : Color.primary.opacity(0.15))
+                  .frame(width: index == (currentPage ?? currentMonthIndex) ? 14 : 5, height: 3)
+                  .animation(.spring(response: 0.3, dampingFraction: 0.8), value: currentPage)
+              }
+            }
+          }
+
+          ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 6) {
+              ForEach(months.indices, id: \.self) { index in
+                MonthGridView(
+                  monthStart: months[index],
+                  dayVisuals: dayVisuals,
+                  accentColor: accentColor,
+                  selectedDay: $selectedDay,
+                  onDayTapped: { date in
+                    let normalizedDay = cal.startOfDay(for: date)
+                    sheetDay = normalizedDay
+                    showDaySheet = true
+                  }
+                )
+                .containerRelativeFrame(.horizontal)
+                .id(index)
+                .visualEffect { content, proxy in
+                  let scrollBounds = proxy.bounds(of: .scrollView(axis: .horizontal)) ?? .zero
+                  let scrollCenter = scrollBounds.width / 2
+                  let cardMid = proxy.frame(in: .scrollView(axis: .horizontal)).midX
+                  let distance = cardMid - scrollCenter
+                  let normalized = scrollCenter > 0 ? distance / scrollCenter : 0
+                  let clamped = max(-1.0, min(1.0, normalized))
+                  let absVal = abs(clamped)
+
+                  return content
+                    .scaleEffect(1.0 - absVal * 0.06)
+                    .opacity(1.0 - absVal * 0.4)
+                    .offset(y: absVal * absVal * 8)
+                }
+              }
+            }
+            .scrollTargetLayout()
+          }
+          .contentMargins(.horizontal, 0, for: .scrollContent)
+          .scrollPosition(id: $currentPage)
+          .scrollTargetBehavior(.viewAligned)
+          .scrollClipDisabled()
+        }
+        .padding(.horizontal, 16)
 
         Spacer().frame(height: 120)
       }
-      .padding(.horizontal, 16)
-      .padding(.top, 16)
+      .padding(.top, 12)
     }
     .scrollIndicators(.hidden)
-  }
-}
-
-private struct JournalDescriptionCard: View {
-  let description: String
-  let accentColor: Color
-  let onEditDiary: () -> Void
-
-  private var trimmedDescription: String {
-    description.trimmingCharacters(in: .whitespacesAndNewlines)
-  }
-
-  var body: some View {
-    Button {
-      Haptics.impact(.light)
-      onEditDiary()
-    } label: {
-      HStack(alignment: .top, spacing: 14) {
-        ZStack {
-          RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(
-              LinearGradient(
-                colors: [accentColor.opacity(0.95), AppTheme.brand.opacity(0.8)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-              )
-            )
-          Image(systemName: "quote.bubble.fill")
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(.white)
-        }
-        .frame(width: 34, height: 34)
-        .padding(.top, 2)
-
-        VStack(alignment: .leading, spacing: 6) {
-          Text("Description")
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(.primary)
-
-          Text(
-            trimmedDescription.isEmpty
-              ? "Add a short description for your diary."
-              : trimmedDescription
-          )
-          .font(.system(size: 16, weight: .regular))
-          .lineSpacing(2)
-          .foregroundStyle(trimmedDescription.isEmpty ? .secondary : .primary)
-          .lineLimit(nil)
-          .fixedSize(horizontal: false, vertical: true)
-          .frame(maxWidth: .infinity, alignment: .leading)
-        }
-
-        Image(systemName: "chevron.right")
-          .font(.system(size: 13, weight: .bold))
-          .foregroundStyle(.tertiary)
-          .padding(.top, 5)
-      }
-      .padding(.horizontal, 16)
-      .padding(.vertical, 15)
-      .background(AppTheme.surface)
-      .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-      .overlay(
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-          .stroke(Color(.separator).opacity(0.2), lineWidth: 0.5)
-      )
+    .scrollDismissesKeyboard(.interactively)
+    .onAppear {
+      currentPage = currentMonthIndex
     }
-    .buttonStyle(.plain)
+    .sheet(isPresented: $showDaySheet) {
+      if let day = sheetDay {
+        CalendarDaySheet(
+          date: day,
+          entries: $entries,
+          accentColor: accentColor,
+          onAddEntry: {
+            showDaySheet = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+              onAddEntryForDate(day)
+            }
+          },
+          onSelectEntry: { entry in
+            showDaySheet = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+              onSelectEntry(entry)
+            }
+          }
+        )
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+      }
+    }
+  }
+
+  private var overviewAddTaskCard: some View {
+    let trimmed = newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    let canAdd = !trimmed.isEmpty
+    let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+
+    return HStack(spacing: 10) {
+      ZStack {
+        Circle()
+          .fill(
+            LinearGradient(
+              colors: [AppTheme.brand, AppTheme.accent],
+              startPoint: .topLeading,
+              endPoint: .bottomTrailing
+            )
+          )
+        Image(systemName: "sparkles")
+          .font(.system(size: 13, weight: .semibold))
+          .foregroundStyle(.white)
+      }
+      .frame(width: 30, height: 30)
+
+      TextField("Add a task", text: $newTodoTitle)
+        .font(.system(size: 16, weight: .regular))
+        .focused($isAddFieldFocused)
+        .submitLabel(.done)
+        .onSubmit { addTodo() }
+
+      Button {
+        addTodo()
+      } label: {
+        Image(systemName: "plus")
+          .font(.system(size: 15, weight: .bold))
+          .foregroundStyle(canAdd ? .white : .secondary)
+          .frame(width: 34, height: 34)
+          .background(
+            Group {
+              if canAdd {
+                LinearGradient(
+                  colors: [AppTheme.brand, AppTheme.accent],
+                  startPoint: .topLeading,
+                  endPoint: .bottomTrailing
+                )
+              } else {
+                Color(.tertiarySystemFill)
+              }
+            }
+          )
+          .clipShape(Circle())
+      }
+      .buttonStyle(.plain)
+      .disabled(!canAdd)
+    }
+    .padding(.horizontal, 14)
+    .padding(.vertical, 13)
+    .background { GlassCardBackground(shape: shape) }
+    .clipShape(shape)
+    .overlay(
+      shape
+        .stroke(Color(.separator).opacity(0.22), lineWidth: 0.6)
+    )
+  }
+
+  private func addTodo() {
+    let trimmed = newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    Haptics.impact(.light)
+    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+      todoItems.insert(DiaryTodoItem(title: trimmed), at: 0)
+    }
+    newTodoTitle = ""
+  }
+
+  @ViewBuilder
+  private var overviewTodosPreview: some View {
+    let previewItems = Array(todoItems.prefix(2))
+    if !previewItems.isEmpty {
+      VStack(spacing: 8) {
+        ForEach(previewItems) { item in
+          HStack(spacing: 12) {
+            Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+              .font(.system(size: 20, weight: .semibold))
+              .foregroundStyle(item.isCompleted ? Color.green.opacity(0.9) : Color.primary.opacity(0.26))
+
+            Text(item.title)
+              .font(.system(size: 16, weight: .medium))
+              .strikethrough(item.isCompleted, color: item.isCompleted ? Color.secondary : nil)
+              .foregroundStyle(item.isCompleted ? .secondary : .primary)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
+          .padding(.horizontal, 14)
+          .padding(.vertical, 12)
+          .background { GlassCardBackground(shape: RoundedRectangle(cornerRadius: 16, style: .continuous)) }
+          .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+          .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+              .stroke(Color(.separator).opacity(item.isCompleted ? 0.12 : 0.22), lineWidth: 0.6)
+          )
+        }
+      }
+    }
   }
 }
 
@@ -1104,6 +1411,117 @@ private struct GlassStatSmallCard: View {
   }
 }
 
+// MARK: - Past calendar sheet
+
+private struct PastCalendarSheet: View {
+  @Environment(\.dismiss) private var dismiss
+  @Binding var entries: [JournalEntry]
+  let accentColor: Color
+  @Binding var selectedDay: Date?
+  let onAddEntryForDate: (Date) -> Void
+  let onSelectEntry: (JournalEntry) -> Void
+
+  @State private var showDaySheet: Bool = false
+  @State private var sheetDay: Date?
+
+  private let cal = Calendar.current
+
+  private var pastMonths: [Date] {
+    let currentYear = cal.component(.year, from: Date())
+    var months: [Date] = []
+    for year in stride(from: currentYear - 1, through: max(currentYear - 3, 2020), by: -1) {
+      for month in stride(from: 12, through: 1, by: -1) {
+        if let date = cal.date(from: DateComponents(year: year, month: month, day: 1)) {
+          months.append(date)
+        }
+      }
+    }
+    return months
+  }
+
+  private var dayVisuals: [Date: CalendarDayVisual] {
+    var grouped: [Date: [JournalEntry]] = [:]
+    for entry in entries {
+      let day = cal.startOfDay(for: entry.date)
+      grouped[day, default: []].append(entry)
+    }
+    var result: [Date: CalendarDayVisual] = [:]
+    for (day, dayEntries) in grouped {
+      let sorted = dayEntries.sorted { $0.createdAt < $1.createdAt }
+      let firstPhotoURL = sorted.compactMap { entry -> String? in
+        guard let url = entry.firstPhotoURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !url.isEmpty
+        else { return nil }
+        return url
+      }.first
+      let hasPhoto = sorted.contains { $0.photoCount > 0 || (($0.firstPhotoURL ?? "").isEmpty == false) }
+      result[day] = CalendarDayVisual(
+        notesCount: dayEntries.count,
+        hasPhoto: hasPhoto,
+        firstPhotoURL: firstPhotoURL
+      )
+    }
+    return result
+  }
+
+  var body: some View {
+    NavigationStack {
+      ScrollView {
+        LazyVStack(spacing: 14) {
+          ForEach(pastMonths, id: \.self) { monthStart in
+            MonthGridView(
+              monthStart: monthStart,
+              dayVisuals: dayVisuals,
+              accentColor: accentColor,
+              selectedDay: $selectedDay,
+              onDayTapped: { date in
+                let normalizedDay = cal.startOfDay(for: date)
+                sheetDay = normalizedDay
+                showDaySheet = true
+              }
+            )
+          }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
+      }
+      .scrollIndicators(.hidden)
+      .background(AppTheme.background)
+      .navigationTitle("Past Months")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) {
+          Button("Done") { dismiss() }
+            .font(.system(size: 17, weight: .semibold))
+        }
+      }
+    }
+    .sheet(isPresented: $showDaySheet) {
+      if let day = sheetDay {
+        CalendarDaySheet(
+          date: day,
+          entries: $entries,
+          accentColor: accentColor,
+          onAddEntry: {
+            showDaySheet = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+              onAddEntryForDate(day)
+            }
+          },
+          onSelectEntry: { entry in
+            showDaySheet = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+              onSelectEntry(entry)
+            }
+          }
+        )
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+      }
+    }
+  }
+}
+
 private struct GlassCardBackground<S: Shape>: View {
   let shape: S
 
@@ -1215,38 +1633,22 @@ private let diaryDefaultTodoItems = [
 ]
 
 private struct JournalTodoTab: View {
-  @State private var todoItems: [DiaryTodoItem] = []
-  @State private var newTodoTitle: String = ""
+  @Binding var todoItems: [DiaryTodoItem]
+  let onTodoChange: () -> Void
   @State private var showReorderHint: Bool = false
   @State private var activeReorderItemId: UUID?
   @State private var isReorderDragging: Bool = false
   @State private var activeReorderTranslationY: CGFloat = 0
   @State private var reorderReferenceTranslationY: CGFloat = 0
-  @FocusState private var isAddFieldFocused: Bool
 
   // Require a deliberate press-and-hold before drag can start.
   private let todoReorderLongPressDuration: Double = 0.7
   // Swap only after the dragged row has passed roughly one full row+gap distance.
   private let todoReorderSwapDistance: CGFloat = 72
 
-  private var completedCount: Int {
-    todoItems.filter(\.isCompleted).count
-  }
-
-  private var pendingCount: Int {
-    max(0, todoItems.count - completedCount)
-  }
-
-  private var completionRatio: CGFloat {
-    guard !todoItems.isEmpty else { return 0 }
-    return CGFloat(completedCount) / CGFloat(todoItems.count)
-  }
-
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 12) {
-        todoSummaryCard
-        addTaskCard
         if showReorderHint {
           reorderHintCard
         }
@@ -1292,178 +1694,7 @@ private struct JournalTodoTab: View {
     .scrollIndicators(.hidden)
     .background(AppTheme.background)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    .onAppear { loadTodos() }
-    .onChange(of: todoItems) { _, _ in saveTodos() }
-  }
-
-  private var todoSummaryCard: some View {
-    let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
-
-    return ZStack(alignment: .topLeading) {
-      LinearGradient(
-        colors: [AppTheme.brand.opacity(0.24), AppTheme.accent.opacity(0.2), Color.white.opacity(0.06)],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-      )
-
-      Circle()
-        .fill(.white.opacity(0.22))
-        .frame(width: 138, height: 138)
-        .offset(x: -45, y: -64)
-
-      Circle()
-        .fill(.white.opacity(0.12))
-        .frame(width: 92, height: 92)
-        .offset(x: 260, y: 20)
-
-      VStack(alignment: .leading, spacing: 14) {
-        HStack(alignment: .top, spacing: 12) {
-          VStack(alignment: .leading, spacing: 3) {
-            Text("To-Do")
-              .font(.system(size: 24, weight: .bold))
-              .foregroundStyle(.primary)
-
-            Text(
-              pendingCount == 0
-                ? "All tasks are done."
-                : "\(pendingCount) \(pendingCount == 1 ? "task" : "tasks") pending"
-            )
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(.secondary)
-          }
-
-          Spacer(minLength: 8)
-
-          ZStack {
-            Circle()
-              .stroke(Color.primary.opacity(0.12), lineWidth: 5)
-            Circle()
-              .trim(from: 0, to: completionRatio)
-              .stroke(
-                AngularGradient(
-                  colors: [AppTheme.accent, AppTheme.brand, AppTheme.accent],
-                  center: .center
-                ),
-                style: StrokeStyle(lineWidth: 5, lineCap: .round)
-              )
-              .rotationEffect(.degrees(-90))
-          }
-          .frame(width: 46, height: 46)
-          .accessibilityLabel("Task completion")
-          .accessibilityValue("\(Int((completionRatio * 100).rounded())) percent")
-        }
-
-        HStack(spacing: 8) {
-          todoMetricPill(
-            icon: "circle",
-            title: "Pending",
-            value: "\(pendingCount)",
-            tint: AppTheme.accent
-          )
-          todoMetricPill(
-            icon: "checkmark.circle.fill",
-            title: "Done",
-            value: "\(completedCount)",
-            tint: Color.green.opacity(0.85)
-          )
-        }
-      }
-      .padding(16)
-    }
-    .frame(maxWidth: .infinity)
-    .clipShape(shape)
-    .overlay(
-      shape
-        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.6)
-    )
-    .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
-  }
-
-  private func todoMetricPill(icon: String, title: String, value: String, tint: Color) -> some View {
-    HStack(spacing: 8) {
-      Image(systemName: icon)
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(tint)
-
-      Text(title)
-        .font(.system(size: 12, weight: .semibold))
-        .foregroundStyle(.secondary)
-
-      Text(value)
-        .font(.system(size: 12, weight: .bold, design: .rounded))
-        .foregroundStyle(.primary)
-        .monospacedDigit()
-    }
-    .padding(.horizontal, 10)
-    .padding(.vertical, 8)
-    .background(Color(.systemBackground).opacity(0.7))
-    .clipShape(Capsule())
-    .overlay(
-      Capsule()
-        .stroke(Color(.separator).opacity(0.18), lineWidth: 0.5)
-    )
-  }
-
-  private var addTaskCard: some View {
-    let trimmed = newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-    let canAdd = !trimmed.isEmpty
-    let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-
-    return HStack(spacing: 10) {
-      ZStack {
-        Circle()
-          .fill(
-            LinearGradient(
-              colors: [AppTheme.brand, AppTheme.accent],
-              startPoint: .topLeading,
-              endPoint: .bottomTrailing
-            )
-          )
-        Image(systemName: "sparkles")
-          .font(.system(size: 13, weight: .semibold))
-          .foregroundStyle(.white)
-      }
-      .frame(width: 30, height: 30)
-
-      TextField("Add a task", text: $newTodoTitle)
-        .font(.system(size: 16, weight: .regular))
-        .focused($isAddFieldFocused)
-        .submitLabel(.done)
-        .onSubmit { addTodo() }
-
-      Button {
-        addTodo()
-      } label: {
-        Image(systemName: "plus")
-          .font(.system(size: 15, weight: .bold))
-          .foregroundStyle(canAdd ? .white : .secondary)
-          .frame(width: 34, height: 34)
-          .background(
-            Group {
-              if canAdd {
-                LinearGradient(
-                  colors: [AppTheme.brand, AppTheme.accent],
-                  startPoint: .topLeading,
-                  endPoint: .bottomTrailing
-                )
-              } else {
-                Color(.tertiarySystemFill)
-              }
-            }
-          )
-          .clipShape(Circle())
-      }
-      .buttonStyle(.plain)
-      .disabled(!canAdd)
-    }
-    .padding(.horizontal, 14)
-    .padding(.vertical, 13)
-    .background { GlassCardBackground(shape: shape) }
-    .clipShape(shape)
-    .overlay(
-      shape
-        .stroke(Color(.separator).opacity(0.22), lineWidth: 0.6)
-    )
+    .onChange(of: todoItems) { _, _ in onTodoChange() }
   }
 
   private var reorderHintCard: some View {
@@ -1528,16 +1759,6 @@ private struct JournalTodoTab: View {
     )
   }
 
-  private func addTodo() {
-    let trimmed = newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return }
-    Haptics.impact(.light)
-    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-      todoItems.insert(DiaryTodoItem(title: trimmed), at: 0)
-    }
-    newTodoTitle = ""
-  }
-
   private func removeTodo(id: UUID) {
     Haptics.impact(.light)
     withAnimation(.easeInOut(duration: 0.2)) {
@@ -1549,24 +1770,6 @@ private struct JournalTodoTab: View {
         activeReorderTranslationY = 0
       }
     }
-  }
-
-  private func loadTodos() {
-    let defaults = UserDefaults.standard
-    guard let data = defaults.data(forKey: diaryTodoStorageKey),
-      let decoded = try? JSONDecoder().decode([DiaryTodoItem].self, from: data)
-    else {
-      if defaults.object(forKey: diaryTodoStorageKey) == nil {
-        todoItems = diaryDefaultTodoItems
-      }
-      return
-    }
-    todoItems = decoded
-  }
-
-  private func saveTodos() {
-    guard let data = try? JSONEncoder().encode(todoItems) else { return }
-    UserDefaults.standard.set(data, forKey: diaryTodoStorageKey)
   }
 
   private func reorderGesture(for itemId: UUID) -> some Gesture {
@@ -1849,353 +2052,10 @@ private struct JournalListRowContent: View {
   }
 }
 
-// MARK: - Calendar tab
-
-private struct JournalCalendarTab: View {
-  @Binding var entries: [JournalEntry]
-  let accentColor: Color
-  @Binding var selectedDay: Date?
-  let onAddEntryForDate: (Date) -> Void
-  let onSelectEntry: (JournalEntry) -> Void
-
-  @State private var showDaySheet: Bool = false
-  @State private var sheetDay: Date?
-
-  private let cal = Calendar.current
-
-  private var dayVisuals: [Date: CalendarDayVisual] {
-    var grouped: [Date: [JournalEntry]] = [:]
-    for entry in entries {
-      let day = cal.startOfDay(for: entry.date)
-      grouped[day, default: []].append(entry)
-    }
-
-    var result: [Date: CalendarDayVisual] = [:]
-    for (day, dayEntries) in grouped {
-      let sorted = dayEntries.sorted { $0.createdAt < $1.createdAt }
-      let firstPhotoURL = sorted.compactMap { entry -> String? in
-        guard let url = entry.firstPhotoURL?.trimmingCharacters(in: .whitespacesAndNewlines),
-          !url.isEmpty
-        else { return nil }
-        return url
-      }.first
-      let hasPhoto = sorted.contains { $0.photoCount > 0 || (($0.firstPhotoURL ?? "").isEmpty == false) }
-      result[day] = CalendarDayVisual(
-        notesCount: dayEntries.count,
-        hasPhoto: hasPhoto,
-        firstPhotoURL: firstPhotoURL
-      )
-    }
-    return result
-  }
-
-  private var daysWithEntries: Set<Date> {
-    Set(dayVisuals.keys)
-  }
-
-  private func entries(on day: Date) -> [JournalEntry] {
-    let s = cal.startOfDay(for: day)
-    return
-      entries
-      .filter { cal.startOfDay(for: $0.date) == s }
-      .sorted { $0.createdAt > $1.createdAt }
-  }
-
-  private var selectedDayText: String {
-    guard let selectedDay else { return "Select a day" }
-    let f = DateFormatter()
-    f.dateFormat = "EEEE, MMM d"
-    return f.string(from: selectedDay)
-  }
-
-  var body: some View {
-    ScrollView {
-      VStack(spacing: 12) {
-        calendarSummaryCard
-
-        MonthCalendarScrollView(
-          dayVisuals: dayVisuals,
-          accentColor: accentColor,
-          selectedDay: $selectedDay,
-          onDayTapped: { date in
-            let normalizedDay = cal.startOfDay(for: date)
-            sheetDay = normalizedDay
-            showDaySheet = true
-          }
-        )
-        .padding(.top, 2)
-
-        if let selectedDay {
-          let dayEntries = entries(on: selectedDay)
-          if dayEntries.isEmpty {
-            selectedDayEmptyCard(for: selectedDay)
-          } else {
-            selectedDayEntriesCard(day: selectedDay, dayEntries: dayEntries)
-          }
-        }
-
-        Spacer().frame(height: 120)
-      }
-      .padding(.horizontal, 16)
-      .padding(.top, 14)
-    }
-    .scrollIndicators(.hidden)
-    .background(AppTheme.background)
-    .sheet(isPresented: $showDaySheet) {
-      if let day = sheetDay {
-        CalendarDaySheet(
-          date: day,
-          entries: $entries,
-          accentColor: accentColor,
-          onAddEntry: {
-            showDaySheet = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-              onAddEntryForDate(day)
-            }
-          },
-          onSelectEntry: { entry in
-            showDaySheet = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-              onSelectEntry(entry)
-            }
-          }
-        )
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-      }
-    }
-  }
-
-  private var calendarSummaryCard: some View {
-    let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
-    let selectedCount = selectedDay.map { entries(on: $0).count } ?? 0
-
-    return ZStack(alignment: .topLeading) {
-      LinearGradient(
-        colors: [AppTheme.brand.opacity(0.22), AppTheme.accent.opacity(0.18), Color.white.opacity(0.05)],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-      )
-
-      Circle()
-        .fill(.white.opacity(0.2))
-        .frame(width: 132, height: 132)
-        .offset(x: -45, y: -58)
-
-      Circle()
-        .fill(.white.opacity(0.1))
-        .frame(width: 90, height: 90)
-        .offset(x: 255, y: 24)
-
-      VStack(alignment: .leading, spacing: 14) {
-        HStack(alignment: .top, spacing: 12) {
-          VStack(alignment: .leading, spacing: 3) {
-            Text("Calendar")
-              .font(.system(size: 24, weight: .bold))
-              .foregroundStyle(.primary)
-
-            Text(selectedDayText)
-              .font(.system(size: 14, weight: .semibold))
-              .foregroundStyle(.secondary)
-          }
-
-          Spacer(minLength: 8)
-
-          ZStack {
-            Circle()
-              .fill(
-                LinearGradient(
-                  colors: [AppTheme.brand, AppTheme.accent],
-                  startPoint: .topLeading,
-                  endPoint: .bottomTrailing
-                )
-              )
-            Image(systemName: "calendar")
-              .font(.system(size: 15, weight: .semibold))
-              .foregroundStyle(.white)
-          }
-          .frame(width: 42, height: 42)
-        }
-
-        HStack(spacing: 8) {
-          calendarMetricPill(
-            icon: "checklist.checked",
-            title: "Logged Days",
-            value: "\(daysWithEntries.count)",
-            tint: AppTheme.accent
-          )
-          calendarMetricPill(
-            icon: "book.closed.fill",
-            title: "Selected",
-            value: "\(selectedCount)",
-            tint: accentColor
-          )
-        }
-      }
-      .padding(16)
-    }
-    .frame(maxWidth: .infinity)
-    .clipShape(shape)
-    .overlay(
-      shape
-        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.6)
-    )
-    .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
-  }
-
-  private func calendarMetricPill(icon: String, title: String, value: String, tint: Color) -> some View {
-    HStack(spacing: 8) {
-      Image(systemName: icon)
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(tint)
-
-      Text(title)
-        .font(.system(size: 12, weight: .semibold))
-        .foregroundStyle(.secondary)
-
-      Text(value)
-        .font(.system(size: 12, weight: .bold, design: .rounded))
-        .foregroundStyle(.primary)
-        .monospacedDigit()
-    }
-    .padding(.horizontal, 10)
-    .padding(.vertical, 8)
-    .background(Color(.systemBackground).opacity(0.7))
-    .clipShape(Capsule())
-    .overlay(
-      Capsule()
-        .stroke(Color(.separator).opacity(0.18), lineWidth: 0.5)
-    )
-  }
-
-  private func selectedDayEntriesCard(day: Date, dayEntries: [JournalEntry]) -> some View {
-    let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
-    let f = DateFormatter()
-    f.dateFormat = "MMMM d"
-
-    return VStack(alignment: .leading, spacing: 10) {
-      HStack(alignment: .center, spacing: 8) {
-        Text("On this day")
-          .font(.system(size: 16, weight: .semibold))
-          .foregroundStyle(.primary)
-
-        Text(f.string(from: day))
-          .font(.system(size: 13, weight: .semibold))
-          .foregroundStyle(.secondary)
-
-        Spacer(minLength: 8)
-
-        Text("\(dayEntries.count)")
-          .font(.system(size: 12, weight: .bold, design: .rounded))
-          .monospacedDigit()
-          .foregroundStyle(.primary)
-          .padding(.horizontal, 10)
-          .padding(.vertical, 6)
-          .background(Color(.tertiarySystemFill))
-          .clipShape(Capsule())
-      }
-      .padding(.horizontal, 14)
-      .padding(.top, 14)
-
-      VStack(spacing: 10) {
-        ForEach(dayEntries) { entry in
-          JournalEntryRowLink(entry: entry, onSelect: onSelectEntry)
-        }
-      }
-      .padding(.horizontal, 12)
-      .padding(.bottom, 12)
-    }
-    .background { GlassCardBackground(shape: shape) }
-    .clipShape(shape)
-    .overlay(
-      shape
-        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.6)
-    )
-  }
-
-  private func selectedDayEmptyCard(for day: Date) -> some View {
-    let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
-    let f = DateFormatter()
-    f.dateFormat = "MMMM d"
-    let isFutureDay = cal.startOfDay(for: day) > cal.startOfDay(for: Date())
-
-    return VStack(spacing: 8) {
-      Spacer().frame(height: 28)
-      Image(systemName: isFutureDay ? "calendar.badge.exclamationmark" : "calendar.badge.plus")
-        .font(.system(size: 24, weight: .medium))
-        .foregroundStyle((isFutureDay ? Color.orange : AppTheme.accent).opacity(0.86))
-      Text("No entries on \(f.string(from: day))")
-        .font(.system(size: 16, weight: .semibold))
-        .foregroundStyle(.primary)
-      Text(
-        isFutureDay
-          ? "You can't add a note for this date yet because that day hasn't happened."
-          : "Tap a date to add a note and start building your timeline."
-      )
-        .font(.system(size: 14, weight: .medium))
-        .multilineTextAlignment(.center)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 20)
-      Spacer().frame(height: 24)
-    }
-    .frame(maxWidth: .infinity)
-    .background {
-      LinearGradient(
-        colors: [AppTheme.surface, AppTheme.brand.opacity(0.07)],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-      )
-    }
-    .clipShape(shape)
-    .overlay(
-      shape
-        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.6)
-    )
-  }
-}
-
 private struct CalendarDayVisual {
   let notesCount: Int
   let hasPhoto: Bool
   let firstPhotoURL: String?
-}
-
-private struct MonthCalendarScrollView: View {
-  let dayVisuals: [Date: CalendarDayVisual]
-  let accentColor: Color
-  @Binding var selectedDay: Date?
-  var onDayTapped: ((Date) -> Void)?
-
-  private let cal = Calendar.current
-
-  private var monthsToShow: [Date] {
-    let now = Date()
-    let start = cal.date(byAdding: .month, value: -2, to: now) ?? now
-    let end = cal.date(byAdding: .month, value: 6, to: now) ?? now
-
-    var months: [Date] = []
-    var cursor = cal.date(from: cal.dateComponents([.year, .month], from: start)) ?? start
-    let endMonth = cal.date(from: cal.dateComponents([.year, .month], from: end)) ?? end
-    while cursor <= endMonth {
-      months.append(cursor)
-      cursor = cal.date(byAdding: .month, value: 1, to: cursor) ?? cursor
-    }
-    return months
-  }
-
-  var body: some View {
-    LazyVStack(spacing: 12) {
-      ForEach(monthsToShow, id: \.self) { monthStart in
-        MonthGridView(
-          monthStart: monthStart,
-          dayVisuals: dayVisuals,
-          accentColor: accentColor,
-          selectedDay: $selectedDay,
-          onDayTapped: onDayTapped
-        )
-      }
-    }
-  }
 }
 
 private struct MonthGridView: View {
@@ -2222,7 +2082,7 @@ private struct MonthGridView: View {
     }
   }
 
-  private var days: [Date?] {
+  private var allDays: [Date?] {
     let comps = cal.dateComponents([.year, .month], from: monthStart)
     guard let firstOfMonth = cal.date(from: comps),
       let range = cal.range(of: .day, in: .month, for: firstOfMonth)
@@ -2237,9 +2097,10 @@ private struct MonthGridView: View {
         result.append(date)
       }
     }
-    // Pad to full weeks for consistent spacing
-    while result.count % 7 != 0 {
-      result.append(nil)
+    // Pad to complete the last row (multiple of 7), but don't add extra full empty rows
+    let remainder = result.count % 7
+    if remainder != 0 {
+      result.append(contentsOf: Array(repeating: nil as Date?, count: 7 - remainder))
     }
     return result
   }
@@ -2252,56 +2113,67 @@ private struct MonthGridView: View {
 
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+    let gridColumns = Array(repeating: GridItem(.flexible(), spacing: 3), count: 7)
 
-    VStack(alignment: .leading, spacing: 12) {
+    VStack(alignment: .leading, spacing: 8) {
+      // Month header — above the glass card
       HStack(alignment: .center, spacing: 8) {
         Text(title)
-          .font(.system(size: 16, weight: .bold))
+          .font(.system(size: 18, weight: .bold))
           .foregroundStyle(.primary)
 
         Spacer(minLength: 8)
 
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
           Image(systemName: "record.circle")
-            .font(.system(size: 10, weight: .semibold))
+            .font(.system(size: 9, weight: .semibold))
           Text("\(monthEntryDaysCount) logged")
-            .font(.system(size: 11, weight: .semibold))
+            .font(.system(size: 10, weight: .semibold))
             .monospacedDigit()
         }
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
         .background(Color(.tertiarySystemFill))
         .clipShape(Capsule())
       }
+      .padding(.horizontal, 4)
 
-      LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 8) {
-        ForEach(weekdaySymbols, id: \.self) { sym in
-          Text(sym)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(.secondary.opacity(0.88))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 3)
+      // Glass card with weekdays + day grid + chevron
+      VStack(spacing: 6) {
+        LazyVGrid(columns: gridColumns, spacing: 4) {
+          ForEach(Array(weekdaySymbols.enumerated()), id: \.offset) { _, sym in
+            Text(sym)
+              .font(.system(size: 9, weight: .semibold))
+              .foregroundStyle(.secondary.opacity(0.88))
+              .frame(maxWidth: .infinity)
+              .padding(.vertical, 1)
+          }
         }
+        .padding(.horizontal, 9)
 
-        ForEach(Array(days.enumerated()), id: \.offset) { _, date in
-          DayCell(
-            date: date,
-            dayVisual: date.flatMap { dayVisuals[cal.startOfDay(for: $0)] },
-            accentColor: accentColor,
-            selectedDay: $selectedDay,
-            onDayTapped: onDayTapped
-          )
+        LazyVGrid(columns: gridColumns, spacing: 4) {
+          ForEach(Array(allDays.enumerated()), id: \.offset) { _, date in
+            DayCell(
+              date: date,
+              dayVisual: date.flatMap { dayVisuals[cal.startOfDay(for: $0)] },
+              accentColor: accentColor,
+              selectedDay: $selectedDay,
+              onDayTapped: onDayTapped
+            )
+          }
         }
+        .padding(.horizontal, 9)
+
       }
+      .padding(.vertical, 9)
+      .background { GlassCardBackground(shape: shape) }
+      .clipShape(shape)
+      .overlay(
+        shape
+          .stroke(Color(.separator).opacity(0.2), lineWidth: 0.6)
+      )
     }
-    .padding(14)
-    .background { GlassCardBackground(shape: shape) }
-    .clipShape(shape)
-    .overlay(
-      shape
-        .stroke(Color(.separator).opacity(0.2), lineWidth: 0.6)
-    )
   }
 }
 
@@ -2355,7 +2227,7 @@ private struct DayCell: View {
           }
           onDayTapped?(date)
         } label: {
-          let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+          let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
 
           ZStack {
             Color(.secondarySystemBackground)
@@ -2404,24 +2276,24 @@ private struct DayCell: View {
             Text("\(cal.component(.day, from: date))")
               .font(
                 .system(
-                  size: 16, weight: isToday ? .bold : .semibold, design: .rounded)
+                  size: 13, weight: isToday ? .bold : .semibold, design: .rounded)
                 )
               .foregroundStyle(textColor)
               .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
             if hasEntry {
-              HStack(spacing: 3) {
+              HStack(spacing: 2) {
                 ForEach(0..<indicatorCount, id: \.self) { idx in
                   Capsule()
                     .fill(indicatorColor.opacity(idx == 0 ? 1.0 : 0.78))
-                    .frame(width: idx == 0 ? 10 : 5, height: 4)
+                    .frame(width: idx == 0 ? 7 : 3.5, height: 3)
                 }
               }
-              .padding(.bottom, 5)
+              .padding(.bottom, 3)
               .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
           }
-          .frame(height: 48)
+          .frame(height: 36)
           .frame(maxWidth: .infinity)
           .clipShape(shape)
           .overlay(
@@ -2432,7 +2304,7 @@ private struct DayCell: View {
         .buttonStyle(.plain)
       } else {
         Color.clear
-          .frame(height: 48)
+          .frame(height: 36)
           .frame(maxWidth: .infinity)
       }
     }
