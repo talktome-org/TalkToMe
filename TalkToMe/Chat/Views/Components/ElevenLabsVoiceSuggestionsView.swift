@@ -171,7 +171,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
     static let ghostStartTimes: [String: Double] = [
         "jay": 0.2,
         "hex": 0.1,
-        "snow": 0.3
+        "snow": 0.5
     ]
 
     /// Pre-warm AVPlayers for all ghost videos so they display instantly in the media picker.
