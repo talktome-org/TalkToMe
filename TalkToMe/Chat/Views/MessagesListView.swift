@@ -306,11 +306,17 @@ struct MessagesListView: View {
             }
         }
         .onChange(of: isInputFocused, initial: false) { _, focused in
-            guard focused, isNearBottom, enforcedOffsetY == nil else { return }
+            guard isNearBottom, enforcedOffsetY == nil else { return }
             guard let sv = underlyingScrollView else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            if focused {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    sv.layoutIfNeeded()
+                    scrollToBottomUIKit(sv, animated: true)
+                }
+            } else {
+                followBottom = true
                 sv.layoutIfNeeded()
-                scrollToBottomUIKit(sv, animated: true)
+                scrollToBottomUIKit(sv, animated: false)
             }
         }
         .onChange(of: chatViewModel.isLoadingHistory, initial: false) { _, loading in

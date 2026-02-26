@@ -34,6 +34,12 @@ struct ChatScreenView: View {
     )
     .safeAreaInset(edge: .bottom, spacing: 0) {
       VStack(spacing: 0) {
+        // Ghost buddy circle — speak mode only, pushes messages up
+        if chatViewModel.isSpeakModeActive {
+          ghostBuddyCircle
+            .transition(.scale(scale: 0.3).combined(with: .opacity))
+        }
+
         InputAreaView(
         isVoiceRecording: chatViewModel.dictationSTTService.isRecording,
         isSpeakModeActive: chatViewModel.isSpeakModeActive,
@@ -87,7 +93,8 @@ struct ChatScreenView: View {
       .offset(y: inputAreaYOffset)
       .padding(.bottom, focusedBottomInset)
       .transition(.move(edge: .bottom).combined(with: .opacity))
-      } // VStack (reply bar + input)
+      } // VStack (ghost circle + input)
+      .animation(.smooth(duration: 0.45), value: chatViewModel.isSpeakModeActive)
     }
     .overlay(alignment: .top) {
       if let toastMessage {
@@ -100,6 +107,24 @@ struct ChatScreenView: View {
       AppTheme.background
         .ignoresSafeArea()
     }
+  }
+
+  @ViewBuilder
+  private var ghostBuddyCircle: some View {
+    Button(action: {
+      Haptics.impact(.medium)
+      chatViewModel.voiceController.stopSpeakMode()
+    }) {
+      GhostVideoContentView(
+        isSpeakModeActive: true,
+        speakModePhase: chatViewModel.voiceController.speakModePhase,
+        size: 150
+      )
+    }
+    .buttonStyle(.plain)
+    .frame(maxWidth: .infinity)
+    .padding(.top, 16)
+    .padding(.bottom, 8)
   }
 
   private func showDictationToast() {
