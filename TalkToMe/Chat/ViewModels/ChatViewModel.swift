@@ -56,7 +56,6 @@ class ChatViewModel: ObservableObject {
         return messages.contains(where: { msg in
             msg.segments.contains(where: { seg in
                 if case .partnerReceived(_) = seg { return true }
-                if case .partnerMessage(_, _) = seg { return true }
                 return false
             })
         })

@@ -503,115 +503,128 @@ struct MessageBubbleView: View {
           }
         }
         .textSelection(.enabled)
-      } else if shouldShowThinkingIndicator || message.isFromPartnerUser || hasRenderableAssistantContent {
+      } else if message.isFromPartnerUser {
+        PartnerMessageBlockView(
+          text: plainText(from: message.segments),
+          senderUserId: message.senderUserId
+        )
+      } else if shouldShowThinkingIndicator || hasRenderableAssistantContent {
+        let hasTextContent = shouldShowThinkingIndicator || message.isToolLoading
+          || message.segments.contains(where: {
+            if case .text(let t) = $0 { return !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            return false
+          })
+        let partnerSegments = message.segments.filter { isPartnerSegment($0) }
+
         VStack(alignment: .leading, spacing: 8) {
-          if shouldShowThinkingIndicator {
-            if let thinkingText = activeStreamingThinkingText {
-              // Show "Thinking" header with live text (always expanded during streaming)
-              thinkingSectionView(text: thinkingText, alwaysExpanded: true)
-            } else {
-              ThinkingIndicatorView(
-                thinkingText: chatViewModel.thinkingText,
-                thinkingTextDone: chatViewModel.thinkingTextDone
-              )
-              .padding(.vertical, 4)
-            }
-          } else if message.isFromPartnerUser {
-            PartnerMessageBlockView(
-              text: plainText(from: message.segments),
-              senderUserId: message.senderUserId
-            )
-          } else if !message.segments.isEmpty {
-            // Collapsible thinking section
-            if let summary = effectiveThinkingText {
-              thinkingSectionView(text: summary, alwaysExpanded: false)
-            }
-
-            let attachmentSegments = message.segments.filter { isAttachmentSegment($0) }
-            if !attachmentSegments.isEmpty {
-              attachmentsView(segments: attachmentSegments, alignment: .leading)
-            }
-            ForEach(Array(message.segments.enumerated()), id: \.offset) { _, segment in
-              switch segment {
-              case .text(let text):
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                  MarkdownRendererView(markdown: text, isStreaming: isActivelyStreamingMessage)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 4)
+          if hasTextContent {
+            VStack(alignment: .leading, spacing: 8) {
+              if shouldShowThinkingIndicator {
+                if let thinkingText = activeStreamingThinkingText {
+                  thinkingSectionView(text: thinkingText, alwaysExpanded: true)
+                } else {
+                  ThinkingIndicatorView(
+                    thinkingText: chatViewModel.thinkingText,
+                    thinkingTextDone: chatViewModel.thinkingTextDone
+                  )
+                  .padding(.vertical, 4)
                 }
-              case .imageData(_), .imageURL(_), .fileData(_, _), .fileURL(_, _):
-                EmptyView()
-              case .partnerMessage(let text, let ghostName):
-                if !text.isEmpty {
-                  let isSent = chatViewModel.partnerDrafts.isPartnerDraftSent(
-                    sessionId: chatViewModel.sessionId, messageContent: text)
-                  let isLinked = chatViewModel.isConnectedToFriendInThisChat
-                  PartnerDraftBlockView(
-                    initialText: text,
-                    isSent: isSent,
-                    isLinked: isLinked,
-                    recipientUserId: chatViewModel.selectedFriendUserId,
-                    ghostName: ghostName ?? message.ghostName
-                  ) { action in
-                    switch action {
-                    case .send(let edited):
-                      onSendToPartner?(edited)
+              } else if !message.segments.isEmpty {
+                if let summary = effectiveThinkingText {
+                  thinkingSectionView(text: summary, alwaysExpanded: false)
+                }
+
+                let attachmentSegments = message.segments.filter { isAttachmentSegment($0) }
+                if !attachmentSegments.isEmpty {
+                  attachmentsView(segments: attachmentSegments, alignment: .leading)
+                }
+                ForEach(Array(message.segments.enumerated()), id: \.offset) { _, segment in
+                  switch segment {
+                  case .text(let text):
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                      MarkdownRendererView(markdown: text, isStreaming: isActivelyStreamingMessage)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 4)
                     }
+                  default:
+                    EmptyView()
                   }
-                  .id(text)
-                  .padding(.top, 6)
                 }
-              case .partnerReceived(let text):
-                if !text.isEmpty {
-                  PartnerMessageBlockView(text: text, senderUserId: message.senderUserId)
-                    .id("partner_received_\(text.hashValue)")
-                    .padding(.top, 6)
+                if message.isToolLoading {
+                  HStack {
+                    TypingIndicatorView(showAfter: 0.5)
+                    Spacer(minLength: 0)
+                  }
+                  .padding(.top, 2)
+                }
+
+                if shouldShowAssistantActions {
+                  AssistantMessageActionsView(
+                    messageText: plainText(from: message.segments),
+                    regenerationCount: message.regenerationCount,
+                    onRegenerate: onRegenerate,
+                    onToast: onToast,
+                    thinkingSummary: message.thinkingSummary,
+                    onToggleThinking: {
+                      withAnimation(.easeInOut(duration: 0.2)) {
+                        isThinkingExpanded.toggle()
+                      }
+                    }
+                  )
+                  .transition(.opacity.animation(.easeIn(duration: 0.2)))
+                }
+
+                if shouldShowVoiceRespondedLabel {
+                  Text(
+                    "\(voiceGhostDisplayName) responded at \(message.timestamp.formatted(date: .omitted, time: .shortened))"
+                  )
+                  .font(.system(size: 12, weight: .medium))
+                  .foregroundStyle(.secondary)
+                  .padding(.leading, 4)
+                  .transition(.opacity.animation(.easeIn(duration: 0.2)))
                 }
               }
             }
-            if message.isToolLoading {
-              HStack {
-                TypingIndicatorView(showAfter: 0.5)
-                Spacer(minLength: 0)
-              }
-              .padding(.top, 2)
-            }
+            .padding(12)
+            .background(AppTheme.talkToMeBubbleAI)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .foregroundColor(AppTheme.textPrimary)
+          }
 
-            // Action buttons for assistant messages
-            if shouldShowAssistantActions {
-              AssistantMessageActionsView(
-                messageText: plainText(from: message.segments),
-                regenerationCount: message.regenerationCount,
-                onRegenerate: onRegenerate,
-                onToast: onToast,
-                thinkingSummary: message.thinkingSummary,
-                onToggleThinking: {
-                  withAnimation(.easeInOut(duration: 0.2)) {
-                    isThinkingExpanded.toggle()
+          // Partner segments rendered outside the AI bubble
+          ForEach(Array(partnerSegments.enumerated()), id: \.offset) { _, segment in
+            switch segment {
+            case .partnerMessage(let text, let ghostName):
+              if !text.isEmpty {
+                let isSent = chatViewModel.partnerDrafts.isPartnerDraftSent(
+                  sessionId: chatViewModel.sessionId, messageContent: text)
+                let isLinked = chatViewModel.isConnectedToFriendInThisChat
+                PartnerDraftBlockView(
+                  initialText: text,
+                  isSent: isSent,
+                  isLinked: isLinked,
+                  recipientUserId: chatViewModel.selectedFriendUserId,
+                  ghostName: ghostName ?? message.ghostName
+                ) { action in
+                  switch action {
+                  case .send(let edited):
+                    onSendToPartner?(edited)
                   }
                 }
-              )
-              .transition(.opacity.animation(.easeIn(duration: 0.2)))
-            }
-
-            // "Snow responded at HH:mm" for voice mode messages
-            if shouldShowVoiceRespondedLabel {
-              Text(
-                "\(voiceGhostDisplayName) responded at \(message.timestamp.formatted(date: .omitted, time: .shortened))"
-              )
-              .font(.system(size: 12, weight: .medium))
-              .foregroundStyle(.secondary)
-              .padding(.leading, 4)
-              .transition(.opacity.animation(.easeIn(duration: 0.2)))
+                .id(text)
+              }
+            case .partnerReceived(let text):
+              if !text.isEmpty {
+                PartnerMessageBlockView(text: text, senderUserId: message.senderUserId)
+                  .id("partner_received_\(text.hashValue)")
+              }
+            default:
+              EmptyView()
             }
           }
         }
-        .padding(12)
-        .background(AppTheme.talkToMeBubbleAI)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .foregroundColor(AppTheme.textPrimary)
       }
     }
     .frame(maxWidth: .infinity, alignment: message.isFromUser ? .trailing : .leading)
@@ -699,6 +712,15 @@ struct MessageBubbleView: View {
   private func isAttachmentSegment(_ seg: MessageSegment) -> Bool {
     switch seg {
     case .imageData(_), .imageURL(_), .fileData(_, _), .fileURL(_, _):
+      return true
+    default:
+      return false
+    }
+  }
+
+  private func isPartnerSegment(_ seg: MessageSegment) -> Bool {
+    switch seg {
+    case .partnerMessage(_, _), .partnerReceived(_):
       return true
     default:
       return false

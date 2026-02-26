@@ -168,12 +168,7 @@ struct ChatView: View {
             let content = (note.userInfo?["content"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !content.isEmpty else { return }
             Task { @MainActor in
-                let success = await viewModel.unsendPartnerDraft(content)
-                NotificationCenter.default.post(
-                    name: .unsendPartnerMessageResult,
-                    object: nil,
-                    userInfo: ["content": content, "success": success]
-                )
+                _ = await viewModel.unsendPartnerDraft(content)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .openAddFriendSheet)) { _ in
