@@ -2,11 +2,13 @@ import SwiftUI
 
 /// Compact buddy identity shown in the chat toolbar's `.principal` slot.
 /// Shows ghost name + personality description, or voice status when speak mode is active.
+/// When a partner friend is connected, shows "with [avatar] [first_name]" instead of the description.
 struct BuddyHeaderView: View {
     @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var selectedVoiceName: String = ""
 
     let isSpeakModeActive: Bool
     let speakModePhase: SpeakModePhase
+    let connectedFriend: FriendSummary?
     let onTap: () -> Void
 
     private var buddyDisplayName: String {
@@ -29,6 +31,13 @@ struct BuddyHeaderView: View {
         return Self.shortDescriptions[key] ?? ""
     }
 
+    private var friendFirstName: String? {
+        guard let friend = connectedFriend else { return nil }
+        let name = friend.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return nil }
+        return String(name.split(separator: " ").first ?? Substring(name))
+    }
+
     var body: some View {
         Button(action: {
             Haptics.impact(.light)
@@ -42,6 +51,8 @@ struct BuddyHeaderView: View {
 
                 if isSpeakModeActive {
                     voiceStatusView
+                } else if let firstName = friendFirstName {
+                    friendSubtitleView(firstName: firstName)
                 } else if !buddyDescription.isEmpty {
                     Text(buddyDescription)
                         .font(.system(size: 11, weight: .medium))
@@ -56,6 +67,36 @@ struct BuddyHeaderView: View {
         .modifier(GlassEffectModifier())
         .animation(.easeInOut(duration: 0.2), value: isSpeakModeActive)
         .animation(.easeInOut(duration: 0.2), value: speakModePhase)
+        .animation(.smooth(duration: 0.45), value: connectedFriend?.id)
+    }
+
+    @ViewBuilder
+    private func friendSubtitleView(firstName: String) -> some View {
+        HStack(spacing: 4) {
+            Text("with")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.secondary)
+                .padding(.trailing, 4)
+
+            AvatarCacheManager.shared.cachedAsyncImage(
+                urlString: connectedFriend?.avatarURL,
+                placeholder: { AnyView(Color.clear.frame(width: 14, height: 14)) },
+                fallback: {
+                    AnyView(
+                        Image(systemName: "person.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    )
+                }
+            )
+            .frame(width: 14, height: 14)
+            .clipShape(Circle())
+
+            Text(firstName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+        }
+        .lineLimit(1)
     }
 
     @ViewBuilder
@@ -111,6 +152,7 @@ private struct GlassEffectModifier: ViewModifier {
                     BuddyHeaderView(
                         isSpeakModeActive: false,
                         speakModePhase: .idle,
+                        connectedFriend: nil,
                         onTap: {}
                     )
                 }

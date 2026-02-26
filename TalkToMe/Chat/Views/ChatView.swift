@@ -85,6 +85,9 @@ struct ChatView: View {
                     BuddyHeaderView(
                         isSpeakModeActive: viewModel.isSpeakModeActive,
                         speakModePhase: viewModel.voiceController.speakModePhase,
+                        connectedFriend: viewModel.selectedFriendUserId.flatMap { fid in
+                            friendsViewModel.friends.first(where: { $0.id == fid })
+                        },
                         onTap: {}
                     )
                 }

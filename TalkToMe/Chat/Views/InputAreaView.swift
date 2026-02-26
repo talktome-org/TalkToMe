@@ -39,8 +39,8 @@ struct InputAreaView: View {
     !(trimmedInput.isEmpty && pendingAttachments.isEmpty)
   }
 
-  /// Hide the ghost when typing, voice recording, attachments are present, or loading a response.
-  private var shouldHideGhost: Bool {
+  /// Hide speak-mode voice controls (mic mute + waveform capsule) when typing, recording, etc.
+  private var shouldHideVoiceControls: Bool {
     !trimmedInput.isEmpty || isVoiceRecording || !pendingAttachments.isEmpty
       || (isLoading && !isSpeakModeActive)
   }
@@ -53,7 +53,7 @@ struct InputAreaView: View {
     let outerHorizontalPadding: CGFloat = 32 * 2
     let outerSpacing: CGFloat = 4 * 2  // attachments<->capsule and capsule<->ghost
     let attachmentsButtonWidth: CGFloat = 44
-    let ghostButtonWidth: CGFloat = 46
+    let voiceModeButtonWidth: CGFloat = 44
 
     // Capsule padding (leading 14 + trailing 10)
     let capsuleHorizontalPadding: CGFloat = 14 + 10
@@ -65,7 +65,7 @@ struct InputAreaView: View {
       outerHorizontalPadding
       + outerSpacing
       + attachmentsButtonWidth
-      + ghostButtonWidth
+      + voiceModeButtonWidth
       + capsuleHorizontalPadding
       + trailingAccessoryInset
 
@@ -102,9 +102,6 @@ struct InputAreaView: View {
       return isSpeakMicMuted ? speakerLevel : max(speakerLevel, micLevel * 0.85)
     }
   }
-
-  // Ghost video logic is in GhostVideoContentView below to isolate
-  // @AppStorage re-renders from InputAreaView (prevents sheet/photo reload).
 
   // MARK: - Attachments button (Part 1)
   @available(iOS 26.0, *)
@@ -313,20 +310,23 @@ struct InputAreaView: View {
     .layoutPriority(1)
   }
 
-  // MARK: - Ghost button (Part 3)
+  // MARK: - Voice mode button (Part 3) — waveform (idle) / xmark (active)
   @available(iOS 26.0, *)
   @ViewBuilder
-  private var ghostButton: some View {
+  private var voiceModeButton: some View {
     Button(action: {
       Haptics.impact(.medium)
-      // Let the surrounding `.animation(..., value: isSpeakModeActive)` drive the transition.
-      // Explicit `withAnimation` here can cause SwiftUI to snapshot the representable,
-      // freezing the ghost video during the transition.
       onSpeakToggle()
     }) {
-      GhostVideoContentView(isSpeakModeActive: isSpeakModeActive, speakModePhase: speakModePhase)
+      Image(systemName: isSpeakModeActive ? "xmark" : "waveform")
+        .font(.system(size: 19, weight: .semibold))
+        .foregroundColor(.primary)
+        .contentTransition(.symbolEffect(.replace))
+        .frame(width: 44, height: 44)
     }
     .buttonStyle(.plain)
+    .glassEffect(.regular.interactive(), in: Circle())
+    .offset(y: -2)
   }
 
   var body: some View {
@@ -337,7 +337,7 @@ struct InputAreaView: View {
         messageCapsule
 
         // Mute mic button — separate glass circle, speak mode only (hide when typing)
-        if isSpeakModeActive && !shouldHideGhost {
+        if isSpeakModeActive && !shouldHideVoiceControls {
           Button(action: {
             Haptics.impact(.light)
             withAnimation(.smooth(duration: 0.3)) {
@@ -356,7 +356,7 @@ struct InputAreaView: View {
         }
 
         // Waveform capsule (speak mode only, hide when typing)
-        if isSpeakModeActive && !shouldHideGhost {
+        if isSpeakModeActive && !shouldHideVoiceControls {
           Button(action: {
             Haptics.impact(.medium)
             onSpeakToggle()
@@ -379,11 +379,9 @@ struct InputAreaView: View {
           .transition(.blurReplace)
         }
 
-        // Ghost — always mounted so the video never restarts
-        ghostButton
-          .offset(x: -2, y: isSpeakModeActive ? 4 : 1)
-          .opacity(!shouldHideGhost ? 1 : 0)
-          .frame(width: !shouldHideGhost ? nil : 0)
+        voiceModeButton
+          .opacity(!shouldHideVoiceControls ? 1 : 0)
+          .frame(width: !shouldHideVoiceControls ? nil : 0)
       }
       .padding(.vertical, 6)
       .padding(
@@ -397,8 +395,7 @@ struct InputAreaView: View {
         }
       )
       .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isInputFocused.wrappedValue)
-      .animation(.smooth(duration: 0.45), value: isSpeakModeActive)
-      .animation(.smooth(duration: 0.35), value: shouldHideGhost)
+      .animation(.smooth(duration: 0.35), value: shouldHideVoiceControls)
       .onChange(of: isInputFocused.wrappedValue) { _, focused in
         if !focused {
           let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -430,9 +427,10 @@ struct InputAreaView: View {
 /// Owns the `@AppStorage` for voice selection so that voice changes only
 /// re-render this small view — not the entire InputAreaView (which would
 /// tear down the media picker sheet and reload photos).
-private struct GhostVideoContentView: View {
+struct GhostVideoContentView: View {
   let isSpeakModeActive: Bool
   let speakModePhase: SpeakModePhase
+  var size: CGFloat? = nil
 
   @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var selectedVoiceName: String = ""
 
@@ -453,7 +451,7 @@ private struct GhostVideoContentView: View {
   }
 
   var body: some View {
-    let size: CGFloat = isSpeakModeActive ? 80 : 54
+    let resolvedSize: CGFloat = size ?? (isSpeakModeActive ? 80 : 54)
 
     ZStack {
       if hasGhostVideo && isSpeechActive {
@@ -469,7 +467,7 @@ private struct GhostVideoContentView: View {
           .transition(.opacity)
       }
     }
-    .frame(width: size, height: size)
+    .frame(width: resolvedSize, height: resolvedSize)
   }
 
   @ViewBuilder
