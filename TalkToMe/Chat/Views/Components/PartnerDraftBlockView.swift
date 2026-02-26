@@ -11,7 +11,6 @@ struct PartnerDraftBlockView: View {
     @State private var text: String
     @State private var isConfirmingNormalSend: Bool = false
     @State private var showSentLocally: Bool = false
-    @State private var didUnsendLocally: Bool = false
     @State private var showFriendMenu: Bool = false
     @State private var showFullFriendSheet: Bool = false
     @State private var selectedFriend: FriendSummary? = nil
@@ -66,8 +65,7 @@ struct PartnerDraftBlockView: View {
     }
 
     private var alreadySent: Bool {
-        if didUnsendLocally { return false }
-        return isSent || showSentLocally
+        isSent || showSentLocally
     }
 
     var body: some View {
@@ -170,7 +168,6 @@ struct PartnerDraftBlockView: View {
         .onAppear {
             isConfirmingNormalSend = false
             showSentLocally = false
-            didUnsendLocally = false
             showFriendMenu = false
             showFullFriendSheet = false
             selectedFriend = nil
@@ -179,19 +176,13 @@ struct PartnerDraftBlockView: View {
             self.text = newValue
             isConfirmingNormalSend = false
             showSentLocally = false
-            didUnsendLocally = false
             showFriendMenu = false
             showFullFriendSheet = false
             selectedFriend = nil
         }
-        .onChange(of: isSent) { _, newValue in
-            // Only animate to sent state; unsend is handled locally
-            if newValue && !didUnsendLocally {
-                withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                    isConfirmingNormalSend = false
-                    showSentLocally = false
-                }
-            }
+        .onChange(of: isSent) { _, _ in
+            isConfirmingNormalSend = false
+            showSentLocally = false
         }
         .sheet(isPresented: $showFullFriendSheet) {
             SendToFriendSheetView(
@@ -349,7 +340,7 @@ struct PartnerDraftBlockView: View {
                 .transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.18), value: sendButtonStateId)
+        .animation(nil, value: sendButtonStateId)
     }
 
     private func sendCapsule(label: String, icon: String?, color: Color, showSpinner: Bool = false) -> some View {
@@ -389,7 +380,6 @@ struct PartnerDraftBlockView: View {
         } else if isLinked {
             if isConfirmingNormalSend {
                 withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                    didUnsendLocally = false
                     showSentLocally = true
                     isConfirmingNormalSend = false
                 }
@@ -418,7 +408,6 @@ struct PartnerDraftBlockView: View {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        didUnsendLocally = true
         showSentLocally = false
         NotificationCenter.default.post(
             name: .unsendPartnerMessageFromBubble,
@@ -449,7 +438,6 @@ struct PartnerDraftBlockView: View {
         withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
             selectedFriend = nil
             showFriendMenu = false
-            didUnsendLocally = false
             showSentLocally = true
         }
 
