@@ -21,4 +21,5 @@ extension Notification.Name {
     static let openAddFriendSheet = Notification.Name("chat.open.add.friend.sheet")
     static let openChatSession = Notification.Name("chat.open.session")
     static let openMediaPanel = Notification.Name("chat.open.media.panel")
+    static let openNewDiaryEntry = Notification.Name("diary.open.new.entry")
 }
