@@ -249,7 +249,6 @@ struct SidebarView: View {
     let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
 
     return Button(action: {
-      Haptics.impact(.light)
       onOpenChat(session.id)
     }) {
       HStack(alignment: .center, spacing: 12) {

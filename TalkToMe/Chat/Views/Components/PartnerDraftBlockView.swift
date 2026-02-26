@@ -14,7 +14,6 @@ struct PartnerDraftBlockView: View {
     @State private var showFriendMenu: Bool = false
     @State private var showFullFriendSheet: Bool = false
     @State private var selectedFriend: FriendSummary? = nil
-    @State private var isUnsending: Bool = false
     @State private var chevronNudge: Bool = false
 
     let initialText: String
@@ -129,7 +128,7 @@ struct PartnerDraftBlockView: View {
                     .transition(.scale.combined(with: .opacity))
                 }
 
-                if alreadySent && !isUnsending {
+                if alreadySent {
                     Button {
                         Haptics.impact(.light)
                         handleUnsend()
@@ -152,7 +151,7 @@ struct PartnerDraftBlockView: View {
                     sendButtonContent
                 }
                 .buttonStyle(.plain)
-                .disabled(isUnsending || alreadySent)
+                .disabled(alreadySent)
             }
 
             // Inline friend picker menu
@@ -172,7 +171,6 @@ struct PartnerDraftBlockView: View {
             showFriendMenu = false
             showFullFriendSheet = false
             selectedFriend = nil
-            isUnsending = false
         }
         .onChange(of: initialText) { _, newValue in
             self.text = newValue
@@ -181,25 +179,11 @@ struct PartnerDraftBlockView: View {
             showFriendMenu = false
             showFullFriendSheet = false
             selectedFriend = nil
-            isUnsending = false
         }
         .onChange(of: isSent) { _, _ in
             withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
                 isConfirmingNormalSend = false
                 showSentLocally = false
-                // Don't reset isUnsending here — let the result notification handle it
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .unsendPartnerMessageResult)) { note in
-            let content = (note.userInfo?["content"] as? String) ?? ""
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard content == trimmed else { return }
-            let success = (note.userInfo?["success"] as? Bool) ?? false
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                isUnsending = false
-                if success {
-                    showSentLocally = false
-                }
             }
         }
         .sheet(isPresented: $showFullFriendSheet) {
@@ -317,7 +301,6 @@ struct PartnerDraftBlockView: View {
 
     /// Unique key for the current button state so SwiftUI can identity-transition between them.
     private var sendButtonStateId: String {
-        if isUnsending { return "unsending" }
         if alreadySent { return "sent" }
         if isConfirmingNormalSend { return "confirm" }
         if selectedFriend != nil { return "friend" }
@@ -328,10 +311,7 @@ struct PartnerDraftBlockView: View {
     @ViewBuilder
     private var sendButtonContent: some View {
         ZStack {
-            if isUnsending {
-                sendCapsule(label: "Unsending", icon: nil, color: .red.opacity(0.7), showSpinner: true)
-                    .transition(.opacity)
-            } else if alreadySent {
+            if alreadySent {
                 sendCapsule(label: "Sent", icon: "checkmark", color: .green)
                     .transition(.opacity)
             } else if isConfirmingNormalSend {
@@ -431,7 +411,7 @@ struct PartnerDraftBlockView: View {
         guard !trimmed.isEmpty else { return }
 
         withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-            isUnsending = true
+            showSentLocally = false
         }
         NotificationCenter.default.post(
             name: .unsendPartnerMessageFromBubble,
