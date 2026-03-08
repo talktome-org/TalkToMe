@@ -14,24 +14,36 @@ struct UserMessageBubbleView: View {
     let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     let attachmentSegments = segments.filter { isAttachmentSegment($0) }
 
+    let quoteText = segments.compactMap { seg -> String? in
+      if case .quotedReply(let t) = seg { return t }
+      return nil
+    }.first
+
     VStack(alignment: .trailing, spacing: 8) {
       if !attachmentSegments.isEmpty {
         attachmentsView(segments: attachmentSegments, alignment: .trailing)
       }
-      if hasText {
-        Text(text)
-          .font(.system(size: 17 * fontSizeScale, weight: .regular))
-          .italic(isFromVoiceMode)
-          .lineSpacing(2)
-          .padding(.horizontal, 16)
-          .padding(.vertical, 14)
-          .background(
-            RoundedRectangle(cornerRadius: 20)
-              .fill(userBubbleGradient)
-          )
-          .foregroundColor(AppTheme.talkToMePrimaryText)
-          .textSelection(.enabled)
-          .frame(maxWidth: 320, alignment: .trailing)
+      if quoteText != nil || hasText {
+        VStack(alignment: .leading, spacing: quoteText != nil && hasText ? 6 : 0) {
+          if let quoteText {
+            QuotedReplyView(text: quoteText)
+          }
+          if hasText {
+            Text(text)
+              .font(.system(size: 17 * fontSizeScale, weight: .regular))
+              .italic(isFromVoiceMode)
+              .lineSpacing(2)
+          }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(
+          RoundedRectangle(cornerRadius: 20)
+            .fill(userBubbleGradient)
+        )
+        .foregroundColor(AppTheme.talkToMePrimaryText)
+        .textSelection(.enabled)
+        .frame(maxWidth: 320, alignment: .trailing)
       }
     }
     .fullScreenCover(
@@ -349,6 +361,7 @@ extension View {
 struct MessageBubbleView: View {
 
   @ObservedObject var chatViewModel: ChatViewModel
+  @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var selectedVoiceName: String = ""
 
   let message: ChatMessage
 
@@ -395,6 +408,12 @@ struct MessageBubbleView: View {
     return true
   }
 
+  private var buddyDisplayName: String {
+    let name = selectedVoiceName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty else { return "Buddy" }
+    return name.prefix(1).uppercased() + name.dropFirst().lowercased()
+  }
+
   private var hasRenderableAssistantContent: Bool {
     if message.isToolLoading { return true }
     return message.segments.contains { segment in
@@ -407,6 +426,8 @@ struct MessageBubbleView: View {
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       case .imageData(_), .imageURL(_), .fileData(_, _), .fileURL(_, _):
         return true
+      case .quotedReply:
+        return false
       }
     }
   }
@@ -506,7 +527,11 @@ struct MessageBubbleView: View {
       } else if message.isFromPartnerUser {
         PartnerMessageBlockView(
           text: plainText(from: message.segments),
-          senderUserId: message.senderUserId
+          senderUserId: message.senderUserId,
+          timestamp: message.timestamp,
+          onReply: { selectedText in
+            chatViewModel.replyQuoteText = selectedText
+          }
         )
       } else if shouldShowThinkingIndicator || hasRenderableAssistantContent {
         let hasTextContent = shouldShowThinkingIndicator || message.isToolLoading
@@ -543,10 +568,23 @@ struct MessageBubbleView: View {
                   case .text(let text):
                     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty {
-                      MarkdownRendererView(markdown: text, isStreaming: isActivelyStreamingMessage)
+                      if isActivelyStreamingMessage {
+                        MarkdownRendererView(markdown: text, isStreaming: true)
+                          .frame(maxWidth: .infinity, alignment: .leading)
+                          .padding(.horizontal, 4)
+                          .padding(.vertical, 4)
+                      } else {
+                        SelectableTextView(
+                          attributedText: Self.markdownToNSAttributedString(text),
+                          replyToName: buddyDisplayName,
+                          onReply: { selectedText in
+                            chatViewModel.replyQuoteText = selectedText
+                          }
+                        )
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 4)
+                      }
                     }
                   default:
                     EmptyView()
@@ -606,7 +644,10 @@ struct MessageBubbleView: View {
                   isSent: isSent,
                   isLinked: isLinked,
                   recipientUserId: chatViewModel.selectedFriendUserId,
-                  ghostName: ghostName ?? message.ghostName
+                  ghostName: ghostName ?? message.ghostName,
+                  onReply: { selectedText in
+                    chatViewModel.replyQuoteText = selectedText
+                  }
                 ) { action in
                   switch action {
                   case .send(let edited):
@@ -617,7 +658,14 @@ struct MessageBubbleView: View {
               }
             case .partnerReceived(let text):
               if !text.isEmpty {
-                PartnerMessageBlockView(text: text, senderUserId: message.senderUserId)
+                PartnerMessageBlockView(
+                  text: text,
+                  senderUserId: message.senderUserId,
+                  timestamp: message.timestamp,
+                  onReply: { selectedText in
+                    chatViewModel.replyQuoteText = selectedText
+                  }
+                )
                   .id("partner_received_\(text.hashValue)")
               }
             default:
@@ -643,6 +691,34 @@ struct MessageBubbleView: View {
       if case .text(let text) = segment { return text }
       return nil
     }.joined()
+  }
+
+  /// Convert markdown text to NSAttributedString for use in SelectableTextView.
+  static func markdownToNSAttributedString(_ markdown: String) -> NSAttributedString {
+    let fontSize: CGFloat = 17
+    let textColor = UIColor { trait in
+      trait.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : UIColor(white: 0.06, alpha: 1)
+    }
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.lineSpacing = 2
+
+    let baseAttributes: [NSAttributedString.Key: Any] = [
+      .font: UIFont.systemFont(ofSize: fontSize),
+      .foregroundColor: textColor,
+      .paragraphStyle: paragraphStyle,
+    ]
+
+    // Try to parse markdown into NSAttributedString
+    if let attrStr = try? NSAttributedString(
+      markdown: markdown,
+      options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+    ) {
+      let mutable = NSMutableAttributedString(attributedString: attrStr)
+      mutable.addAttributes(baseAttributes, range: NSRange(location: 0, length: mutable.length))
+      return mutable
+    }
+
+    return NSAttributedString(string: markdown, attributes: baseAttributes)
   }
 
   @ViewBuilder

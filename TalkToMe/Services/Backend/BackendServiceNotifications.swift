@@ -8,8 +8,9 @@ extension BackendService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        struct Body: Codable { let token: String; let platform: String; let bundle_id: String }
-        request.httpBody = try jsonEncoder.encode(Body(token: token, platform: platform, bundle_id: bundleId))
+        struct Body: Codable { let token: String; let platform: String; let bundle_id: String; let timezone: String }
+        let tz = TimeZone.current.identifier
+        request.httpBody = try jsonEncoder.encode(Body(token: token, platform: platform, bundle_id: bundleId, timezone: tz))
         let (data, response) = try await urlSession.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let serverMessage = decodeSimpleDetail(from: data) ?? String(data: data, encoding: .utf8) ?? "Unknown server error"

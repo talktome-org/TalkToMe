@@ -380,27 +380,59 @@ async def delete_account(current_user: dict = Depends(get_current_user)):
             from Backend.models.friends.friend_invite_model import FriendInvite
             from sqlalchemy import delete, or_
 
-            # Clear linked_session_id references before deleting sessions
-            db.execute(
-                UserChatSession.__table__.update()
-                .where(UserChatSession.user_id == user_id)
-                .values(linked_session_id=None)
-            )
-            # Also clear inbound linked_session_id pointing at this user's sessions
+            # Collect the user's session IDs
             user_session_ids = db.execute(
                 UserChatSession.__table__.select()
                 .where(UserChatSession.user_id == user_id)
                 .with_only_columns(UserChatSession.id)
             ).scalars().all()
-            if user_session_ids:
+
+            # Collect friendship IDs and the friend's linked sessions
+            friendship_ids = db.execute(
+                Friendship.__table__.select()
+                .where(or_(Friendship.user_low_id == user_id, Friendship.user_high_id == user_id))
+                .with_only_columns(Friendship.id)
+            ).scalars().all()
+
+            friend_session_ids = []
+            if friendship_ids:
+                friend_session_ids = db.execute(
+                    UserChatSession.__table__.select()
+                    .where(
+                        UserChatSession.friendship_id.in_(friendship_ids),
+                        UserChatSession.user_id != user_id,
+                    )
+                    .with_only_columns(UserChatSession.id)
+                ).scalars().all()
+
+            all_session_ids = list(user_session_ids) + list(friend_session_ids)
+
+            # Clear linked_session_id references before deleting sessions
+            if all_session_ids:
                 db.execute(
                     UserChatSession.__table__.update()
-                    .where(UserChatSession.linked_session_id.in_(user_session_ids))
+                    .where(UserChatSession.linked_session_id.in_(all_session_ids))
                     .values(linked_session_id=None)
                 )
+            db.execute(
+                UserChatSession.__table__.update()
+                .where(UserChatSession.user_id == user_id)
+                .values(linked_session_id=None)
+            )
 
-            db.execute(delete(UserChatMessage).where(UserChatMessage.user_id == user_id))
+            # Delete all messages in affected sessions (user's + friend's linked sessions)
+            if all_session_ids:
+                db.execute(delete(UserChatMessage).where(
+                    or_(UserChatMessage.user_id == user_id, UserChatMessage.session_id.in_(all_session_ids))
+                ))
+            else:
+                db.execute(delete(UserChatMessage).where(UserChatMessage.user_id == user_id))
+
+            # Delete all affected sessions (user's + friend's linked sessions)
+            if friend_session_ids:
+                db.execute(delete(UserChatSession).where(UserChatSession.id.in_(friend_session_ids)))
             db.execute(delete(UserChatSession).where(UserChatSession.user_id == user_id))
+
             db.execute(delete(DiaryEntry).where(DiaryEntry.user_id == user_id))
             db.execute(delete(DiarySettings).where(DiarySettings.user_id == user_id))
             db.execute(delete(DeviceToken).where(DeviceToken.user_id == user_id))
@@ -440,9 +472,12 @@ async def update_presence(payload: dict = Body(...), current_user: dict = Depend
         raise HTTPException(status_code=401, detail="Invalid user ID in token")
 
     online = bool(payload.get("online", False))
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    update_data = {"is_online": online, "last_seen_at": now}
+    update_data: dict = {"is_online": online}
+    # Only touch last_seen_at when coming online; when going offline we
+    # preserve the existing timestamp so staleness checks work immediately.
+    if online:
+        update_data["last_seen_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
     _upsert_profile(user_id, update_data)
 
     return {"success": True}

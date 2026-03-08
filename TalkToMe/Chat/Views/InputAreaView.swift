@@ -12,6 +12,7 @@ struct InputAreaView: View {
   let onMicMuteToggle: () -> Void
 
   @Binding var inputText: String
+  @Binding var replyQuoteText: String?
   @Binding var isLoading: Bool
   @Binding var pendingAttachments: [PendingAttachment]
 
@@ -144,6 +145,37 @@ struct InputAreaView: View {
       : (attachmentsTopPadding + xButtonOverhang + thumbSize + gapBelowAttachments)
 
     VStack(alignment: .leading, spacing: 0) {
+      // Reply quote preview
+      if let quoteText = replyQuoteText, !quoteText.isEmpty {
+        HStack(alignment: .top, spacing: 8) {
+          RoundedRectangle(cornerRadius: 1.5)
+            .fill(AppTheme.accent)
+            .frame(width: 3)
+
+          Text(quoteText)
+            .font(.system(size: 14))
+            .foregroundColor(.secondary)
+            .lineLimit(4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+          Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+              replyQuoteText = nil
+            }
+          } label: {
+            Image(systemName: "xmark.circle.fill")
+              .font(.system(size: 18))
+              .foregroundColor(Color(.tertiaryLabel))
+          }
+          .buttonStyle(.plain)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 2)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+      }
+
       // Reserve space for photo thumbnails (rendered via overlay)
       if !pendingAttachments.isEmpty {
         Color.clear
@@ -291,6 +323,11 @@ struct InputAreaView: View {
           }
           .buttonStyle(.plain)
           .transition(.scale.combined(with: .opacity))
+        }
+      }
+      .onChange(of: replyQuoteText) { _, newValue in
+        if newValue != nil {
+          isInputFocused.wrappedValue = true
         }
       }
       .onChange(of: isVoiceRecording) { _, recording in
@@ -495,6 +532,7 @@ struct GhostVideoContentView: View {
     onSpeakToggle: {},
     onMicMuteToggle: {},
     inputText: .constant(""),
+    replyQuoteText: .constant(nil),
     isLoading: .constant(false),
     pendingAttachments: .constant([]),
     isInputFocused: $isFocused,
@@ -517,6 +555,7 @@ struct GhostVideoContentView: View {
     onSpeakToggle: {},
     onMicMuteToggle: {},
     inputText: .constant(""),
+    replyQuoteText: .constant(nil),
     isLoading: .constant(false),
     pendingAttachments: .constant([]),
     isInputFocused: $isFocused,
@@ -539,6 +578,7 @@ struct GhostVideoContentView: View {
     onSpeakToggle: {},
     onMicMuteToggle: {},
     inputText: .constant(""),
+    replyQuoteText: .constant(nil),
     isLoading: .constant(false),
     pendingAttachments: .constant([]),
     isInputFocused: $isFocused,
@@ -561,6 +601,7 @@ struct GhostVideoContentView: View {
     onSpeakToggle: {},
     onMicMuteToggle: {},
     inputText: .constant(""),
+    replyQuoteText: .constant(nil),
     isLoading: .constant(false),
     pendingAttachments: .constant([]),
     isInputFocused: $isFocused,

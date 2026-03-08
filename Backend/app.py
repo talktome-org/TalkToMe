@@ -1,3 +1,8 @@
+import logging
+from contextlib import asynccontextmanager
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
 from fastapi import FastAPI
 
 from .subapps.apple_router import router as aasa_router
@@ -10,8 +15,17 @@ from .subapps.client_upload_router import router as files_router
 from .subapps.friends_router import router as friends_router
 from .subapps.partner_router import router as partner_router
 from .subapps.user_profile_router import router as profile_router
+from .services.daily_checkin_scheduler import start_scheduler, stop_scheduler
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_scheduler()
+    yield
+    stop_scheduler()
+
+
+app = FastAPI(lifespan=lifespan)
 
 from Backend.middleware.presence import PresenceMiddleware  # noqa: E402
 

@@ -28,7 +28,7 @@ struct ContentView: View {
             return authService.currentUserId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
         return authService.isAuthenticated
-            && !(onboardingLoaded && onboardingVM.step != .completed)
+            && onboardingLoaded && onboardingVM.step == .completed
     }
 
     var body: some View {
@@ -90,6 +90,7 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 0.3), value: authService.isAuthenticated)
         .animation(.easeInOut(duration: 0.3), value: authService.isCheckingAuth)
+        .animation(.easeInOut(duration: 0.3), value: onboardingLoaded)
     }
 
 }

@@ -120,6 +120,16 @@ extension APNSService: UNUserNotificationCenterDelegate {
     @MainActor
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         let userInfo = notification.request.content.userInfo
+
+        // Silent unsend push — retract notification and refresh, no banner
+        if let type = userInfo["type"] as? String, type == "partner_unsend" {
+            if let sessionIdString = userInfo["session_id"] as? String,
+               let sessionId = UUID(uuidString: sessionIdString) {
+                handleUnsendPush(sessionId: sessionId)
+            }
+            return []
+        }
+
         if let sessionIdString = userInfo["session_id"] as? String,
            let sessionId = UUID(uuidString: sessionIdString) {
             if AuthService.shared.isAuthenticated {
@@ -169,6 +179,40 @@ extension APNSService: UNUserNotificationCenterDelegate {
         if let type = userInfo["type"] as? String, type == "friend_added" {
             if AuthService.shared.isAuthenticated {
                 NotificationCenter.default.post(name: .friendAdded, object: nil)
+            }
+        }
+    }
+
+    /// Called from AppDelegate for background silent pushes.
+    @MainActor
+    func handleBackgroundPush(userInfo: [AnyHashable: Any]) {
+        if let type = userInfo["type"] as? String, type == "partner_unsend",
+           let sessionIdString = userInfo["session_id"] as? String,
+           let sessionId = UUID(uuidString: sessionIdString) {
+            handleUnsendPush(sessionId: sessionId)
+        }
+    }
+
+    private func handleUnsendPush(sessionId: UUID) {
+        // Remove any delivered notifications for this session
+        removeDeliveredNotifications(forSessionId: sessionId)
+        // Notify the app to refresh
+        if AuthService.shared.isAuthenticated {
+            NotificationCenter.default.post(name: .partnerMessageUnsent, object: nil, userInfo: ["sessionId": sessionId])
+        }
+    }
+
+    private func removeDeliveredNotifications(forSessionId sessionId: UUID) {
+        let center = UNUserNotificationCenter.current()
+        center.getDeliveredNotifications { notifications in
+            let idsToRemove = notifications
+                .filter { notification in
+                    guard let nSessionId = notification.request.content.userInfo["session_id"] as? String else { return false }
+                    return nSessionId == sessionId.uuidString
+                }
+                .map { $0.request.identifier }
+            if !idsToRemove.isEmpty {
+                center.removeDeliveredNotifications(withIdentifiers: idsToRemove)
             }
         }
     }

@@ -2,12 +2,31 @@ import SwiftUI
 
 struct SidebarAvatarView: View {
     let avatarURL: String?
+    var name: String? = nil
 
     @State private var image: UIImage?
     @State private var isLoading = false
     @State private var refreshKey = UUID()
 
     private let avatarCacheManager = AvatarCacheManager.shared
+
+    private var placeholderView: some View {
+        Circle()
+            .fill(Color(.tertiarySystemFill))
+            .overlay(
+                Group {
+                    if let name, let first = name.first {
+                        Text(String(first).uppercased())
+                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Image(systemName: "person.fill")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            )
+    }
 
     var body: some View {
         Group {
@@ -16,39 +35,9 @@ struct SidebarAvatarView: View {
                     .resizable()
                     .scaledToFill()
             } else if isLoading {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.26, green: 0.58, blue: 1.00),
-                                Color(red: 0.63, green: 0.32, blue: 0.98)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .overlay(
-                        Image(systemName: "person.fill")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.white)
-                    )
+                placeholderView
             } else {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.26, green: 0.58, blue: 1.00),
-                                Color(red: 0.63, green: 0.32, blue: 0.98)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .overlay(
-                        Image(systemName: "person.fill")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(.white)
-                    )
+                placeholderView
             }
         }
         .id(refreshKey)

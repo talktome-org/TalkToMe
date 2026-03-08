@@ -55,6 +55,7 @@ extension Color {
   static let paletteSurfaceDark = Color(hex: "#1C2533")!  // Slightly lighter navy for cards
   static let paletteSurfaceLight = Color(hex: "#FFFFFF")!
   static let palettePartner = Color(hex: "#F6E6EC")!
+  static let palettePartnerBubbleLightGray = Color(hex: "#E7EBEF")!
 
   // Legacy Static Aliases (Deprecated but kept for compatibility)
   static let talkToMeBrand = paletteSkyBlue
@@ -73,6 +74,7 @@ extension Color {
         trait.userInterfaceStyle == .dark ? UIColor(hex: "#1C2533")! : UIColor(hex: "#EAF6FF")!
       })
   }
+  static let talkToMePartnerBubbleLightGray = palettePartnerBubbleLightGray
   static let talkToMeBubbleUser = talkToMeBrand
 }
 

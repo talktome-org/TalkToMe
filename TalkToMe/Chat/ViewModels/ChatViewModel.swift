@@ -20,6 +20,7 @@ class ChatViewModel: ObservableObject {
             }
         }
     }
+    @Published var replyQuoteText: String? = nil
     @Published var isLoading: Bool = false
     @Published var isLoadingHistory: Bool = false
     @Published var isAssistantTyping: Bool = false
@@ -396,6 +397,7 @@ extension ChatViewModel: ChatStreamingDelegate {
     }
 
     func streamingWillStart() {
+        print("[VoiceAgent] streamingWillStart — isSpeakModeActive=\(isSpeakModeActive)")
         didReceiveFirstToken = false
         hasSpokenCurrentResponse = false
         hasActiveStreamingCycle = true
@@ -408,16 +410,22 @@ extension ChatViewModel: ChatStreamingDelegate {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let voiceName = (voiceController.capturedVoiceName ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !voiceId.isEmpty else { return }
+        guard !voiceId.isEmpty else {
+            print("[VoiceAgent] streamingWillStart — no voiceId, skipping TTS start")
+            return
+        }
 
+        print("[VoiceAgent] streamingWillStart — starting TTS with voiceId=\(voiceId) voiceName=\(voiceName)")
         Task { @MainActor in
             await elevenLabsStreamingTTS.start(voiceId: voiceId, voiceName: voiceName)
+            print("[VoiceAgent] TTS start() completed — isConnected=\(elevenLabsStreamingTTS.isConnected) lastError=\(elevenLabsStreamingTTS.lastError ?? "nil")")
         }
     }
 
     func streamingDidReceiveToken(_ token: String) {
         if !didReceiveFirstToken {
             didReceiveFirstToken = true
+            print("[VoiceAgent] first token received — isSpeakModeActive=\(isSpeakModeActive) ttsConnected=\(elevenLabsStreamingTTS.isConnected)")
             voiceController.notifyStreamingStarted()
         }
 
@@ -429,10 +437,12 @@ extension ChatViewModel: ChatStreamingDelegate {
     }
 
     func streamingDidFinish() {
+        print("[VoiceAgent] streamingDidFinish — isSpeakModeActive=\(isSpeakModeActive) ttsIsSpeaking=\(elevenLabsStreamingTTS.isSpeaking) ttsConnected=\(elevenLabsStreamingTTS.isConnected) spokenTextLen=\(elevenLabsStreamingTTS.recentlySpokenText.count)")
         voiceController.notifyStreamingFinished()
 
         guard isSpeakModeActive else { return }
         // Always call finish — it will wait for connection if needed
+        print("[VoiceAgent] calling TTS finish()")
         elevenLabsStreamingTTS.finish()
     }
 

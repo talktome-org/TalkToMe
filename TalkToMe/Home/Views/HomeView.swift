@@ -683,14 +683,18 @@ private struct NotificationItem: Identifiable, Codable {
   let date: Date
   let icon: String
   let sessionId: UUID?
+  let avatarURL: String?
+  var isViewed: Bool
 
-  init(title: String, body: String, date: Date, icon: String, sessionId: UUID? = nil) {
+  init(title: String, body: String, date: Date, icon: String, sessionId: UUID? = nil, avatarURL: String? = nil, isViewed: Bool = false) {
     self.id = UUID()
     self.title = title
     self.body = body
     self.date = date
     self.icon = icon
     self.sessionId = sessionId
+    self.avatarURL = avatarURL
+    self.isViewed = isViewed
   }
 }
 
@@ -711,6 +715,10 @@ private struct NotificationsView: View {
           let items = try? JSONDecoder().decode([NotificationItem].self, from: data) else { return [] }
     return items
   }()
+  @State private var searchText: String = ""
+  @State private var viewedIds: Set<String> = {
+    Set(UserDefaults.standard.stringArray(forKey: "viewed_notification_ids") ?? [])
+  }()
 
   private var groupedNotifications: [(group: NotificationDateGroup, items: [NotificationItem])] {
     let calendar = Calendar.current
@@ -723,7 +731,13 @@ private struct NotificationsView: View {
     var yesterday: [NotificationItem] = []
     var last7: [NotificationItem] = []
 
-    for item in notifications.sorted(by: { $0.date > $1.date }) {
+    let filtered = notifications.filter { item in
+      guard !searchText.isEmpty else { return true }
+      let query = searchText.lowercased()
+      return item.title.lowercased().contains(query) || item.body.lowercased().contains(query)
+    }
+
+    for item in filtered.sorted(by: { $0.date > $1.date }) {
       if item.date >= startOfToday {
         today.append(item)
       } else if item.date >= startOfYesterday {
@@ -808,53 +822,75 @@ private struct NotificationsView: View {
             .padding(.bottom, 0)
 
             Divider()
-              .padding(.horizontal, 0)
+              .padding(.horizontal, -16)
               .padding(.top, 4)
               .padding(.bottom, 4)
           }
 
           // Notification sections
           ForEach(groupedNotifications, id: \.group) { section in
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 0) {
               Text(section.group.rawValue)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(.primary)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Color(.tertiaryLabel))
+                .textCase(.uppercase)
                 .padding(.horizontal, 4)
+                .padding(.bottom, 12)
 
-              ForEach(section.items) { item in
+              ForEach(Array(section.items.enumerated()), id: \.element.id) { index, item in
                 if let sessionId = item.sessionId {
-                  Button { onTap(sessionId) } label: {
+                  Button {
+                    markAsViewed(item)
+                    onTap(sessionId)
+                  } label: {
                     notificationRow(item)
                   }
                   .buttonStyle(.plain)
                 } else {
                   notificationRow(item)
                 }
+
+                Divider()
+                  .padding(.leading, avatarSize + 12)
               }
             }
+            .padding(.bottom, 8)
           }
 
-          if groupedNotifications.isEmpty && apns.isPushEnabled {
-            VStack(spacing: 8) {
-              Image(systemName: "bell.slash")
-                .font(.system(size: 28))
-                .foregroundStyle(Color(.tertiaryLabel))
-              Text("No notifications yet")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Color(.secondaryLabel))
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 40)
-          }
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .padding(.bottom, 24)
       }
+
+      if groupedNotifications.isEmpty && apns.isPushEnabled {
+        VStack(spacing: 12) {
+          if !searchText.isEmpty {
+            Image(systemName: "magnifyingglass")
+              .font(.system(size: 56))
+              .foregroundStyle(Color(.tertiaryLabel))
+            Text("No results for \"\(searchText)\"")
+              .font(.system(size: 15, weight: .medium))
+              .foregroundStyle(Color(.secondaryLabel))
+          } else {
+            Image(systemName: "bell.slash")
+              .font(.system(size: 56))
+              .foregroundStyle(Color(.tertiaryLabel))
+            Text("No notifications yet")
+              .font(.system(size: 15, weight: .medium))
+              .foregroundStyle(Color(.secondaryLabel))
+          }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
     }
     .navigationTitle("Notifications")
+    .searchable(text: $searchText, prompt: "Search notifications")
     .onAppear { loadNotifications() }
     .onReceive(NotificationCenter.default.publisher(for: .partnerMessageReceived)) { _ in
+      loadNotifications()
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .partnerMessageUnsent)) { _ in
       loadNotifications()
     }
     .onReceive(NotificationCenter.default.publisher(for: .friendAdded)) { _ in
@@ -865,6 +901,10 @@ private struct NotificationsView: View {
   private func loadNotifications() {
     // 1. Build items from delivered OS push notifications.
     let friends = friendsViewModel.friends
+    let allSessions = sessions
+    let unreadSessionIds = Set(allSessions.filter { $0.unreadCount > 0 }.map(\.id))
+    let previousItems = self.notifications
+
     UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
       var items: [NotificationItem] = []
       var coveredSessionIds = Set<UUID>()
@@ -883,29 +923,30 @@ private struct NotificationsView: View {
           ))
         } else if let sidString = userInfo["session_id"] as? String,
                   let sid = UUID(uuidString: sidString) {
+          let avatar = Self.resolveAvatarURL(forSessionId: sid, friends: friends)
           items.append(NotificationItem(
             title: content.title,
             body: content.body,
             date: date,
             icon: "bubble.left.fill",
-            sessionId: sid
+            sessionId: sid,
+            avatarURL: avatar
           ))
           coveredSessionIds.insert(sid)
         }
       }
 
-      // 2. Add unread sessions that have no matching delivered notification
-      //    (e.g. user was in foreground, or notifications were cleared).
-      for session in sessions where !coveredSessionIds.contains(session.id) {
+      // 2. Add unread sessions that have no matching delivered notification.
+      for session in allSessions where session.unreadCount > 0 && !coveredSessionIds.contains(session.id) {
         let date = Self.parseISO8601(session.lastUsedISO8601) ?? Date()
+        let key = "session_friend_user_id_\(session.id.uuidString)"
+        let friendId: UUID? = {
+          guard let raw = UserDefaults.standard.string(forKey: key) else { return nil }
+          return UUID(uuidString: raw)
+        }()
+        let friend = friendId.flatMap { fid in friends.first(where: { $0.id == fid }) }
         let friendName: String = {
-          let key = "session_friend_user_id_\(session.id.uuidString)"
-          if let raw = UserDefaults.standard.string(forKey: key),
-             let friendId = UUID(uuidString: raw),
-             let friend = friends.first(where: { $0.id == friendId }) {
-            let name = friend.fullName.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !name.isEmpty { return name }
-          }
+          if let name = friend?.fullName.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty { return name }
           return UserDefaults.standard.string(forKey: PreferenceKeys.partnerName) ?? "Partner Message"
         }()
         items.append(NotificationItem(
@@ -913,17 +954,58 @@ private struct NotificationsView: View {
           body: session.lastMessageContent ?? "",
           date: date,
           icon: "bubble.left.fill",
-          sessionId: session.id
+          sessionId: session.id,
+          avatarURL: friend?.avatarURL
         ))
+        coveredSessionIds.insert(session.id)
+      }
+
+      // 3. Preserve previously shown items whose sessions are now read — keep as viewed.
+      for prev in previousItems {
+        guard let sid = prev.sessionId, !coveredSessionIds.contains(sid) else { continue }
+        var kept = prev
+        kept.isViewed = true
+        items.append(kept)
       }
 
       DispatchQueue.main.async {
+        // Restore viewed state from persisted IDs + auto-mark read sessions
+        for i in items.indices {
+          if let sid = items[i].sessionId {
+            if self.viewedIds.contains(sid.uuidString) || !unreadSessionIds.contains(sid) {
+              items[i].isViewed = true
+            }
+          }
+        }
         self.notifications = items
         if let data = try? JSONEncoder().encode(items) {
           UserDefaults.standard.set(data, forKey: "cached_notifications")
         }
       }
     }
+  }
+
+  private func markAsViewed(_ item: NotificationItem) {
+    guard let sid = item.sessionId else { return }
+    viewedIds.insert(sid.uuidString)
+    UserDefaults.standard.set(Array(viewedIds), forKey: "viewed_notification_ids")
+    if let idx = notifications.firstIndex(where: { $0.id == item.id }) {
+      notifications[idx].isViewed = true
+      if let data = try? JSONEncoder().encode(notifications) {
+        UserDefaults.standard.set(data, forKey: "cached_notifications")
+      }
+    }
+  }
+
+  private static func resolveAvatarURL(forSessionId sid: UUID, friends: [FriendSummary]) -> String? {
+    let key = "session_friend_user_id_\(sid.uuidString)"
+    guard let raw = UserDefaults.standard.string(forKey: key),
+          let friendId = UUID(uuidString: raw),
+          let friend = friends.first(where: { $0.id == friendId }) else {
+      // Fall back to default partner avatar
+      return UserDefaults.standard.string(forKey: PreferenceKeys.partnerAvatarURL)
+    }
+    return friend.avatarURL
   }
 
   private static func parseISO8601(_ iso: String?) -> Date? {
@@ -936,42 +1018,108 @@ private struct NotificationsView: View {
     return f2.date(from: iso)
   }
 
+  private let avatarSize: CGFloat = 60
+
   @ViewBuilder
   private func notificationRow(_ item: NotificationItem) -> some View {
-    HStack(alignment: .top, spacing: 10) {
-      Image(systemName: item.icon)
-        .font(.system(size: 16))
-        .foregroundColor(.secondary)
-        .frame(width: 24, height: 24)
-        .padding(.top, 10)
+    HStack(alignment: .center, spacing: 12) {
+      notificationAvatar(item)
 
-      VStack(alignment: .leading, spacing: 2) {
-        HStack {
+      VStack(alignment: .leading, spacing: 6) {
+        HStack(spacing: 6) {
           Text(item.title)
-            .font(.system(size: 15, weight: .regular))
-            .foregroundColor(.primary)
-            .lineLimit(2)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundColor(item.isViewed ? Color(.secondaryLabel) : .primary)
+            .lineLimit(1)
 
           Spacer()
 
-          Text(timeAgoShort(item.date))
-            .font(.system(size: 12, weight: .regular))
-            .foregroundColor(Color(.tertiaryLabel))
+          if item.isViewed {
+            HStack(spacing: 4) {
+              Text("Viewed")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(Color(.secondaryLabel))
+
+              Text("·")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(Color(.tertiaryLabel))
+
+              Text(timeAgoShort(item.date))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(Color(.tertiaryLabel))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color(.tertiarySystemFill))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+          } else {
+            HStack(spacing: 4) {
+              Text("Unread")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(AppTheme.brand)
+
+              Text("·")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(Color(.tertiaryLabel))
+
+              Text(timeAgoShort(item.date))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(Color(.tertiaryLabel))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(AppTheme.brand.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+          }
         }
 
         if !item.body.isEmpty {
           Text(item.body)
-            .font(.system(size: 13, weight: .regular))
-            .foregroundColor(.secondary)
+            .font(.system(size: 15))
+            .foregroundColor(item.isViewed ? Color(.tertiaryLabel) : Color(.secondaryLabel))
+            .lineSpacing(4)
             .lineLimit(2)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
       }
-      .padding(.horizontal, 14)
-      .padding(.vertical, 10)
-      .background(AppTheme.surface)
-      .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
-    .padding(.leading, 8)
+    .padding(.vertical, 10)
+  }
+
+  @ViewBuilder
+  private func notificationAvatar(_ item: NotificationItem) -> some View {
+    if let avatarURLString = item.avatarURL, !avatarURLString.isEmpty {
+      AvatarCacheManager.shared.cachedAsyncImage(
+        urlString: avatarURLString,
+        placeholder: { AnyView(avatarPlaceholder(item)) },
+        fallback: { AnyView(avatarPlaceholder(item)) }
+      )
+      .frame(width: avatarSize, height: avatarSize)
+      .clipShape(Circle())
+      .opacity(item.isViewed ? 0.5 : 1)
+    } else {
+      avatarPlaceholder(item)
+        .opacity(item.isViewed ? 0.5 : 1)
+    }
+  }
+
+  private func avatarPlaceholder(_ item: NotificationItem) -> some View {
+    ZStack {
+      Circle()
+        .fill(Color(.tertiarySystemFill))
+        .frame(width: avatarSize, height: avatarSize)
+
+      if item.sessionId != nil {
+        Text(String(item.title.prefix(1)).uppercased())
+          .font(.system(size: 22, weight: .semibold, design: .rounded))
+          .foregroundStyle(.secondary)
+      } else {
+        Image(systemName: item.icon)
+          .font(.system(size: 20))
+          .foregroundStyle(Color(.secondaryLabel))
+      }
+    }
   }
 
   private func timeAgoShort(_ date: Date) -> String {
@@ -1053,20 +1201,11 @@ struct HomeView: View {
 
   private var avatarFallback: some View {
     Circle()
-      .fill(
-        LinearGradient(
-          colors: [
-            Color(red: 0.26, green: 0.58, blue: 1.00),
-            Color(red: 0.63, green: 0.32, blue: 0.98)
-          ],
-          startPoint: .topLeading,
-          endPoint: .bottomTrailing
-        )
-      )
+      .fill(Color(.tertiarySystemFill))
       .overlay(
         Text(displayName.prefix(1).uppercased())
           .font(.system(size: 12, weight: .semibold, design: .rounded))
-          .foregroundStyle(.white)
+          .foregroundStyle(.secondary)
       )
   }
 
@@ -1113,10 +1252,13 @@ struct HomeView: View {
       }
       .navigationDestination(isPresented: $showNotifications) {
         NotificationsView(
-          sessions: unreadSessions,
+          sessions: sessionsVM.sessions,
           onTap: { sessionId in
-            showNotifications = false
             onOpenChat?(sessionId)
+            // Pop notifications after chat overlay fully covers the screen
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+              showNotifications = false
+            }
           }
         )
       }

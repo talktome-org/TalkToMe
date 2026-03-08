@@ -62,6 +62,7 @@ struct ChatScreenView: View {
           chatViewModel.voiceController.toggleSpeakMicMute()
         },
         inputText: $chatViewModel.inputText,
+        replyQuoteText: $chatViewModel.replyQuoteText,
         isLoading: $chatViewModel.isLoading,
         pendingAttachments: Binding(
           get: { chatViewModel.pendingAttachments },

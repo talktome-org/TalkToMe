@@ -58,6 +58,11 @@ class PresenceMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
 
+        # Skip presence endpoint — the explicit online/offline signal manages
+        # its own last_seen_at; touching it here would defeat staleness checks.
+        if request.url.path.rstrip("/").endswith("/presence"):
+            return response
+
         if response.status_code < 200 or response.status_code >= 400:
             return response
 

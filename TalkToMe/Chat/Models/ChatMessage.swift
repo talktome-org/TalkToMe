@@ -2,6 +2,7 @@ import Foundation
 
 enum MessageSegment: Equatable {
     case text(String)
+    case quotedReply(String)
     case partnerMessage(text: String, ghostName: String?)
     case partnerReceived(String)
     case imageData(Data)
@@ -93,6 +94,10 @@ struct ChatMessage: Identifiable {
                     case "text":
                         if let c = dict["content"] as? String, !c.isEmpty {
                             segs.append(.text(c))
+                        }
+                    case "quoted_reply":
+                        if let txt = dict["text"] as? String, !txt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            segs.append(.quotedReply(txt))
                         }
                     case "image":
                         if let url = dict["url"] as? String, !url.isEmpty {

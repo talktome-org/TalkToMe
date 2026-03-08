@@ -87,6 +87,8 @@ struct ChatSessionActionsMenu: View {
     let onDeleteRequest: () -> Void
     let onReportRequest: () -> Void
 
+    @State private var showActions: Bool = false
+
     private var formattedTitle: String {
         let words = currentTitle.split(separator: " ")
         guard words.count > 2 else { return currentTitle }
@@ -96,35 +98,37 @@ struct ChatSessionActionsMenu: View {
     }
 
     var body: some View {
-        Menu {
-            Section {
-                Button("Rename", systemImage: "pencil") {
-                    guard sessionId != nil else { return }
-                    onRenameRequest()
-                }
-                .disabled(sessionId == nil)
-
-                Button("Report", systemImage: "exclamationmark.bubble") {
-                    onReportRequest()
-                }
-                .disabled(sessionId == nil)
-
-                Button("Archive", systemImage: "archivebox") {
-                    onArchiveRequest()
-                }
-                .disabled(sessionId == nil)
-
-                Button("Delete", systemImage: "trash", role: .destructive) {
-                    onDeleteRequest()
-                }
-                .disabled(sessionId == nil)
-            } header: {
-                Text(formattedTitle)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
+        Button {
+            // Dismiss keyboard first so it doesn't interfere with the action sheet
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil, from: nil, for: nil
+            )
+            showActions = true
         } label: {
             Label("More", systemImage: "ellipsis")
+        }
+        .confirmationDialog(formattedTitle, isPresented: $showActions, titleVisibility: .visible) {
+            Button("Rename") {
+                guard sessionId != nil else { return }
+                onRenameRequest()
+            }
+            .disabled(sessionId == nil)
+
+            Button("Report") {
+                onReportRequest()
+            }
+            .disabled(sessionId == nil)
+
+            Button("Archive") {
+                onArchiveRequest()
+            }
+            .disabled(sessionId == nil)
+
+            Button("Delete", role: .destructive) {
+                onDeleteRequest()
+            }
+            .disabled(sessionId == nil)
         }
     }
 }

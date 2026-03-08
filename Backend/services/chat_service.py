@@ -230,10 +230,12 @@ class VoiceChatService:
 
         async def event_generator() -> AsyncIterator[GeminiStreamEvent]:
             if not self.client:
+                print("[VoiceAgent][Gemini] ERROR: GEMINI_API_KEY not configured")
                 yield GeminiStreamEvent(type="response.error", error="GEMINI_API_KEY not configured")
                 return
 
             try:
+                print(f"[VoiceAgent][Gemini] starting stream — model={self.model_name} system_instruction_len={len(system_instruction or '')} contents_count={len(contents)}")
                 # Emit response.created event
                 yield GeminiStreamEvent(type="response.created")
 
@@ -246,6 +248,7 @@ class VoiceChatService:
 
                 # Use async streaming with multi-turn contents
                 chunk_count = 0
+                total_text_len = 0
                 async for chunk in await self.client.aio.models.generate_content_stream(
                     model=self.model_name,
                     contents=contents,
@@ -253,6 +256,7 @@ class VoiceChatService:
                 ):
                     chunk_count += 1
                     if chunk.text:
+                        total_text_len += len(chunk.text)
                         yield GeminiStreamEvent(
                             type="response.output_text.delta",
                             delta=chunk.text,
@@ -265,16 +269,17 @@ class VoiceChatService:
                             if chunk.candidates:
                                 finish_reason = chunk.candidates[0].finish_reason
                                 safety_ratings = chunk.candidates[0].safety_ratings
-                        print(f"[Gemini] Empty chunk #{chunk_count}: finish_reason={finish_reason} safety={safety_ratings}")
+                        print(f"[VoiceAgent][Gemini] Empty chunk #{chunk_count}: finish_reason={finish_reason} safety={safety_ratings}")
 
                 if chunk_count == 0:
-                    print("[Gemini] WARNING: Stream returned zero chunks")
+                    print("[VoiceAgent][Gemini] WARNING: Stream returned zero chunks")
 
+                print(f"[VoiceAgent][Gemini] stream completed — chunks={chunk_count} total_text_len={total_text_len}")
                 # Emit response.completed event
                 yield GeminiStreamEvent(type="response.completed")
 
             except Exception as e:
-                print(f"[Gemini] Stream error: {e}")
+                print(f"[VoiceAgent][Gemini] Stream error: {e}")
                 yield GeminiStreamEvent(type="response.error", error=str(e))
 
         yield event_generator()

@@ -107,6 +107,7 @@ struct AuthView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 15)
+                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
             .modifier(AuthSecondaryButtonStyle())
@@ -120,6 +121,7 @@ struct AuthView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 15)
+                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
             .modifier(AuthAppleButtonStyle())
@@ -145,6 +147,7 @@ struct AuthView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 15)
+                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
             .modifier(AuthSecondaryButtonStyle())
@@ -157,6 +160,7 @@ struct AuthView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 15)
+                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
             .modifier(AuthPrimaryButtonStyle())
@@ -347,9 +351,11 @@ private struct EmailLoginView: View {
 
     @State private var email: String = ""
     @State private var password: String = ""
+    @State private var showPassword: Bool = false
     @State private var isSubmitting: Bool = false
     @State private var showOfflineAlert: Bool = false
-    @State private var localError: String? = nil
+    @State private var toastMessage: String? = nil
+    @State private var toastWorkItem: DispatchWorkItem? = nil
 
     var body: some View {
         ZStack {
@@ -374,18 +380,31 @@ private struct EmailLoginView: View {
                             .textContentType(.username)
                             .modifier(AuthTextFieldStyle())
 
-                        SecureField("Password", text: $password)
-                            .textContentType(.password)
-                            .modifier(AuthTextFieldStyle())
+                        ZStack {
+                            if showPassword {
+                                TextField("Password", text: $password)
+                                    .textContentType(.password)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled(true)
+                            } else {
+                                SecureField("Password", text: $password)
+                                    .textContentType(.password)
+                            }
+                        }
+                        .modifier(AuthTextFieldStyle())
+                        .overlay(alignment: .trailing) {
+                            Button {
+                                showPassword.toggle()
+                            } label: {
+                                Image(systemName: showPassword ? "eye.slash" : "eye")
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(AppTheme.textSecondary)
+                            }
+                            .padding(.trailing, 14)
+                        }
                     }
                     .padding(16)
                     .modifier(AuthPanelCardStyle())
-
-                    if let err = (localError ?? authService.lastAuthError), !err.isEmpty {
-                        Text(err)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
 
                     Button(action: submit) {
                         HStack(spacing: 10) {
@@ -397,6 +416,7 @@ private struct EmailLoginView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
+                        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
                     .buttonStyle(.plain)
                     .modifier(AuthPrimaryButtonStyle())
@@ -435,11 +455,31 @@ private struct EmailLoginView: View {
         } message: {
             Text("Connect to the internet to log in.")
         }
+        .overlay(alignment: .top) {
+            if let toastMessage {
+                ToastOverlayView(message: toastMessage, onDismiss: dismissToast)
+                    .padding(.top, 8)
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
+    }
+
+    private func showToast(_ message: String) {
+        toastWorkItem?.cancel()
+        Haptics.notification(.warning)
+        withAnimation { toastMessage = message }
+        let work = DispatchWorkItem { withAnimation { toastMessage = nil } }
+        toastWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+    }
+
+    private func dismissToast() {
+        toastWorkItem?.cancel()
+        withAnimation { toastMessage = nil }
     }
 
     private func submit() {
         Haptics.selection()
-        localError = nil
 
         guard network.isOnline else {
             showOfflineAlert = true
@@ -448,15 +488,15 @@ private struct EmailLoginView: View {
 
         let e = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !e.isEmpty else {
-            localError = "Enter your email address."
+            showToast("Enter your email address.")
             return
         }
         guard isPlausibleEmail(e) else {
-            localError = "Enter a valid email address."
+            showToast("Enter a valid email address.")
             return
         }
         guard !password.isEmpty else {
-            localError = "Enter your password."
+            showToast("Enter your password.")
             return
         }
 
@@ -467,6 +507,8 @@ private struct EmailLoginView: View {
                 isSubmitting = false
                 if authService.isAuthenticated {
                     dismiss()
+                } else if let err = authService.lastAuthError, !err.isEmpty {
+                    showToast(err)
                 }
             }
         }
@@ -488,9 +530,12 @@ private struct EmailSignUpView: View {
     @ObservedObject private var authService = AuthService.shared
     @Environment(\.dismiss) private var dismiss
 
+    @State private var firstName: String = ""
     @State private var email: String = ""
     @State private var password: String = ""
     @State private var confirmPassword: String = ""
+    @State private var showPassword: Bool = false
+    @State private var showConfirmPassword: Bool = false
 
     @FocusState private var focusedField: Field?
     @State private var isSubmitting: Bool = false
@@ -500,7 +545,7 @@ private struct EmailSignUpView: View {
     @State private var emailCheckTask: Task<Void, Never>? = nil
     @State private var emailCheckState: EmailCheckState = .idle
 
-    private enum Field { case email, password, confirm }
+    private enum Field { case firstName, email, password, confirm }
     private enum EmailCheckState: Equatable {
         case idle
         case checking
@@ -512,8 +557,9 @@ private struct EmailSignUpView: View {
     private var trimmedEmail: String { email.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var normalizedEmail: String { normalizeEmail(email) }
 
+    private var trimmedFirstName: String { firstName.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var hasValidDetails: Bool {
-        isPlausibleEmail(trimmedEmail)
+        !trimmedFirstName.isEmpty && isPlausibleEmail(trimmedEmail)
     }
 
     private var hasValidPassword: Bool { password.count >= 6 }
@@ -527,6 +573,7 @@ private struct EmailSignUpView: View {
     }
 
     private var validationHint: String {
+        if trimmedFirstName.isEmpty { return "Enter your first name." }
         if !isPlausibleEmail(trimmedEmail) { return "Enter a valid email address." }
         switch emailCheckState {
         case .idle, .checking:
@@ -551,13 +598,21 @@ private struct EmailSignUpView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     AuthSheetHeader(
                         title: "Create account",
-                        subtitle: "Name will be collected in onboarding after you sign in."
+                        subtitle: "Let's get you set up."
                     )
 
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("Create credentials")
+                        Text("Your details")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(AppTheme.textSecondary)
+
+                        TextField("First name", text: $firstName)
+                            .focused($focusedField, equals: .firstName)
+                            .textContentType(.givenName)
+                            .autocorrectionDisabled(true)
+                            .submitLabel(.next)
+                            .onSubmit { focusedField = .email }
+                            .modifier(AuthTextFieldStyle())
 
                         TextField("Email", text: $email)
                             .focused($focusedField, equals: .email)
@@ -576,25 +631,63 @@ private struct EmailSignUpView: View {
                                 }
                             }
 
-                        if emailCheckState == .taken {
-                            Text("This email is taken.")
-                                .font(.footnote)
-                                .foregroundStyle(.red)
+                        ZStack {
+                            if showPassword {
+                                TextField("Password", text: $password)
+                                    .focused($focusedField, equals: .password)
+                                    .textContentType(.newPassword)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled(true)
+                                    .submitLabel(.next)
+                                    .onSubmit { focusedField = .confirm }
+                            } else {
+                                SecureField("Password", text: $password)
+                                    .focused($focusedField, equals: .password)
+                                    .textContentType(.newPassword)
+                                    .submitLabel(.next)
+                                    .onSubmit { focusedField = .confirm }
+                            }
+                        }
+                        .modifier(AuthTextFieldStyle())
+                        .overlay(alignment: .trailing) {
+                            Button {
+                                showPassword.toggle()
+                            } label: {
+                                Image(systemName: showPassword ? "eye.slash" : "eye")
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(AppTheme.textSecondary)
+                            }
+                            .padding(.trailing, 14)
                         }
 
-                        SecureField("Password", text: $password)
-                            .focused($focusedField, equals: .password)
-                            .textContentType(.newPassword)
-                            .submitLabel(.next)
-                            .onSubmit { focusedField = .confirm }
-                            .modifier(AuthTextFieldStyle())
-
-                        SecureField("Confirm password", text: $confirmPassword)
-                            .focused($focusedField, equals: .confirm)
-                            .textContentType(.newPassword)
-                            .submitLabel(.go)
-                            .onSubmit { if canSubmit { submit() } }
-                            .modifier(AuthTextFieldStyle())
+                        ZStack {
+                            if showConfirmPassword {
+                                TextField("Confirm password", text: $confirmPassword)
+                                    .focused($focusedField, equals: .confirm)
+                                    .textContentType(.newPassword)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled(true)
+                                    .submitLabel(.go)
+                                    .onSubmit { if canSubmit { submit() } }
+                            } else {
+                                SecureField("Confirm password", text: $confirmPassword)
+                                    .focused($focusedField, equals: .confirm)
+                                    .textContentType(.newPassword)
+                                    .submitLabel(.go)
+                                    .onSubmit { if canSubmit { submit() } }
+                            }
+                        }
+                        .modifier(AuthTextFieldStyle())
+                        .overlay(alignment: .trailing) {
+                            Button {
+                                showConfirmPassword.toggle()
+                            } label: {
+                                Image(systemName: showConfirmPassword ? "eye.slash" : "eye")
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(AppTheme.textSecondary)
+                            }
+                            .padding(.trailing, 14)
+                        }
                     }
                     .padding(16)
                     .modifier(AuthPanelCardStyle())
@@ -609,6 +702,7 @@ private struct EmailSignUpView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
+                        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
                     .buttonStyle(.plain)
                     .modifier(AuthPrimaryButtonStyle())
@@ -693,7 +787,7 @@ private struct EmailSignUpView: View {
 
         isSubmitting = true
         Task {
-            let outcome = await authService.signUp(fullName: nil, email: e, password: password)
+            let outcome = await authService.signUp(fullName: trimmedFirstName, email: e, password: password)
             await MainActor.run {
                 isSubmitting = false
                 if authService.isAuthenticated {
@@ -704,7 +798,7 @@ private struct EmailSignUpView: View {
                 case .signedIn:
                     break
                 case .needsEmailConfirmation:
-                    showToast("Check your email and tap the confirmation link to continue onboarding.")
+                    showToast("We sent a confirmation link to your email. Tap it to get started!")
                 case .emailAlreadyExists:
                     emailCheckState = .taken
                     showToast(authService.lastAuthError ?? "An account with this email already exists. Try a different one or log in.")
@@ -736,6 +830,7 @@ private struct EmailSignUpView: View {
                 await MainActor.run {
                     guard normalizeEmail(email) == emailToCheck else { return }
                     emailCheckState = exists ? .taken : .available
+                    if exists { showToast("This email is taken.") }
                 }
             } catch {
                 guard !Task.isCancelled else { return }
