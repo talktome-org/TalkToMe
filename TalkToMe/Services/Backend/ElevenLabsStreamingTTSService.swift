@@ -46,6 +46,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
 
     @MainActor
     func preconnect(voiceId: String, voiceName: String? = nil, config: Config = .init()) async {
+        print("[VoiceAgent][TTS] preconnect called — voiceId=\(voiceId) currentConnected=\(isConnected) connectedVoiceId=\(connectedVoiceId ?? "nil")")
         if isConnected {
             if voiceId == connectedVoiceId { return }
             stopKeepAlive()
@@ -58,14 +59,18 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         self.voiceId = voiceId
         self.voiceName = voiceName
 
-        guard let token = await AuthService.shared.getAccessToken() else { return }
+        guard let token = await AuthService.shared.getAccessToken() else {
+            print("[VoiceAgent][TTS] preconnect failed — no access token")
+            return
+        }
         do {
             try await openWebSocket(token: token)
             self.isConnected = true
             self.receiveLoop()
             self.startKeepAlive()
+            print("[VoiceAgent][TTS] preconnect succeeded")
         } catch {
-            // Silently fail — we'll connect normally when start() is called
+            print("[VoiceAgent][TTS] preconnect failed: \(error)")
         }
     }
 
@@ -144,17 +149,20 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
 
     @MainActor
     func finish() {
+        print("[VoiceAgent][TTS] finish() — isConnected=\(isConnected) pendingText=\(pendingText.count)chars isSpeaking=\(isSpeaking)")
         finishSent = true
         if isConnected {
             flushPendingTextImmediately()
             sendEvent(["type": "end"])
         } else {
+            print("[VoiceAgent][TTS] finish() — not connected, setting pendingFinish=true")
             pendingFinish = true
         }
     }
 
     @MainActor
     func cancel() {
+        print("[VoiceAgent][TTS] cancel() — isConnected=\(isConnected) isSpeaking=\(isSpeaking)")
         flushWorkItem?.cancel()
         flushWorkItem = nil
         pendingText = ""
@@ -229,6 +237,7 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
             Task { @MainActor in
                 switch result {
                 case .failure(let err):
+                    print("[VoiceAgent][TTS] receiveLoop failure: \(err) finishSent=\(self.finishSent)")
                     if self.finishSent {
                         self.isConnected = false
                         self.wsTask = nil
@@ -268,10 +277,12 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         if !audioB64.isEmpty {
             enqueuePCMChunk(base64PCM: audioB64, isLast: isFinal)
         } else if isFinal {
+            print("[VoiceAgent][TTS] received isFinal with no audio — scheduling end sentinel")
             scheduleEndSentinel()
         }
 
         if isFinal {
+            print("[VoiceAgent][TTS] isFinal received — closing WS and preconnecting. audioB64Len=\(audioB64.count) isSpeaking=\(isSpeaking)")
             finishSent = true
             stopKeepAlive()
             wsTask?.cancel(with: .normalClosure, reason: nil)
@@ -372,9 +383,11 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
         silence.frameLength = 1
         silence.int16ChannelData!.pointee.initialize(to: 0)
 
+        print("[VoiceAgent][TTS] scheduling end sentinel buffer")
         SharedAudioEngine.shared.playerNode.scheduleBuffer(silence) { [weak self] in
             guard let self else { return }
             self.audioQueue.async {
+                print("[VoiceAgent][TTS] end sentinel completed — stopping playback, setting isSpeaking=false")
                 self.startedPlayback = false
                 SharedAudioEngine.shared.playerNode.stop()
                 SharedAudioEngine.shared.removeSpeakerLevelTap()

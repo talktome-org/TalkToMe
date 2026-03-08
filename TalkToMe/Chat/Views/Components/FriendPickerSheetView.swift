@@ -83,7 +83,7 @@ struct FriendPickerSheetView: View {
                             } label: {
                                 HStack {
                                     ZStack(alignment: .bottomTrailing) {
-                                        SidebarAvatarView(avatarURL: friend.avatarURL)
+                                        SidebarAvatarView(avatarURL: friend.avatarURL, name: friend.fullName)
                                             .frame(width: 34, height: 34)
                                             .clipShape(Circle())
 

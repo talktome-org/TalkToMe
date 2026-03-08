@@ -163,6 +163,13 @@ final class ChatSessionsViewModel: ObservableObject {
             }
         )
         notificationTokens.append(
+            nc.addObserver(forName: .partnerMessageUnsent, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    await self?.refreshSessions()
+                }
+            }
+        )
+        notificationTokens.append(
             nc.addObserver(forName: .partnerMessageOpen, object: nil, queue: .main) { [weak self] note in
                 MainActor.assumeIsolated {
                     guard let sid = note.userInfo?["sessionId"] as? UUID else { return }

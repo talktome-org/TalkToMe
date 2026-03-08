@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -133,6 +134,9 @@ async def add_by_code(request: AddFriendByCodeRequest, current_user: dict = Depe
     return AddFriendByCodeResponse(success=True, friend_user_id=friend_id)
 
 
+_ONLINE_STALE_SECONDS = 5 * 60  # treat is_online as stale after 5 min of inactivity
+
+
 @router.get("", response_model=FriendsListResponse)
 async def list_friends(http_request: Request, current_user: dict = Depends(get_current_user)):
     try:
@@ -143,6 +147,7 @@ async def list_friends(http_request: Request, current_user: dict = Depends(get_c
     try:
         ids = await list_friends_for_user(user_id=user_id)
         base_url = _resolve_public_base_url(http_request)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         out: list[FriendSummary] = []
         for fid in ids:
             profile = _profile_fields_for_user(fid)
@@ -164,6 +169,13 @@ async def list_friends(http_request: Request, current_user: dict = Depends(get_c
             last_seen_dt = profile.get("last_seen_at")
             last_seen_str = last_seen_dt.isoformat() + "Z" if last_seen_dt else None
 
+            # Guard against stale is_online: if last_seen_at is too old, the
+            # app likely got killed before it could send the offline signal.
+            is_online = bool(profile.get("is_online", False))
+            if is_online and last_seen_dt is not None:
+                if (now - last_seen_dt).total_seconds() > _ONLINE_STALE_SECONDS:
+                    is_online = False
+
             out.append(
                 FriendSummary(
                     user_id=fid,
@@ -171,7 +183,7 @@ async def list_friends(http_request: Request, current_user: dict = Depends(get_c
                     auth_provider=auth_provider,
                     avatar_url=avatar_url,
                     last_seen_at=last_seen_str,
-                    is_online=bool(profile.get("is_online", False)),
+                    is_online=is_online,
                 )
             )
         return FriendsListResponse(friends=out)

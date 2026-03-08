@@ -80,6 +80,8 @@ class AuthService: ObservableObject {
                 self.applyAuthenticatedSession(session)
             }
         } catch {
+            // Silently ignore user-initiated cancellations (e.g. dismissing the OAuth sheet)
+            guard !Self.isAuthCancellation(error) else { return }
             await MainActor.run {
                 self.lastAuthError = self.userFacingAuthMessage(for: error, flow: .signIn)
             }
@@ -117,7 +119,11 @@ class AuthService: ObservableObject {
 
         do {
             print("[AuthService] signUp starting for email: \(normalizedEmail)")
-            let response = try await client.auth.signUp(email: normalizedEmail, password: password)
+            var signUpData: [String: AnyJSON]? = nil
+            if let name = fullName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+                signUpData = ["full_name": .string(name)]
+            }
+            let response = try await client.auth.signUp(email: normalizedEmail, password: password, data: signUpData, redirectTo: redirectURL)
             print("[AuthService] signUp succeeded – user id: \(response.user.id)")
 
             // If confirm-email is enabled, signUp succeeds but there is no session yet.
@@ -170,6 +176,11 @@ class AuthService: ObservableObject {
     }
 
     func signOut() async {
+        // Send offline presence before clearing the session (token still valid).
+        if let token = try? await client.auth.session.accessToken {
+            try? await BackendService.shared.updatePresence(online: false, accessToken: token)
+        }
+
         await MainActor.run {
             UserDefaults.standard.set(true, forKey: PreferenceKeys.didExplicitSignOut)
             self.clearAuthenticatedSession()
@@ -398,6 +409,23 @@ class AuthService: ObservableObject {
         return text.contains("already registered")
             || text.contains("already exists")
             || (text.contains("email") && text.contains("exists"))
+    }
+
+    /// Returns `true` when the error represents the user cancelling an auth flow
+    /// (e.g. dismissing the ASWebAuthenticationSession sheet).
+    private static func isAuthCancellation(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        // ASWebAuthenticationSessionError.canceledLogin (domain …WebAuthenticationSession, code 1)
+        if nsError.domain == ASWebAuthenticationSessionError.errorDomain,
+           nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+            return true
+        }
+        // ASAuthorizationError.canceled (domain com.apple.AuthenticationServices.AuthorizationError, code 1001)
+        if nsError.domain == ASAuthorizationError.errorDomain,
+           nsError.code == ASAuthorizationError.canceled.rawValue {
+            return true
+        }
+        return false
     }
 
     private func userFacingAuthMessage(for error: Error, flow: AuthFlow) -> String {

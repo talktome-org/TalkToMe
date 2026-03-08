@@ -4,6 +4,7 @@ import UIKit
 @MainActor
 protocol ChatStreamingDelegate: AnyObject {
     var inputText: String { get set }
+    var replyQuoteText: String? { get set }
     var messages: [ChatMessage] { get set }
     var pendingAttachments: [PendingAttachment] { get set }
     var sessionId: UUID? { get set }
@@ -84,6 +85,17 @@ final class ChatStreamingController {
         currentStreamToken = nil
     }
 
+    /// Prefer the actively speaking voice agent; otherwise use the currently selected buddy name.
+    /// This lets partner draft segments carry stable `ghost_name` metadata in normal (non-speak) chat, too.
+    private func resolvedGhostNameForRequest() -> String? {
+        let active = (activeVoiceAgentName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !active.isEmpty { return active }
+
+        let selected = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return selected.isEmpty ? nil : selected
+    }
+
     func getAssistantMessageId(for sessionId: UUID) -> UUID? {
         assistantMessageIdBySession[sessionId]
     }
@@ -105,14 +117,30 @@ final class ChatStreamingController {
     }
 
     func sendMessage(overrideText: String? = nil, isRegeneration: Bool = false, reuseMessageId: UUID? = nil) {
-        guard let delegate else { return }
+        guard let delegate else {
+            print("[VoiceAgent] sendMessage — no delegate, returning")
+            return
+        }
 
         let trimmedMessage = (overrideText ?? delegate.inputText).trimmingCharacters(in: .whitespacesAndNewlines)
         let attachmentsToSend = delegate.pendingAttachments
-        guard !(trimmedMessage.isEmpty && attachmentsToSend.isEmpty) else { return }
-        guard !isStreaming else { return }
+        guard !(trimmedMessage.isEmpty && attachmentsToSend.isEmpty) else {
+            if activeVoiceAgentName != nil { print("[VoiceAgent] sendMessage — empty message & no attachments, returning") }
+            return
+        }
+        guard !isStreaming else {
+            if activeVoiceAgentName != nil { print("[VoiceAgent] sendMessage — already streaming, returning") }
+            return
+        }
 
-        let messageToSend = trimmedMessage
+        let quoteText = delegate.replyQuoteText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasQuote = !(quoteText ?? "").isEmpty
+        let messageToSend: String = {
+            if hasQuote, let qt = quoteText {
+                return "> \(qt)\n\n\(trimmedMessage)"
+            }
+            return trimmedMessage
+        }()
         let previewToSend: String = {
             if !trimmedMessage.isEmpty { return trimmedMessage }
             if attachmentsToSend.contains(where: { $0.isImage }) { return "Sent a photo." }
@@ -158,6 +186,9 @@ final class ChatStreamingController {
 
         var outboxAttachments: [OutboxAttachment] = []
         var segs: [[String: Any]] = []
+        if hasQuote, let qt = quoteText {
+            segs.append(["type": "quoted_reply", "text": qt])
+        }
         if !trimmedMessage.isEmpty {
             segs.append(["type": "text", "content": trimmedMessage])
         }
@@ -207,10 +238,10 @@ final class ChatStreamingController {
 
         if !isRegeneration {
             let persistedContent: String = {
-                guard !attachmentsToSend.isEmpty else { return messageToSend }
+                guard !attachmentsToSend.isEmpty || hasQuote else { return trimmedMessage }
                 let obj: [String: Any] = ["_talktome": ["type": "segments", "segments": segs]]
                 let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
-                return String(data: data, encoding: .utf8) ?? messageToSend
+                return String(data: data, encoding: .utf8) ?? trimmedMessage
             }()
 
             let dto = BackendService.ChatMessageDTO(
@@ -245,6 +276,7 @@ final class ChatStreamingController {
             NotificationCenter.default.post(name: .chatSessionsNeedRefresh, object: nil)
 
             delegate.inputText = ""
+            delegate.replyQuoteText = nil
             delegate.pendingAttachments = []
         } else {
             // Regeneration: persist the user message to local DB (the old one
@@ -749,6 +781,7 @@ final class ChatStreamingController {
                         }
                     }
                 case .done:
+                    print("[VoiceAgent] SSE .done received — voiceAgent=\(voiceAgentToSend ?? "nil") accumulatedLen=\(accumulated.count)")
                     let targetSid = streamSessionId ?? delegate.sessionId
                     if let sid = targetSid, sid != delegate.sessionId {
                         Task { @MainActor in
@@ -823,12 +856,16 @@ final class ChatStreamingController {
                                 // Previously this task slept 900ms, creating a window
                                 // where app termination could lose voice metadata.
                                 Task.detached {
-                                    // Skip server reconciliation after regeneration: the local
-                                    // DB already has the correct messages and reconciling risks
-                                    // restoring old messages that failed to delete on the server.
-                                    if !skipReconciliation,
-                                       let dtos = try? await BackendService.shared.fetchMessages(sessionId: sid, accessToken: tokenForSync) {
-                                        await ChatStore.shared.reconcileMessagesWithServer(dtos, sessionId: sid)
+                                    if let dtos = try? await BackendService.shared.fetchMessages(sessionId: sid, accessToken: tokenForSync) {
+                                        if skipReconciliation {
+                                            // After regeneration: upsert server messages so the new
+                                            // assistant message is persisted to GRDB, but skip orphan
+                                            // cleanup to avoid restoring messages pending server-side
+                                            // deletion.
+                                            await ChatStore.shared.upsertMessages(dtos)
+                                        } else {
+                                            await ChatStore.shared.reconcileMessagesWithServer(dtos, sessionId: sid)
+                                        }
                                     }
                                     if let ghostName = capturedGhostName {
                                         await ChatStore.shared.setGhostNameForPartnerDrafts(sessionId: sid, ghostName: ghostName)
@@ -857,6 +894,7 @@ final class ChatStreamingController {
                         }
                     }
                 case .error(let message):
+                    print("[VoiceAgent] SSE .error received: \(message) — voiceAgent=\(voiceAgentToSend ?? "nil")")
                     if message.contains("previous_response_not_found") || (message.contains("previous_response_id") && message.contains("not found")) {
                         Task { @MainActor in
                             let sid = streamSessionId ?? localSessionIdForSend
@@ -925,16 +963,16 @@ final class ChatStreamingController {
                 }
             }
 
-            let ghostNameToSend: String? = {
-                let trimmed = (self.activeVoiceAgentName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed.isEmpty ? nil : trimmed
-            }()
+            let ghostNameToSend: String? = self.resolvedGhostNameForRequest()
             let cleanedGhostName = ghostNameToSend?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !cleanedGhostName.isEmpty {
                 self.ghostNameBySession[localSessionIdForSend] = cleanedGhostName
             }
 
             let deleteBeforeId: UUID? = isRegeneration ? reuseMessageId : nil
+            if voiceAgentToSend != nil {
+                print("[VoiceAgent] starting SSE stream — voiceAgent=\(voiceAgentToSend!) ghostName=\(ghostNameToSend ?? "nil") sessionId=\(requestSessionIdForStream?.uuidString ?? "nil") customInstructions=\(customInstructionsToSend != nil ? "yes" : "no")")
+            }
             let task = Task.detached { [streamToken] in
                 let stream = BackendService.shared.streamChatMessage(
                     messageToSend,

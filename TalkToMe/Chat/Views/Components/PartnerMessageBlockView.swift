@@ -2,13 +2,20 @@ import SwiftUI
 
 struct PartnerMessageBlockView: View {
 
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
     @AppStorage(PreferenceKeys.fontSizePreference) private var fontSizeScale: Double = 1.0
 
     let text: String
     let senderUserId: UUID?
+    var timestamp: Date = Date()
+    var onReply: ((String) -> Void)? = nil
 
-    private let bubbleColor = Color(.secondarySystemBackground)
+    private var bubbleColor: Color {
+        colorScheme == .light
+            ? Color.talkToMePartnerBubbleLightGray
+            : AppTheme.talkToMeBubbleAI
+    }
 
     private var resolvedFriend: FriendSummary? {
         guard let senderUserId else { return nil }
@@ -29,36 +36,80 @@ struct PartnerMessageBlockView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var timeAgo: String {
+        let interval = Date().timeIntervalSince(timestamp)
+        if interval < 60 { return "now" }
+        let minutes = Int(interval / 60)
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h" }
+        let days = hours / 24
+        return "\(days)d"
+    }
+
     var body: some View {
-        HStack(alignment: .bottom, spacing: 6) {
-            AvatarCacheManager.shared.cachedAsyncImage(
-                urlString: resolvedAvatarURL.isEmpty ? nil : resolvedAvatarURL,
-                placeholder: avatarPlaceholder,
-                fallback: avatarPlaceholder
-            )
-            .frame(width: 43, height: 43)
-            .clipShape(Circle())
-
-            VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
+            // Name · time above the bubble
+            HStack(spacing: 4) {
                 Text(resolvedName)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.teal)
-
-                Text(text.isEmpty ? " " : text)
-                    .font(.system(size: 17 * fontSizeScale))
-                    .lineSpacing(2)
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.primary)
+                Text("·")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(Color(.tertiaryLabel))
+                Text(timeAgo)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(AppTheme.brand)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background {
-                PartnerBubbleShape()
-                    .fill(bubbleColor)
-            }
+            .padding(.leading, 61)
 
-            Spacer(minLength: 0)
+            HStack(alignment: .bottom, spacing: 6) {
+                AvatarCacheManager.shared.cachedAsyncImage(
+                    urlString: resolvedAvatarURL.isEmpty ? nil : resolvedAvatarURL,
+                    placeholder: avatarPlaceholder,
+                    fallback: avatarPlaceholder
+                )
+                .frame(width: 43, height: 43)
+                .clipShape(Circle())
+
+                Group {
+                    if let onReply, !text.isEmpty {
+                        SelectableTextView(
+                            attributedText: partnerNSAttributedString(text),
+                            replyToName: resolvedName,
+                            onReply: onReply
+                        )
+                        .padding(.horizontal, 2)
+                        .padding(.vertical, 2)
+                    } else {
+                        Text(text.isEmpty ? " " : text)
+                            .font(.system(size: 17 * fontSizeScale))
+                            .lineSpacing(2)
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 2)
+                            .padding(.vertical, 2)
+                    }
+                }
+                .padding(10)
+                .background {
+                    PartnerBubbleShape()
+                        .fill(bubbleColor)
+                }
+            }
         }
         .padding(.bottom, 2)
+    }
+
+    private func partnerNSAttributedString(_ text: String) -> NSAttributedString {
+        let fontSize: CGFloat = 17 * fontSizeScale
+        let textColor = UIColor.label
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 2
+        return NSAttributedString(string: text, attributes: [
+            .font: UIFont.systemFont(ofSize: fontSize),
+            .foregroundColor: textColor,
+            .paragraphStyle: paragraphStyle,
+        ])
     }
 
     private func avatarPlaceholder() -> AnyView {

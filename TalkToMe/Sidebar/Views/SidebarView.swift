@@ -222,17 +222,12 @@ struct SidebarView: View {
 
   @ViewBuilder
   private var ghostToolbarImage: some View {
-    if let videoName = ElevenLabsVoiceSuggestionsView.ghostVideoName(for: effectiveVoiceName),
-       Bundle.main.url(forResource: videoName, withExtension: "mp4") != nil {
-      TransparentVideoPlayerView(
-        videoName: videoName,
-        videoExtension: "mp4",
-        startTime: ElevenLabsVoiceSuggestionsView.ghostStartTimes[videoName] ?? 0
-      )
-    } else if let uiImage = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: effectiveVoiceName) {
+    if let uiImage = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: effectiveVoiceName) {
       Image(uiImage: uiImage)
         .resizable()
-        .scaledToFit()
+        .scaledToFill()
+        .frame(width: 30, height: 30)
+        .clipShape(Circle())
     } else {
       Image(systemName: "waveform")
         .font(.system(size: 18, weight: .semibold))
@@ -796,7 +791,7 @@ struct FriendsSheetView: View {
   private func friendRow(_ friend: FriendSummary) -> some View {
     HStack(spacing: 14) {
       ZStack(alignment: .bottomTrailing) {
-        SidebarAvatarView(avatarURL: friend.avatarURL)
+        SidebarAvatarView(avatarURL: friend.avatarURL, name: friend.fullName)
           .frame(width: 44, height: 44)
           .clipShape(Circle())
 

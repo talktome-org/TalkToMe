@@ -269,7 +269,7 @@ struct FriendsAndContactsSectionView: View {
                 ForEach(friendsViewModel.friends) { friend in
                     HStack(spacing: 14) {
                         ZStack(alignment: .bottomTrailing) {
-                            SidebarAvatarView(avatarURL: friend.avatarURL)
+                            SidebarAvatarView(avatarURL: friend.avatarURL, name: friend.fullName)
                                 .frame(width: 44, height: 44)
                                 .clipShape(Circle())
 

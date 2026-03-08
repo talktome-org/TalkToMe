@@ -109,6 +109,7 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
 
     @MainActor
     func disconnect() {
+        print("[VoiceAgent][STT] disconnect() called — isConnected=\(isConnected) isRecording=\(isRecording)")
         SharedAudioEngine.shared.removeInputTap()
         stopKeepAlive()
         isConnected = false
@@ -231,6 +232,7 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             Task { @MainActor in
                 switch result {
                 case .failure(let err):
+                    print("[VoiceAgent][STT] receiveLoop failure: \(err) isRecording=\(self.isRecording)")
                     let existing = (self.lastError ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                     if existing.isEmpty {
                         self.lastError = err.localizedDescription
@@ -241,6 +243,8 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
                     self.handle(message: msg)
                     if self.isConnected {
                         self.receiveLoop()
+                    } else {
+                        print("[VoiceAgent][STT] receiveLoop — no longer connected after handling message, stopping receive loop")
                     }
                 }
             }

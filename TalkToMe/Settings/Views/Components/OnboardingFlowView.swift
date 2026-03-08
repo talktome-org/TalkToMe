@@ -214,6 +214,7 @@ struct OnboardingFlowView: View {
         Capsule(style: .continuous)
           .stroke(Color.primary.opacity(0.08), lineWidth: 1)
       )
+      .contentShape(Capsule())
     }
     .buttonStyle(.plain)
   }
@@ -584,6 +585,7 @@ struct OnboardingFlowView: View {
               .stroke(isSelected ? Color.white.opacity(0.22) : Color.primary.opacity(0.08), lineWidth: 1)
           )
       )
+      .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
     .buttonStyle(.plain)
   }
@@ -621,6 +623,7 @@ struct OnboardingFlowView: View {
               .stroke(isSelected ? Color.white.opacity(0.2) : Color.primary.opacity(0.08), lineWidth: 1)
           )
       )
+      .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
     .buttonStyle(.plain)
   }
@@ -655,6 +658,7 @@ struct OnboardingFlowView: View {
             )
         )
         .foregroundColor(.white)
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
       }
       .buttonStyle(.plain)
       .disabled(isSaving)

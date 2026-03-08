@@ -49,9 +49,8 @@ struct SettingsView: View {
     if let user = AuthService.shared.currentUser {
       if let n = user.userMetadata["full_name"]?.stringValue, !n.isEmpty { return n }
       if let n = user.userMetadata["name"]?.stringValue, !n.isEmpty { return n }
-      if let email = user.email { return email.components(separatedBy: "@").first ?? "User" }
     }
-    return "User"
+    return "You"
   }
 
   private var avatarView: some View {
@@ -77,7 +76,7 @@ struct SettingsView: View {
       } label: {
         VStack(spacing: 6) {
           avatarView
-            .frame(height: 120)
+            .frame(width: 120, height: 120)
           Text(preferredName.components(separatedBy: " ").first ?? preferredName)
             .font(.system(size: 18, weight: .semibold))
             .foregroundColor(.primary)
@@ -288,14 +287,8 @@ struct SettingsView: View {
       if let toastMessage {
         ToastOverlayView(message: toastMessage, onDismiss: dismissToast)
           .padding(.top, 8)
+          .transition(.move(edge: .top).combined(with: .opacity))
       }
-    }
-    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
-    .navigationDestination(isPresented: $viewModel.shouldNavigateToContacts) {
-      FriendsAndContactsSectionView()
-    }
-    .navigationDestination(isPresented: $viewModel.shouldNavigateToAppearance) {
-      AppearanceSettingsView()
     }
     .sheet(isPresented: $viewModel.shouldNavigateToBuddyChooser) {
       BuddyChooserView()
@@ -304,6 +297,8 @@ struct SettingsView: View {
       ToolbarItem(placement: .topBarTrailing) {
         Menu {
           if let code = friendsVM.myCode {
+            Text("You add-a-friend code. Send it to your friend!")
+              .font(.system(size: 10))
             Button {
               UIPasteboard.general.string = code
               Haptics.impact(.light)
@@ -319,8 +314,8 @@ struct SettingsView: View {
             }
           }
         } label: {
-          Image(systemName: "textformat.123")
-            .font(.system(size: 16))
+          Image(systemName: "number")
+            .font(.system(size: 16, weight: .semibold))
             .foregroundStyle(.primary)
         }
       }

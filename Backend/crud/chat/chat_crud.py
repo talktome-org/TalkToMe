@@ -1,5 +1,5 @@
 import uuid
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from starlette.concurrency import run_in_threadpool
 
@@ -239,9 +239,10 @@ async def delete_partner_message(
     sender_user_id: uuid.UUID,
     sender_session_id: uuid.UUID,
     message_text: str,
-) -> bool:
+) -> Optional[Dict[str, Any]]:
     """Delete a partner message from the recipient's linked session.
-    Identifies the message by matching the JSON payload content."""
+    Identifies the message by matching the JSON payload content.
+    Returns recipient info dict on success, None on failure."""
     import json
 
     def _delete():
@@ -258,9 +259,22 @@ async def delete_partner_message(
                 .first()
             )
             if not sender_session or not sender_session.linked_session_id:
-                return False
+                return None
 
             recipient_session_id = sender_session.linked_session_id
+
+            # Resolve recipient user_id from their session
+            recipient_session = (
+                db.execute(
+                    select(UserChatSession).where(
+                        UserChatSession.id == recipient_session_id,
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            recipient_user_id = recipient_session.user_id if recipient_session else None
+
             expected_payload = json.dumps(
                 {
                     "_talktome": {
@@ -285,11 +299,15 @@ async def delete_partner_message(
                 .first()
             )
             if not msg:
-                return False
+                return None
 
             db.delete(msg)
             db.commit()
-            return True
+            return {
+                "deleted": True,
+                "recipient_user_id": recipient_user_id,
+                "recipient_session_id": recipient_session_id,
+            }
         finally:
             db.close()
 

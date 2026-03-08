@@ -116,14 +116,20 @@ final class ChatVoiceModeController: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] transcript in
                 guard let self else { return }
-                guard self.isSpeakModeActive else { return }
+                guard self.isSpeakModeActive else {
+                    print("[VoiceAgent] lastFinalUtterance received but speak mode inactive, ignoring")
+                    return
+                }
                 let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { return }
+
+                print("[VoiceAgent] lastFinalUtterance: \"\(trimmed.prefix(80))\" — isStreaming=\(isStreamingCheck()) ttsIsSpeaking=\(elevenLabsStreamingTTS.isSpeaking) isLoading=\(delegate?.isLoading ?? false)")
 
                 isSpeakComposerLocked = true
 
                 // If the assistant is currently answering, stop it (barge-in).
                 if isStreamingCheck() || elevenLabsStreamingTTS.isSpeaking || (delegate?.isLoading == true) {
+                    print("[VoiceAgent] barge-in: stopping current generation & TTS")
                     streamingController?.stopGeneration()
                     elevenLabsStreamingTTS.cancel()
                 }
@@ -134,7 +140,11 @@ final class ChatVoiceModeController: ObservableObject {
                 pendingSpeakAutoSendTask = Task { @MainActor [weak self] in
                     guard let self else { return }
                     try? await Task.sleep(nanoseconds: 60_000_000) // 60ms
-                    guard self.isSpeakModeActive else { return }
+                    guard self.isSpeakModeActive else {
+                        print("[VoiceAgent] speak mode became inactive before auto-send, aborting")
+                        return
+                    }
+                    print("[VoiceAgent] auto-sending message: \"\(trimmed.prefix(80))\"")
                     self.streamingController?.sendMessage(overrideText: trimmed)
                     self.isSpeakComposerLocked = false
                 }
@@ -158,6 +168,7 @@ final class ChatVoiceModeController: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] speaking in
                 guard let self else { return }
+                print("[VoiceAgent] TTS isSpeaking changed to \(speaking) — isSpeakModeActive=\(self.isSpeakModeActive) phase=\(self.speakModePhase) isStreaming=\(self.isStreamingCheck()) sttConnected=\(self.speakSTTService.isConnected) sttRecording=\(self.speakSTTService.isRecording)")
                 guard self.isSpeakModeActive else { return }
 
                 if speaking {
@@ -172,6 +183,8 @@ final class ChatVoiceModeController: ObservableObject {
                     if self.speakModePhase == .answering {
                         if !self.isStreamingCheck() {
                             self.updatePhase(.listening)
+                        } else {
+                            print("[VoiceAgent] TTS stopped but still streaming, staying in .answering")
                         }
                     }
                 }
@@ -219,10 +232,13 @@ final class ChatVoiceModeController: ObservableObject {
 
     private func updatePhase(_ newPhase: SpeakModePhase) {
         guard speakModePhase != newPhase else { return }
+        let oldPhase = speakModePhase
         speakModePhase = newPhase
+        print("[VoiceAgent] phase: \(oldPhase) → \(newPhase)")
     }
 
     func notifyStreamingStarted() {
+        print("[VoiceAgent] notifyStreamingStarted — isSpeakModeActive=\(isSpeakModeActive) phase=\(speakModePhase)")
         guard isSpeakModeActive else { return }
         if speakModePhase == .processing {
             updatePhase(.answering)
@@ -230,6 +246,7 @@ final class ChatVoiceModeController: ObservableObject {
     }
 
     func notifyStreamingFinished() {
+        print("[VoiceAgent] notifyStreamingFinished — isSpeakModeActive=\(isSpeakModeActive) phase=\(speakModePhase) ttsIsSpeaking=\(elevenLabsStreamingTTS.isSpeaking) ttsIsConnected=\(elevenLabsStreamingTTS.isConnected) sttIsConnected=\(speakSTTService.isConnected) sttIsRecording=\(speakSTTService.isRecording)")
         guard isSpeakModeActive else { return }
         if !elevenLabsStreamingTTS.isSpeaking && speakModePhase == .answering {
             updatePhase(.listening)
@@ -407,6 +424,9 @@ final class ChatVoiceModeController: ObservableObject {
     }
 
     func stopSpeakMode() {
+        print("[VoiceAgent] stopSpeakMode() called — phase=\(speakModePhase) ttsIsSpeaking=\(elevenLabsStreamingTTS.isSpeaking) ttsConnected=\(elevenLabsStreamingTTS.isConnected) sttConnected=\(speakSTTService.isConnected) sttRecording=\(speakSTTService.isRecording)")
+        // Capture a stack trace to identify who is calling stopSpeakMode
+        Thread.callStackSymbols.prefix(10).forEach { print("[VoiceAgent] stopSpeakMode caller: \($0)") }
         isSpeakModeActive = false
         isSpeakMicMuted = false
         isSpeakComposerLocked = false

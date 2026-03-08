@@ -287,6 +287,11 @@ struct MessagesListView: View {
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: toastMessage)
+        .onReceive(NotificationCenter.default.publisher(for: .chatContentExpanded)) { _ in
+            guard let sv = underlyingScrollView else { return }
+            sv.layoutIfNeeded()
+            scrollToBottomUIKit(sv, animated: true)
+        }
         .onChange(of: scrollToBottomToken, initial: false) { _, _ in
             guard let sv = underlyingScrollView else { return }
             sv.layoutIfNeeded()
@@ -347,6 +352,18 @@ struct MessagesListView: View {
                     guard let sv = underlyingScrollView else { return }
                     sv.layoutIfNeeded()
                     scrollToTopUIKit(sv, messageY: messageY)
+                }
+            }
+
+            // Re-scroll after layout settles (keyboard + input area height changes)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                guard scrollToTopTargetId == id else { return }
+                guard let sv = underlyingScrollView else { return }
+                sv.layoutIfNeeded()
+                if let messageY = messagePositions[id] {
+                    let targetOffset = messageY - sv.adjustedContentInset.top
+                    enforcedOffsetY = targetOffset
+                    sv.setContentOffset(CGPoint(x: 0, y: targetOffset), animated: true)
                 }
             }
         }

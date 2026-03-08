@@ -29,12 +29,7 @@ struct DiaryView: View {
         AppTheme.background.ignoresSafeArea()
 
         VStack(spacing: 0) {
-          DiaryHeroCardView(
-            subtitle: viewModel.displayHeroDateString,
-            gradientColors: heroGradientColors,
-            pendingCount: viewModel.todoPendingCount,
-            completedCount: viewModel.todoCompletedCount
-          )
+          DiaryHeroCardView(gradientColors: heroGradientColors)
 
           if !friendCardDismissed {
             addFriendCard
@@ -323,15 +318,31 @@ private extension Color {
 
 private struct DiaryHeroCardView: View {
   @Environment(\.colorScheme) private var colorScheme
-  let subtitle: String
   let gradientColors: [Color]
-  var pendingCount: Int = 0
-  var completedCount: Int = 0
 
-  private var completionRatio: CGFloat {
-    let total = pendingCount + completedCount
-    guard total > 0 else { return 0 }
-    return CGFloat(completedCount) / CGFloat(total)
+  private var displayHeaderDateString: String {
+    let now = Date()
+    let cal = Calendar.current
+    let day = cal.component(.day, from: now)
+    let year = cal.component(.year, from: now)
+
+    let weekdayFormatter = DateFormatter()
+    weekdayFormatter.dateFormat = "EEEE"
+    let weekday = weekdayFormatter.string(from: now)
+
+    let monthFormatter = DateFormatter()
+    monthFormatter.dateFormat = "MMM"
+    let month = monthFormatter.string(from: now)
+
+    let suffix: String
+    switch day {
+    case 1, 21, 31: suffix = "st"
+    case 2, 22: suffix = "nd"
+    case 3, 23: suffix = "rd"
+    default: suffix = "th"
+    }
+
+    return "\(weekday), \(month) \(day)\(suffix) • \(year)"
   }
 
   private var baseGradientColors: [Color] {
@@ -451,93 +462,21 @@ private struct DiaryHeroCardView: View {
         duration: 7.4
       )
 
-      VStack(alignment: .leading, spacing: 10) {
-        let cardShape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+      VStack(alignment: .leading, spacing: 4) {
+        Text("My Diary")
+          .font(.system(size: 40, weight: .bold))
+          .foregroundStyle(.primary)
 
-        VStack(alignment: .leading, spacing: 12) {
-          HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-              Text("To-Do")
-                .font(.system(size: 24, weight: .bold))
-                .foregroundStyle(.primary)
-
-              Text(
-                pendingCount == 0
-                  ? "All tasks are done."
-                  : "\(pendingCount) \(pendingCount == 1 ? "task" : "tasks") pending"
-              )
-              .font(.system(size: 13, weight: .medium))
-              .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 8)
-
-            ZStack {
-              Circle()
-                .stroke(Color.primary.opacity(0.15), lineWidth: 3.5)
-              Circle()
-                .trim(from: 0, to: completionRatio)
-                .stroke(
-                  Color.primary.opacity(0.85),
-                  style: StrokeStyle(lineWidth: 3.5, lineCap: .round)
-                )
-                .rotationEffect(.degrees(-90))
-            }
-            .frame(width: 38, height: 38)
-          }
-
-          HStack(spacing: 16) {
-            heroTodoPill(icon: "circle", title: "Pending", value: "\(pendingCount)", tint: gradientColors.first ?? .primary)
-            heroTodoPill(icon: "checkmark.circle.fill", title: "Done", value: "\(completedCount)", tint: .green)
-          }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 16)
-        .clipShape(cardShape)
-        .modifier(HeroGlassModifier(shape: cardShape))
+        Text(displayHeaderDateString)
+          .font(.system(size: 18, weight: .semibold))
+          .foregroundStyle(.secondary)
       }
-      .padding(.horizontal, 16)
-      .padding(.top, 120)
-      .padding(.bottom, 14)
+      .padding(.leading, 28)
+      .padding(.top, 140)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
     .frame(height: 340)
     .ignoresSafeArea(edges: .top)
-  }
-
-  private func heroTodoPill(icon: String, title: String, value: String, tint: Color) -> some View {
-    HStack(spacing: 4) {
-      Image(systemName: icon)
-        .font(.system(size: 12, weight: .semibold))
-        .foregroundStyle(tint)
-
-      Text(title)
-        .font(.system(size: 13, weight: .semibold))
-        .foregroundStyle(.secondary)
-
-      Text(value)
-        .font(.system(size: 13, weight: .bold, design: .rounded))
-        .foregroundStyle(.primary)
-        .monospacedDigit()
-    }
-  }
-}
-
-private struct HeroGlassModifier<S: Shape>: ViewModifier {
-  let shape: S
-
-  func body(content: Content) -> some View {
-    if #available(iOS 26.0, *) {
-      content
-        .glassEffect(.regular.interactive(), in: shape)
-    } else {
-      content
-        .background(.ultraThinMaterial)
-        .overlay(
-          shape
-            .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
-        )
-    }
   }
 }
 
@@ -935,13 +874,11 @@ private struct JournalSheetView: View {
         case .overview:
           JournalOverviewTab(
             entries: $entries,
-            todoItems: $todoItems,
             stats: stats,
             accentColor: accentColor,
             selectedDay: $selectedCalendarDay,
             onAddEntryForDate: onAddEntryForDate,
-            onSelectEntry: onSelectEntry,
-            onTodoChange: onTodoChange
+            onSelectEntry: onSelectEntry
           )
         case .list:
           JournalListTab(
@@ -1065,16 +1002,12 @@ private struct JournalTabBar: View {
 
 private struct JournalOverviewTab: View {
   @Binding var entries: [JournalEntry]
-  @Binding var todoItems: [DiaryTodoItem]
   let stats: JournalStats
   let accentColor: Color
   @Binding var selectedDay: Date?
   let onAddEntryForDate: (Date) -> Void
   let onSelectEntry: (JournalEntry) -> Void
-  let onTodoChange: () -> Void
 
-  @State private var newTodoTitle: String = ""
-  @FocusState private var isAddFieldFocused: Bool
   @State private var currentPage: Int?
   @State private var showDaySheet: Bool = false
   @State private var sheetDay: Date?
@@ -1121,12 +1054,6 @@ private struct JournalOverviewTab: View {
 
     ScrollView {
       VStack(alignment: .leading, spacing: 20) {
-        VStack(alignment: .leading, spacing: 10) {
-          overviewAddTaskCard
-          overviewTodosPreview
-        }
-        .padding(.horizontal, 16)
-
         VStack(alignment: .leading, spacing: 8) {
           Text("Trends")
             .font(.system(size: 18, weight: .bold))
@@ -1220,112 +1147,6 @@ private struct JournalOverviewTab: View {
         )
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
-      }
-    }
-  }
-
-  private var overviewAddTaskCard: some View {
-    let trimmed = newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-    let canAdd = !trimmed.isEmpty
-    let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
-
-    return HStack(spacing: 10) {
-      TextField("Add a task...", text: $newTodoTitle)
-        .font(.system(size: 16, weight: .regular))
-        .focused($isAddFieldFocused)
-        .submitLabel(.done)
-        .onSubmit { addTodo() }
-
-      Button {
-        addTodo()
-      } label: {
-        Text("Add")
-          .font(.system(size: 14, weight: .semibold))
-          .foregroundStyle(canAdd ? .primary : .tertiary)
-          .padding(.horizontal, 14)
-          .padding(.vertical, 7)
-          .background(Color(.tertiarySystemFill))
-          .clipShape(Capsule())
-      }
-      .buttonStyle(.plain)
-      .disabled(!canAdd)
-    }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 14)
-    .background { GlassCardBackground(shape: shape) }
-    .clipShape(shape)
-    .overlay(
-      shape
-        .stroke(Color(.separator).opacity(0.22), lineWidth: 0.6)
-    )
-    .contentShape(shape)
-    .onTapGesture {
-      isAddFieldFocused = true
-    }
-  }
-
-  private func addTodo() {
-    let trimmed = newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return }
-    Haptics.impact(.light)
-    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-      todoItems.insert(DiaryTodoItem(title: trimmed), at: 0)
-    }
-    newTodoTitle = ""
-  }
-
-  @ViewBuilder
-  private var overviewTodosPreview: some View {
-    let previewItems = Array(todoItems.prefix(2))
-    if !previewItems.isEmpty {
-      VStack(spacing: 6) {
-        ForEach(previewItems) { item in
-          let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
-          HStack(spacing: 10) {
-            Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-              .font(.system(size: 18, weight: .medium))
-              .foregroundStyle(item.isCompleted ? Color.primary.opacity(0.5) : Color.primary.opacity(0.2))
-              .contentTransition(.symbolEffect(.replace))
-
-            Text(item.title)
-              .font(.system(size: 15, weight: .medium))
-              .strikethrough(item.isCompleted)
-              .foregroundStyle(item.isCompleted ? .tertiary : .primary)
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .transaction { $0.animation = nil }
-          }
-          .padding(.horizontal, 14)
-          .padding(.vertical, 12)
-          .background { GlassCardBackground(shape: shape) }
-          .clipShape(shape)
-          .overlay(
-            shape
-              .stroke(Color(.separator).opacity(0.18), lineWidth: 0.5)
-          )
-          .contentShape(shape)
-          .onTapGesture {
-            Haptics.impact(.light)
-            if let index = todoItems.firstIndex(where: { $0.id == item.id }) {
-              withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
-                todoItems[index].isCompleted.toggle()
-              }
-              onTodoChange()
-            }
-          }
-          .contextMenu {
-            Button(role: .destructive) {
-              if let index = todoItems.firstIndex(where: { $0.id == item.id }) {
-                Haptics.impact(.light)
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                  todoItems.remove(at: index)
-                }
-                onTodoChange()
-              }
-            } label: {
-              Label("Delete Task", systemImage: "trash")
-            }
-          }
-        }
       }
     }
   }
@@ -1761,6 +1582,8 @@ private let diaryDefaultTodoItems = [
 private struct JournalTodoTab: View {
   @Binding var todoItems: [DiaryTodoItem]
   let onTodoChange: () -> Void
+  @State private var newTodoTitle: String = ""
+  @FocusState private var isAddFieldFocused: Bool
   @State private var showReorderHint: Bool = false
   @State private var activeReorderItemId: UUID?
   @State private var isReorderDragging: Bool = false
@@ -1772,9 +1595,26 @@ private struct JournalTodoTab: View {
   // Swap only after the dragged row has passed roughly one full row+gap distance.
   private let todoReorderSwapDistance: CGFloat = 72
 
+  private var pendingCount: Int {
+    max(0, todoItems.count - completedCount)
+  }
+
+  private var completedCount: Int {
+    todoItems.filter(\.isCompleted).count
+  }
+
+  private var completionRatio: CGFloat {
+    let total = pendingCount + completedCount
+    guard total > 0 else { return 0 }
+    return CGFloat(completedCount) / CGFloat(total)
+  }
+
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 12) {
+        todoSummaryCard
+        addTaskCard
+
         if showReorderHint {
           reorderHintCard
         }
@@ -1821,6 +1661,123 @@ private struct JournalTodoTab: View {
     .background(AppTheme.background)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     .onChange(of: todoItems) { _, _ in onTodoChange() }
+  }
+
+  private var todoSummaryCard: some View {
+    let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+
+    return VStack(alignment: .leading, spacing: 12) {
+      HStack(alignment: .center, spacing: 14) {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("To-Do")
+            .font(.system(size: 24, weight: .bold))
+            .foregroundStyle(.primary)
+
+          Text(
+            pendingCount == 0
+              ? "All tasks are done."
+              : "\(pendingCount) \(pendingCount == 1 ? "task" : "tasks") pending"
+          )
+          .font(.system(size: 13, weight: .medium))
+          .foregroundStyle(.secondary)
+        }
+
+        Spacer(minLength: 8)
+
+        ZStack {
+          Circle()
+            .stroke(Color.primary.opacity(0.15), lineWidth: 3.5)
+          Circle()
+            .trim(from: 0, to: completionRatio)
+            .stroke(
+              Color.primary.opacity(0.85),
+              style: StrokeStyle(lineWidth: 3.5, lineCap: .round)
+            )
+            .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 38, height: 38)
+      }
+
+      HStack(spacing: 16) {
+        todoSummaryPill(icon: "circle", title: "Pending", value: "\(pendingCount)", tint: AppTheme.accent)
+        todoSummaryPill(icon: "checkmark.circle.fill", title: "Done", value: "\(completedCount)", tint: .green)
+      }
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 16)
+    .background { GlassCardBackground(shape: shape) }
+    .clipShape(shape)
+    .overlay(
+      shape
+        .stroke(Color(.separator).opacity(0.22), lineWidth: 0.6)
+    )
+  }
+
+  private func todoSummaryPill(icon: String, title: String, value: String, tint: Color) -> some View {
+    HStack(spacing: 4) {
+      Image(systemName: icon)
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(tint)
+
+      Text(title)
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(.secondary)
+
+      Text(value)
+        .font(.system(size: 13, weight: .bold, design: .rounded))
+        .foregroundStyle(.primary)
+        .monospacedDigit()
+    }
+  }
+
+  private var addTaskCard: some View {
+    let trimmed = newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    let canAdd = !trimmed.isEmpty
+    let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+
+    return HStack(spacing: 10) {
+      TextField("Add a task...", text: $newTodoTitle)
+        .font(.system(size: 16, weight: .regular))
+        .focused($isAddFieldFocused)
+        .submitLabel(.done)
+        .onSubmit { addTodo() }
+
+      Button {
+        addTodo()
+      } label: {
+        Text("Add")
+          .font(.system(size: 14, weight: .semibold))
+          .foregroundStyle(canAdd ? .primary : .tertiary)
+          .padding(.horizontal, 14)
+          .padding(.vertical, 7)
+          .background(Color(.tertiarySystemFill))
+          .clipShape(Capsule())
+      }
+      .buttonStyle(.plain)
+      .disabled(!canAdd)
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 14)
+    .background { GlassCardBackground(shape: shape) }
+    .clipShape(shape)
+    .overlay(
+      shape
+        .stroke(Color(.separator).opacity(0.22), lineWidth: 0.6)
+    )
+    .contentShape(shape)
+    .onTapGesture {
+      isAddFieldFocused = true
+    }
+  }
+
+  private func addTodo() {
+    let trimmed = newTodoTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    Haptics.impact(.light)
+    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+      todoItems.insert(DiaryTodoItem(title: trimmed), at: 0)
+    }
+    newTodoTitle = ""
   }
 
   private var reorderHintCard: some View {

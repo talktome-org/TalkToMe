@@ -4,11 +4,12 @@ struct PartnerDraftBlockView: View {
 
     enum Action { case send(String) }
 
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var friendsViewModel: FriendsViewModel
-    @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var currentBuddyName: String = ""
     @AppStorage(PreferenceKeys.fontSizePreference) private var fontSizeScale: Double = 1.0
 
     @State private var text: String
+    @State private var fallbackBuddyName: String
     @State private var isConfirmingNormalSend: Bool = false
     @State private var showSentLocally: Bool = false
     @State private var showFriendMenu: Bool = false
@@ -21,6 +22,7 @@ struct PartnerDraftBlockView: View {
     let isLinked: Bool
     let recipientUserId: UUID?
     let ghostName: String?
+    var onReply: ((String) -> Void)? = nil
     let onAction: (Action) -> Void
 
     init(
@@ -29,32 +31,39 @@ struct PartnerDraftBlockView: View {
         isLinked: Bool = true,
         recipientUserId: UUID?,
         ghostName: String? = nil,
+        onReply: ((String) -> Void)? = nil,
         onAction: @escaping (Action) -> Void
     ) {
+        let selectedBuddy = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         self.initialText = initialText
         self.isSent = isSent
         self.isLinked = isLinked
         self.recipientUserId = recipientUserId
         self.ghostName = ghostName
+        self.onReply = onReply
         self._text = State(initialValue: initialText)
+        self._fallbackBuddyName = State(initialValue: selectedBuddy)
         self.onAction = onAction
     }
 
-    /// Use the persisted ghost name if available, otherwise fall back to the currently selected buddy.
-    private var effectiveBuddyName: String {
+    /// Prefer persisted metadata; if missing, keep a one-time fallback snapshot so labels don't
+    /// mutate when the user switches buddies later.
+    private var effectiveBuddyName: String? {
         if let gn = ghostName, !gn.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return gn
         }
-        return currentBuddyName
+        let fallback = fallbackBuddyName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback.isEmpty ? nil : fallback
     }
 
     private var resolvedBuddyName: String {
-        let name = effectiveBuddyName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? "Your buddy" : name
+        effectiveBuddyName ?? "Your buddy"
     }
 
     private var buddyImage: UIImage? {
-        ElevenLabsVoiceSuggestionsView.ghostUIImage(for: effectiveBuddyName)
+        guard let buddyName = effectiveBuddyName else { return nil }
+        return ElevenLabsVoiceSuggestionsView.ghostUIImage(for: buddyName)
     }
 
     private var recipientFirstName: String {
@@ -68,103 +77,121 @@ struct PartnerDraftBlockView: View {
         isSent || showSentLocally
     }
 
+    private var bubbleColor: Color {
+        colorScheme == .light
+            ? Color.talkToMePartnerBubbleLightGray
+            : AppTheme.talkToMeBubbleAI
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Buddy header
-            HStack(spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
+            // Name · "drafted this" above the bubble
+            HStack(spacing: 4) {
+                Text(resolvedBuddyName)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.primary)
+                Text("drafted this")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(AppTheme.brand)
+            }
+            .padding(.leading, 61)
+
+            HStack(alignment: .bottom, spacing: 6) {
+                // Buddy avatar
                 Group {
                     if let uiImage = buddyImage {
                         Image(uiImage: uiImage)
                             .resizable()
                             .scaledToFill()
-                            .frame(width: 26, height: 26)
-                            .clipShape(Circle())
                     } else {
                         Circle()
-                            .fill(Color(.systemGray5))
-                            .frame(width: 26, height: 26)
+                            .fill(Color(.tertiarySystemFill))
                     }
                 }
-                .offset(y: -1)
+                .frame(width: 43, height: 43)
+                .clipShape(Circle())
 
-                HStack(spacing: 4) {
-                    Text(resolvedBuddyName)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
+                // Bubble content
+                VStack(alignment: .leading, spacing: 0) {
+                    // Message body
+                    Group {
+                        if let onReply, !text.isEmpty {
+                            SelectableTextView(
+                                attributedText: partnerDraftNSAttributedString(text),
+                                replyToName: resolvedBuddyName,
+                                onReply: onReply
+                            )
+                        } else {
+                            Text(text.isEmpty ? " " : text)
+                                .font(.system(size: 16.5 * fontSizeScale))
+                                .foregroundColor(.primary)
+                                .multilineTextAlignment(.leading)
+                                .lineSpacing(3)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                    .padding(.vertical, 2)
+                    .padding(.bottom, 14)
 
-                    Text("drafted this")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.secondary)
+                    // Send / unsend button row
+                    HStack(spacing: 10) {
+                        if isConfirmingNormalSend {
+                            Button(action: {
+                                Haptics.impact(.light)
+                                withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+                                    isConfirmingNormalSend = false
+                                }
+                            }) {
+                                Text("Cancel")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .transition(.scale.combined(with: .opacity))
+                        }
+
+                        if alreadySent {
+                            Button {
+                                Haptics.impact(.light)
+                                handleUnsend()
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.uturn.backward")
+                                        .font(.system(size: 11, weight: .semibold))
+                                    Text("Unsend")
+                                        .font(.system(size: 13, weight: .medium))
+                                }
+                                .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .transition(.scale.combined(with: .opacity))
+                        }
+
+                        Spacer()
+
+                        Button(action: handleButtonTap) {
+                            sendButtonContent
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(alreadySent)
+                    }
+
+                    // Inline friend picker menu
+                    if showFriendMenu {
+                        friendAvatarPicker
+                            .transition(.opacity)
+                    }
                 }
-
-                Spacer()
-            }
-            .padding(.bottom, 10)
-
-            // Message body
-            Text(text.isEmpty ? " " : text)
-                .font(.system(size: 16.5 * fontSizeScale))
-                .foregroundColor(.primary)
-                .multilineTextAlignment(.leading)
-                .lineSpacing(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-                .padding(.bottom, 14)
-
-            // Send / unsend button row
-            HStack(spacing: 10) {
-                if isConfirmingNormalSend {
-                    Button(action: {
-                        Haptics.impact(.light)
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                            isConfirmingNormalSend = false
-                        }
-                    }) {
-                        Text("Cancel")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .transition(.scale.combined(with: .opacity))
-                }
-
-                if alreadySent {
-                    Button {
-                        Haptics.impact(.light)
-                        handleUnsend()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text("Unsend")
-                                .font(.system(size: 13, weight: .medium))
-                        }
-                        .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .transition(.scale.combined(with: .opacity))
-                }
-
-                Spacer()
-
-                Button(action: handleButtonTap) {
-                    sendButtonContent
-                }
-                .buttonStyle(.plain)
-                .disabled(alreadySent)
-            }
-
-            // Inline friend picker menu
-            if showFriendMenu {
-                friendAvatarPicker
-                    .transition(.opacity)
+                .padding(10)
+                .background(
+                    PartnerDraftBubbleShape()
+                        .fill(bubbleColor)
+                )
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
+        .padding(.bottom, 2)
         .onAppear {
             isConfirmingNormalSend = false
             showSentLocally = false
@@ -207,6 +234,17 @@ struct PartnerDraftBlockView: View {
         }
     }
 
+    private func partnerDraftNSAttributedString(_ text: String) -> NSAttributedString {
+        let fontSize: CGFloat = 16.5 * fontSizeScale
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 3
+        return NSAttributedString(string: text, attributes: [
+            .font: UIFont.systemFont(ofSize: fontSize),
+            .foregroundColor: UIColor.label,
+            .paragraphStyle: paragraphStyle,
+        ])
+    }
+
     // MARK: - Inline Friend Avatar Picker
 
     @ViewBuilder
@@ -229,7 +267,7 @@ struct PartnerDraftBlockView: View {
                     } label: {
                         VStack(spacing: 6) {
                             ZStack {
-                                SidebarAvatarView(avatarURL: friend.avatarURL)
+                                SidebarAvatarView(avatarURL: friend.avatarURL, name: friend.fullName)
                                     .frame(width: 44, height: 44)
                                     .clipShape(Circle())
                                     .overlay(
@@ -400,6 +438,11 @@ struct PartnerDraftBlockView: View {
             withAnimation(.easeInOut(duration: 0.2)) {
                 showFriendMenu.toggle()
             }
+            if showFriendMenu {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    NotificationCenter.default.post(name: .chatContentExpanded, object: nil)
+                }
+            }
             if friendsViewModel.friends.isEmpty {
                 Task { try? await friendsViewModel.loadFriends() }
             }
@@ -485,7 +528,7 @@ private struct SendToFriendSheetView: View {
                                 onPick(friend)
                             } label: {
                                 HStack(spacing: 12) {
-                                    SidebarAvatarView(avatarURL: friend.avatarURL)
+                                    SidebarAvatarView(avatarURL: friend.avatarURL, name: friend.fullName)
                                         .frame(width: 34, height: 34)
                                         .clipShape(Circle())
 
@@ -635,6 +678,35 @@ private struct AddFriendInlineView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await friendsViewModel.refreshMyCode()
+        }
+    }
+}
+
+private struct PartnerDraftBubbleShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let cr: CGFloat = 18
+        let tailExtent: CGFloat = 5
+
+        return Path { p in
+            p.move(to: CGPoint(x: cr, y: 0))
+            p.addLine(to: CGPoint(x: rect.width - cr, y: 0))
+            p.addArc(center: CGPoint(x: rect.width - cr, y: cr),
+                     radius: cr, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false)
+            p.addLine(to: CGPoint(x: rect.width, y: rect.height - cr))
+            p.addArc(center: CGPoint(x: rect.width - cr, y: rect.height - cr),
+                     radius: cr, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
+            p.addLine(to: CGPoint(x: cr, y: rect.height))
+            p.addQuadCurve(
+                to: CGPoint(x: -tailExtent, y: rect.height - 1),
+                control: CGPoint(x: 4, y: rect.height + 3)
+            )
+            p.addQuadCurve(
+                to: CGPoint(x: 0, y: rect.height - cr * 1.2),
+                control: CGPoint(x: 0, y: rect.height - cr * 0.5)
+            )
+            p.addLine(to: CGPoint(x: 0, y: cr))
+            p.addArc(center: CGPoint(x: cr, y: cr),
+                     radius: cr, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
         }
     }
 }

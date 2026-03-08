@@ -16,6 +16,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         print("[Push] Failed to register: \(error.localizedDescription)")
     }
 
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        Task { @MainActor in
+            APNSService.shared.handleBackgroundPush(userInfo: userInfo)
+            completionHandler(.newData)
+        }
+    }
+
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey : Any] = [:]) -> Bool {
         let sourceApp = options[.sourceApplication] as? String ?? "unknown"
         print("[URL] AppDelegate openURL: \(url.absoluteString), sourceApp: \(sourceApp)")

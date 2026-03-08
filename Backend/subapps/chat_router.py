@@ -485,6 +485,8 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                             continue
 
                 use_voice_agent = bool((chat_request.voice_agent or "").strip())
+                if use_voice_agent:
+                    print(f"[VoiceAgent] voice_agent mode detected — agent='{chat_request.voice_agent}' session={session_uuid} message_len={len((chat_request.message or '').strip())}")
 
                 # RAG: retrieve relevant book chunks from Supabase.
                 # Skip RAG for voice mode to reduce latency.

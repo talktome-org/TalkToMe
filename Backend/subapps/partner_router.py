@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Optional
 
@@ -20,10 +21,12 @@ from Backend.crud.friends.friends_crud import get_friendship_id_for_pair
 from Backend.database import SessionLocal
 from Backend.models.friends.friendship_model import Friendship
 from Backend.models.profile.profile_model import Profile
-from Backend.services.apns_service import send_partner_message_notification_to_user
+from Backend.services.apns_service import send_partner_message_notification_to_user, send_unsend_notification_to_user
 from sqlalchemy import text as sa_text
 from starlette.concurrency import run_in_threadpool
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/partner", tags=["partner"])
 
@@ -179,9 +182,9 @@ async def send_message(request: SendPartnerMessageRequest, current_user: dict = 
             preview=message[:120],
             sender_name=sender_name,
         )
-    except Exception:
+    except Exception as exc:
         # Push failures should not block sending.
-        pass
+        logger.exception("[PARTNER] Push notification failed for recipient %s: %s", recipient_user_id, exc)
 
     return SendPartnerMessageResponse(success=True, recipient_session_id=recipient_session_id)
 
@@ -206,13 +209,25 @@ async def unsend_message(request: UnsendPartnerMessageRequest, current_user: dic
     if not message_text:
         raise HTTPException(status_code=400, detail="message_text required")
 
-    deleted = await delete_partner_message(
+    result = await delete_partner_message(
         sender_user_id=user_id,
         sender_session_id=request.session_id,
         message_text=message_text,
     )
-    if not deleted:
+    if not result:
         raise HTTPException(status_code=404, detail="Message not found or already deleted")
+
+    # Send silent push so recipient's app retracts the notification.
+    recipient_user_id = result.get("recipient_user_id")
+    recipient_session_id = result.get("recipient_session_id")
+    if recipient_user_id and recipient_session_id:
+        try:
+            await send_unsend_notification_to_user(
+                recipient_user_id=recipient_user_id,
+                session_id=recipient_session_id,
+            )
+        except Exception as exc:
+            logger.exception("[PARTNER] Unsend push failed for recipient %s: %s", recipient_user_id, exc)
 
     return UnsendPartnerMessageResponse(success=True)
 

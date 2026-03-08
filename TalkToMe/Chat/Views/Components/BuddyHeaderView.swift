@@ -105,13 +105,13 @@ struct BuddyHeaderView: View {
         case .answering:
             HStack(spacing: 4) {
                 Circle()
-                    .fill(.green)
+                    .fill(.blue)
                     .frame(width: 6, height: 6)
                 Text("Speaking")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.secondary)
             }
-        case .listening:
+        case .listening, .processing:
             HStack(spacing: 4) {
                 Circle()
                     .fill(.yellow)
@@ -121,7 +121,7 @@ struct BuddyHeaderView: View {
                     .foregroundColor(.secondary)
             }
         default:
-            // For .idle, .connecting, .processing — show the description instead
+            // For .idle and .connecting — show the description instead
             if !buddyDescription.isEmpty {
                 Text(buddyDescription)
                     .font(.system(size: 11, weight: .medium))

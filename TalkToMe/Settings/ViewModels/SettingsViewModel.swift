@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 
 @MainActor
@@ -10,15 +11,13 @@ class SettingsViewModel: ObservableObject {
     @Published var isUploadingAvatar: Bool = false
     @Published var avatarURL: String? = nil
     @Published var showPersonalizationEdit: Bool = false
-    @Published var shouldNavigateToContacts: Bool = false
-    @Published var shouldNavigateToAppearance: Bool = false
     @Published var shouldHighlightCustomization: Bool = false
     @Published var shouldNavigateToBuddyChooser: Bool = false
-    @Published var shouldNavigateToEditProfile: Bool = false
     @Published var showDeleteAccountConfirmation: Bool = false
     @Published var isDeletingAccount: Bool = false
 
     private let avatarCacheManager = AvatarCacheManager.shared
+    private var pushEnabledCancellable: AnyCancellable?
 
     @Published var fullName: String = ""
     @Published var bio: String = ""
@@ -34,6 +33,20 @@ class SettingsViewModel: ObservableObject {
             self.isProfileLoaded = true
         }
         setupSettingsSections()
+
+        // Keep notifications toggle in sync when changed from outside (e.g. NotificationsView)
+        pushEnabledCancellable = APNSService.shared.$isPushEnabled
+            .receive(on: RunLoop.main)
+            .sink { [weak self] enabled in
+                self?.syncNotificationsToggle(enabled)
+            }
+    }
+
+    private func syncNotificationsToggle(_ enabled: Bool) {
+        guard let sectionIdx = settingsSections.firstIndex(where: { $0.id == "toggles" }),
+              let settingIdx = settingsSections[sectionIdx].settings.firstIndex(where: { $0.title == "Notifications" })
+        else { return }
+        settingsSections[sectionIdx].settings[settingIdx].type = .toggle(enabled)
     }
 
     private func loadSettings() {
@@ -164,21 +177,25 @@ class SettingsViewModel: ObservableObject {
     }
 
     func deleteAccount() {
-        // Grab token before signing out
-        let token = Task { await AuthService.shared.getAccessToken() }
+        isDeletingAccount = true
+        Task {
+            // 1. Grab the token BEFORE signing out so it's still valid
+            let token = await AuthService.shared.getAccessToken()
 
-        // Sign out and purge local data immediately — don't block the UI
-        Self.purgeAllLocalData()
-        Task { await AuthService.shared.signOut() }
+            // 2. Purge local data and sign out
+            await MainActor.run { Self.purgeAllLocalData() }
+            await AuthService.shared.signOut()
 
-        // Fire-and-forget backend deletion
-        Task.detached {
-            guard let token = await token.value else { return }
-            do {
-                try await BackendService.shared.deleteAccount(accessToken: token)
-            } catch {
-                print("Failed to delete account on server: \(error)")
+            // 3. Delete on the backend with the captured token
+            if let token {
+                do {
+                    try await BackendService.shared.deleteAccount(accessToken: token)
+                } catch {
+                    print("Failed to delete account on server: \(error)")
+                }
             }
+
+            await MainActor.run { isDeletingAccount = false }
         }
     }
 
