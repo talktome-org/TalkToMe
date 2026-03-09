@@ -120,7 +120,7 @@ fi
 # -------------------------
 # Ensure app secrets
 # -------------------------
-SECRETS_TARGET="TalkToMe/Secrets.plist"
+SECRETS_TARGET="BoBo/Secrets.plist"
 SECRETS_PLACEHOLDER_PATTERN='YOUR_PROJECT_REF|sb_publishable_\.\.\.|https://example\.com'
 
 # Clean up broken symlink so we can safely recreate the target.
@@ -133,20 +133,20 @@ if [ -e "$SECRETS_TARGET" ]; then
     if [ -n "$SECRETS_PLIST_SOURCE" ] && [ -f "$SECRETS_PLIST_SOURCE" ]; then
       rm -f "$SECRETS_TARGET"
       ln -s "$SECRETS_PLIST_SOURCE" "$SECRETS_TARGET"
-      echo "✔ Replaced placeholder TalkToMe/Secrets.plist -> $SECRETS_PLIST_SOURCE"
+      echo "✔ Replaced placeholder BoBo/Secrets.plist -> $SECRETS_PLIST_SOURCE"
     else
-      echo "⚠️  TalkToMe/Secrets.plist contains placeholder values and no real secrets source was found"
+      echo "⚠️  BoBo/Secrets.plist contains placeholder values and no real secrets source was found"
     fi
   fi
 else
   if [ -n "$SECRETS_PLIST_SOURCE" ] && [ -f "$SECRETS_PLIST_SOURCE" ]; then
     ln -s "$SECRETS_PLIST_SOURCE" "$SECRETS_TARGET"
-    echo "✔ Linked TalkToMe/Secrets.plist -> $SECRETS_PLIST_SOURCE"
-  elif [ -f TalkToMe/Secrets.example.plist ]; then
-    cp TalkToMe/Secrets.example.plist "$SECRETS_TARGET"
-    echo "⚠️  Created TalkToMe/Secrets.plist from Secrets.example.plist (real secrets not found)"
+    echo "✔ Linked BoBo/Secrets.plist -> $SECRETS_PLIST_SOURCE"
+  elif [ -f BoBo/Secrets.example.plist ]; then
+    cp BoBo/Secrets.example.plist "$SECRETS_TARGET"
+    echo "⚠️  Created BoBo/Secrets.plist from Secrets.example.plist (real secrets not found)"
   else
-    echo "❌ Missing TalkToMe/Secrets.plist and TalkToMe/Secrets.example.plist"
+    echo "❌ Missing BoBo/Secrets.plist and BoBo/Secrets.example.plist"
     exit 1
   fi
 fi
@@ -155,14 +155,14 @@ fi
 # Copy Resources (NO SYMLINKS)
 # -------------------------
 if [ -n "$CONFIG_DIR" ]; then
-  if [ -L TalkToMe/Resources ]; then
+  if [ -L BoBo/Resources ]; then
     echo "⚠️ Removing old symlinked Resources"
-    rm TalkToMe/Resources
+    rm BoBo/Resources
   fi
 
-  if [ ! -d TalkToMe/Resources ]; then
+  if [ ! -d BoBo/Resources ]; then
     echo "📂 Copying Resources into workspace"
-    cp -R "$CONFIG_DIR/Resources" TalkToMe/
+    cp -R "$CONFIG_DIR/Resources" BoBo/
   fi
 fi
 
@@ -180,4 +180,4 @@ source "$VENV_DIR/bin/activate"
 pip install --upgrade pip
 pip install -r Backend/requirements.txt
 
-echo "✅ Workspace ready (venv: $VENV_DIR, env: $BACKEND_ENV_SOURCE, secrets: ${SECRETS_PLIST_SOURCE:-TalkToMe/Secrets.example.plist})"
+echo "✅ Workspace ready (venv: $VENV_DIR, env: $BACKEND_ENV_SOURCE, secrets: ${SECRETS_PLIST_SOURCE:-BoBo/Secrets.example.plist})"

@@ -20,8 +20,8 @@ Backend/.env
 Secrets.plist
 
 # iOS project (not needed in the image)
-TalkToMe/
-TalkToMe.xcodeproj
+BoBo/
+BoBo.xcodeproj
 **/xcuserdata/
 **/*.xcuserstate
 
