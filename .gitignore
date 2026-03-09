@@ -45,4 +45,4 @@ buildServer.json
 .vscode/
 
 # Large video assets
-TalkToMe/Resources/*.mp4
+BoBo/Resources/*.mp4

@@ -1,9 +1,9 @@
-# fly.toml app configuration file generated for talktome on 2025-11-10T01:05:29Z
+# fly.toml app configuration file generated for bobo on 2025-11-10T01:05:29Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'talktome'
+app = 'bobo'
 primary_region = 'iad'
 
 [build]

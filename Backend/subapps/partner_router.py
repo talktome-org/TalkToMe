@@ -157,7 +157,7 @@ async def send_message(request: SendPartnerMessageRequest, current_user: dict = 
     except Exception:
         pass
 
-    # Store message as an assistant message with TalkToMe metadata.
+    # Store message as an assistant message with BoBo metadata.
     # IMPORTANT: `user_id` on chat message rows is the *recipient/session owner* (RLS),
     # so we include the real sender id in metadata for the client UI.
     payload = json.dumps({"_talktome": {"type": "partner_received", "text": message, "sender_user_id": str(user_id)}})

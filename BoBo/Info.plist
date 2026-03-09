@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>supabase</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>supabase-fozrwqyqqlnjwgmhckqw</string>
+			</array>
+		</dict>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app uses the microphone to record your voice for composing messages.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>BoBo uses the camera so you can take photos to include in your messages.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>BoBo uses your photo library so you can pick photos to include in your messages.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>BoBo uses your contacts so you can invite friends to connect with you.</string>
+</dict>
+</plist>

@@ -242,7 +242,7 @@ async def send_daily_checkin_notification(*, user_id: uuid.UUID) -> None:
 
     message = random.choice(DAILY_CHECKIN_MESSAGES)
     aps = {
-        "alert": {"title": "TalkToMe", "body": message},
+        "alert": {"title": "BoBo", "body": message},
         "sound": "default",
         "category": "DAILY_CHECKIN",
     }

@@ -30,22 +30,22 @@ if [ ! -e Backend/.env ]; then
   echo "✔ Linked Backend/.env"
 fi
 
-if [ ! -e TalkToMe/Secrets.plist ]; then
-  ln -s ~/.config/talktome/Secrets.plist TalkToMe/Secrets.plist
-  echo "✔ Linked TalkToMe/Secrets.plist"
+if [ ! -e BoBo/Secrets.plist ]; then
+  ln -s ~/.config/talktome/Secrets.plist BoBo/Secrets.plist
+  echo "✔ Linked BoBo/Secrets.plist"
 fi
 
 # -------------------------
 # Copy Resources (NO SYMLINKS)
 # -------------------------
-if [ -L TalkToMe/Resources ]; then
+if [ -L BoBo/Resources ]; then
   echo "⚠️ Removing old symlinked Resources"
-  rm TalkToMe/Resources
+  rm BoBo/Resources
 fi
 
-if [ ! -d TalkToMe/Resources ]; then
+if [ ! -d BoBo/Resources ]; then
   echo "📂 Copying Resources into workspace"
-  cp -R ~/.config/talktome/Resources TalkToMe/
+  cp -R ~/.config/talktome/Resources BoBo/
 fi
 
 # -------------------------

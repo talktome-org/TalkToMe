@@ -100,7 +100,7 @@ class ListVoicesResponse(BaseModel):
     voices: list[ElevenVoice]
 
 
-# TalkToMe app-specific voices
+# BoBo app-specific voices
 class AppVoice(BaseModel):
     voice_id: str
     name: str
@@ -150,7 +150,7 @@ def _load_app_voices() -> tuple[list[AppVoice], str]:
 @router.get("/app-voices", response_model=AppVoicesResponse)
 async def get_app_voices(current_user: dict = Depends(get_current_user)):
     """
-    Returns the curated list of TalkToMe app voices.
+    Returns the curated list of BoBo app voices.
     Voice IDs are loaded from environment variables:
     - VOICE_ID_MIRA, VOICE_ID_PAX, VOICE_ID_LUMA, VOICE_ID_SNOW, VOICE_ID_JAY, VOICE_ID_HEX
     - VOICE_ID_DEFAULT (optional, defaults to first voice)
@@ -553,7 +553,7 @@ async def deepgram_stt_stream(websocket: WebSocket):
     await websocket.accept()
     # Confirm readiness to the client immediately (Deepgram may not send any message until audio arrives).
     try:
-        await websocket.send_text(json.dumps({"type": "talktome.stt.ready"}))
+        await websocket.send_text(json.dumps({"type": "bobo.stt.ready"}))
     except Exception:
         stt_logger.error("[STT] Failed to send ready message — closing")
         await websocket.close(code=1011, reason="Failed to initialize STT stream")
