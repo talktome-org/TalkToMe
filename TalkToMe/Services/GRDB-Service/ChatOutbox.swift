@@ -15,6 +15,7 @@ struct OutboxItem: Codable, FetchableRecord, PersistableRecord {
     var status: String
     var created_at: String
     var last_error: String?
+    var quoted_reply: String?
 }
 
 struct OutboxAttachment: Codable {
@@ -58,7 +59,8 @@ final class ChatOutboxProcessor {
         friendUserId: UUID?,
         messageId: UUID,
         message: String,
-        attachments: [OutboxAttachment]
+        attachments: [OutboxAttachment],
+        quotedReply: String? = nil
     ) async {
         let id = UUID().uuidString
         let createdAt = isoNow()
@@ -75,7 +77,8 @@ final class ChatOutboxProcessor {
             attachments_json: attachmentsJSON,
             status: "pending",
             created_at: createdAt,
-            last_error: nil
+            last_error: nil,
+            quoted_reply: quotedReply
         )
 
         _ = try? await LocalDatabase.shared.dbQueue.write { db in
@@ -171,7 +174,8 @@ final class ChatOutboxProcessor {
             accessToken: accessToken,
             previousResponseId: nil,
             friendUserId: friendUserId,
-            messageId: messageId
+            messageId: messageId,
+            quotedReply: current.quoted_reply
         )
 
         for await event in stream {

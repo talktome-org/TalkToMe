@@ -1,7 +1,7 @@
-"""Scheduler that sends daily 5 PM check-in notifications per timezone.
+"""Scheduler that sends daily 10 AM check-in notifications per timezone.
 
 Runs a job every hour on the hour.  For each run it computes which IANA
-timezones currently have local hour == 17 and sends a supportive push
+timezones currently have local hour == 10 and sends a supportive push
 notification to every user whose device token is registered in one of
 those timezones.
 """
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
 
 
-def _timezones_at_hour(hour: int = 17) -> list[str]:
+def _timezones_at_hour(hour: int = 10) -> list[str]:
     """Return IANA timezone names whose current local hour equals *hour*."""
     now_utc = datetime.now(timezone.utc)
     result = []
@@ -47,9 +47,9 @@ async def _send_checkins_for_timezone(tz: str) -> None:
 
 
 async def _daily_checkin_job() -> None:
-    """Hourly job: find timezones at 5 PM and send check-ins."""
-    matching = _timezones_at_hour(17)
-    logger.info("[DailyCheckin] Timezones at 5 PM: %d", len(matching))
+    """Hourly job: find timezones at 10 AM and send check-ins."""
+    matching = _timezones_at_hour(10)
+    logger.info("[DailyCheckin] Timezones at 10 AM: %d", len(matching))
     for tz in matching:
         await _send_checkins_for_timezone(tz)
 

@@ -397,12 +397,13 @@ extension ChatViewModel: ChatStreamingDelegate {
     }
 
     func streamingWillStart() {
-        print("[VoiceAgent] streamingWillStart — isSpeakModeActive=\(isSpeakModeActive)")
+        print("[VoiceAgent] streamingWillStart — active=\(isSpeakModeActive) voiceAgent=\(streamingController.activeVoiceAgentName ?? "nil") ttsConn=\(elevenLabsStreamingTTS.isConnected) sttConn=\(voiceController.speakSTTService.isConnected)")
         didReceiveFirstToken = false
         hasSpokenCurrentResponse = false
         hasActiveStreamingCycle = true
 
         guard isSpeakModeActive else {
+            print("[VoiceAgent] streamingWillStart — speak mode INACTIVE, skipping TTS")
             return
         }
 
@@ -415,21 +416,28 @@ extension ChatViewModel: ChatStreamingDelegate {
             return
         }
 
-        print("[VoiceAgent] streamingWillStart — starting TTS with voiceId=\(voiceId) voiceName=\(voiceName)")
+        print("[VoiceAgent] streamingWillStart — starting TTS voiceId=\(voiceId) voiceName=\(voiceName) ttsAlreadyConn=\(elevenLabsStreamingTTS.isConnected)")
         Task { @MainActor in
             await elevenLabsStreamingTTS.start(voiceId: voiceId, voiceName: voiceName)
-            print("[VoiceAgent] TTS start() completed — isConnected=\(elevenLabsStreamingTTS.isConnected) lastError=\(elevenLabsStreamingTTS.lastError ?? "nil")")
+            print("[VoiceAgent] TTS start() done — isConnected=\(elevenLabsStreamingTTS.isConnected) lastError=\(elevenLabsStreamingTTS.lastError ?? "nil") stillActive=\(isSpeakModeActive)")
         }
     }
 
     func streamingDidReceiveToken(_ token: String) {
         if !didReceiveFirstToken {
             didReceiveFirstToken = true
-            print("[VoiceAgent] first token received — isSpeakModeActive=\(isSpeakModeActive) ttsConnected=\(elevenLabsStreamingTTS.isConnected)")
+            print("[VoiceAgent] first token — active=\(isSpeakModeActive) ttsConn=\(elevenLabsStreamingTTS.isConnected) ttsSpeaking=\(elevenLabsStreamingTTS.isSpeaking) sttConn=\(voiceController.speakSTTService.isConnected)")
             voiceController.notifyStreamingStarted()
         }
 
-        guard isSpeakModeActive else { return }
+        guard isSpeakModeActive else {
+            // Log the first few dropped tokens to diagnose silent responses
+            if !hasSpokenCurrentResponse {
+                hasSpokenCurrentResponse = true
+                print("[VoiceAgent] DROPPING tokens — speak mode inactive (first dropped token: \"\(token.prefix(40))\")")
+            }
+            return
+        }
         // Always buffer tokens — the TTS service's pendingText buffer
         // accumulates text even before the WebSocket is connected,
         // and flushes it once connected. Don't drop tokens.
@@ -437,11 +445,13 @@ extension ChatViewModel: ChatStreamingDelegate {
     }
 
     func streamingDidFinish() {
-        print("[VoiceAgent] streamingDidFinish — isSpeakModeActive=\(isSpeakModeActive) ttsIsSpeaking=\(elevenLabsStreamingTTS.isSpeaking) ttsConnected=\(elevenLabsStreamingTTS.isConnected) spokenTextLen=\(elevenLabsStreamingTTS.recentlySpokenText.count)")
+        print("[VoiceAgent] streamingDidFinish — active=\(isSpeakModeActive) ttsSpeaking=\(elevenLabsStreamingTTS.isSpeaking) ttsConn=\(elevenLabsStreamingTTS.isConnected) spokenLen=\(elevenLabsStreamingTTS.recentlySpokenText.count) sttConn=\(voiceController.speakSTTService.isConnected)")
         voiceController.notifyStreamingFinished()
 
-        guard isSpeakModeActive else { return }
-        // Always call finish — it will wait for connection if needed
+        guard isSpeakModeActive else {
+            print("[VoiceAgent] streamingDidFinish — speak mode INACTIVE, skipping TTS finish()")
+            return
+        }
         print("[VoiceAgent] calling TTS finish()")
         elevenLabsStreamingTTS.finish()
     }

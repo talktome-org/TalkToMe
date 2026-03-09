@@ -192,7 +192,107 @@ final class LocalDatabase {
             }
         }
 
+        migrator.registerMigration("outbox_add_quoted_reply") { db in
+            try db.alter(table: "outbox") { t in
+                t.add(column: "quoted_reply", .text)
+            }
+        }
+
+        migrator.registerMigration("create_diary_entries") { db in
+            try db.create(table: "diary_entries", ifNotExists: true) { t in
+                t.column("id", .text).primaryKey()
+                t.column("user_id", .text).notNull().indexed()
+                t.column("date", .text).notNull()
+                t.column("title", .text).notNull()
+                t.column("body_blocks_json", .text).notNull()
+                t.column("created_at", .text)
+                t.column("timezone_abbreviation", .text).notNull()
+            }
+        }
+
         return migrator
+    }
+
+    // MARK: - Diary Entries
+
+    func replaceDiaryEntries(_ rows: [DiaryEntryRow], userId: UUID) {
+        let uid = userId.uuidString
+        try? dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM diary_entries WHERE user_id = ?", arguments: [uid])
+            for row in rows {
+                let blocksJSON = (try? JSONSerialization.data(withJSONObject: row.body_blocks))
+                    .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+                try db.execute(
+                    sql: """
+                        INSERT OR REPLACE INTO diary_entries (id, user_id, date, title, body_blocks_json, created_at, timezone_abbreviation)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                    arguments: [
+                        row.id.uuidString, uid, row.date, row.title,
+                        blocksJSON, row.created_at ?? "", row.timezone_abbreviation,
+                    ]
+                )
+            }
+        }
+    }
+
+    func loadDiaryEntries(userId: UUID) -> [DiaryEntryRow] {
+        let uid = userId.uuidString
+        return (try? dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT * FROM diary_entries WHERE user_id = ? ORDER BY date DESC", arguments: [uid])
+            return rows.compactMap { row -> DiaryEntryRow? in
+                guard let idStr = row["id"] as? String, let id = UUID(uuidString: idStr),
+                      let userIdStr = row["user_id"] as? String, let userId = UUID(uuidString: userIdStr),
+                      let date = row["date"] as? String,
+                      let title = row["title"] as? String,
+                      let blocksJSON = row["body_blocks_json"] as? String,
+                      let tz = row["timezone_abbreviation"] as? String
+                else { return nil }
+                let bodyBlocks: [[String: String]] = {
+                    guard let data = blocksJSON.data(using: .utf8),
+                          let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: String]]
+                    else { return [] }
+                    return parsed
+                }()
+                let createdAt = row["created_at"] as? String
+                return DiaryEntryRow(
+                    id: id, user_id: userId, date: date, title: title,
+                    body_blocks: bodyBlocks, created_at: createdAt,
+                    timezone_abbreviation: tz
+                )
+            }
+        }) ?? []
+    }
+
+    func deleteDiaryEntry(id: UUID) {
+        try? dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM diary_entries WHERE id = ?", arguments: [id.uuidString])
+        }
+    }
+
+    func loadDiaryEntry(id: UUID) -> DiaryEntryRow? {
+        return try? dbQueue.read { db in
+            guard let row = try Row.fetchOne(db, sql: "SELECT * FROM diary_entries WHERE id = ?", arguments: [id.uuidString]),
+                  let idStr = row["id"] as? String, let entryId = UUID(uuidString: idStr),
+                  let userIdStr = row["user_id"] as? String, let userId = UUID(uuidString: userIdStr),
+                  let date = row["date"] as? String,
+                  let title = row["title"] as? String,
+                  let blocksJSON = row["body_blocks_json"] as? String,
+                  let tz = row["timezone_abbreviation"] as? String
+            else { return nil }
+            let bodyBlocks: [[String: String]] = {
+                guard let data = blocksJSON.data(using: .utf8),
+                      let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: String]]
+                else { return [] }
+                return parsed
+            }()
+            let createdAt = row["created_at"] as? String
+            return DiaryEntryRow(
+                id: entryId, user_id: userId, date: date, title: title,
+                body_blocks: bodyBlocks, created_at: createdAt,
+                timezone_abbreviation: tz
+            )
+        }
     }
 }
 

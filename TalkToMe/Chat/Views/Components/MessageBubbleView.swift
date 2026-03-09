@@ -207,7 +207,7 @@ struct UserMessageBubbleView: View {
             .clipShape(RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous))
             .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
             .contentShape(Rectangle())
-            .onTapGesture { fullScreenImage = uiImage }
+            .onTapGesture { fullScreenImage = ChatImageCacheManager.shared.fullImage(fileURL: url) ?? uiImage }
         } else {
           AsyncImage(url: url) { phase in
             switch phase {
@@ -575,7 +575,7 @@ struct MessageBubbleView: View {
                           .padding(.vertical, 4)
                       } else {
                         SelectableTextView(
-                          attributedText: Self.markdownToNSAttributedString(text),
+                          attributedText: Self.markdownToBlockAttributedString(text),
                           replyToName: buddyDisplayName,
                           onReply: { selectedText in
                             chatViewModel.replyQuoteText = selectedText
@@ -598,7 +598,7 @@ struct MessageBubbleView: View {
                   .padding(.top, 2)
                 }
 
-                if shouldShowAssistantActions {
+                if shouldShowAssistantActions || isActivelyStreamingMessage {
                   AssistantMessageActionsView(
                     messageText: plainText(from: message.segments),
                     regenerationCount: message.regenerationCount,
@@ -611,7 +611,10 @@ struct MessageBubbleView: View {
                       }
                     }
                   )
-                  .transition(.opacity.animation(.easeIn(duration: 0.2)))
+                  .opacity(shouldShowAssistantActions ? 1 : 0)
+                  .offset(y: shouldShowAssistantActions ? 0 : 6)
+                  .allowsHitTesting(shouldShowAssistantActions)
+                  .animation(.easeOut(duration: 0.35), value: shouldShowAssistantActions)
                 }
 
                 if shouldShowVoiceRespondedLabel {
@@ -686,39 +689,95 @@ struct MessageBubbleView: View {
     }
   }
 
+  /// Cache for attributed strings to avoid re-parsing markdown on every scroll/re-render.
+  private static let attributedStringCache = NSCache<NSString, NSAttributedString>()
+
+  /// Build an NSAttributedString using the same block-parsing logic as
+  /// MarkdownRendererView so the two renderers produce matching spacing.
+  /// Single newlines are joined as spaces, double+ newlines become paragraph
+  /// breaks with spacing that matches MarkdownRendererView.defaultTopPadding.
+  static func markdownToBlockAttributedString(_ markdown: String) -> NSAttributedString {
+    let key = markdown as NSString
+    if let cached = attributedStringCache.object(forKey: key) {
+      return cached
+    }
+
+    let fontSize: CGFloat = 17
+    let textColor = UIColor { trait in
+      trait.userInterfaceStyle == .dark
+        ? UIColor(white: 0.96, alpha: 1)
+        : UIColor(white: 0.06, alpha: 1)
+    }
+
+    // Parse into paragraph blocks using the same logic as MarkdownRendererView.parseBlocks:
+    // empty lines flush the current paragraph buffer, non-empty lines accumulate.
+    let lines = markdown.split(
+      omittingEmptySubsequences: false, whereSeparator: \.isNewline
+    ).map { String($0) }
+    var paragraphTexts: [String] = []
+    var buffer: [String] = []
+
+    for raw in lines {
+      let line = raw.trimmingCharacters(in: .whitespaces)
+      if line.isEmpty {
+        if !buffer.isEmpty {
+          paragraphTexts.append(
+            buffer.joined(separator: " ").trimmingCharacters(in: .whitespaces))
+          buffer.removeAll()
+        }
+      } else {
+        buffer.append(line)
+      }
+    }
+    if !buffer.isEmpty {
+      paragraphTexts.append(
+        buffer.joined(separator: " ").trimmingCharacters(in: .whitespaces))
+    }
+
+    if paragraphTexts.isEmpty {
+      return NSAttributedString(string: markdown)
+    }
+
+    let result = NSMutableAttributedString()
+
+    for (index, paraText) in paragraphTexts.enumerated() {
+      let paragraphStyle = NSMutableParagraphStyle()
+      paragraphStyle.lineSpacing = 2
+      if index < paragraphTexts.count - 1 {
+        paragraphStyle.paragraphSpacing = 28.5
+      }
+
+      let attrs: [NSAttributedString.Key: Any] = [
+        .font: UIFont.systemFont(ofSize: fontSize),
+        .foregroundColor: textColor,
+        .paragraphStyle: paragraphStyle,
+      ]
+
+      if let attrStr = try? NSAttributedString(
+        markdown: paraText,
+        options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+      ) {
+        let mutable = NSMutableAttributedString(attributedString: attrStr)
+        mutable.addAttributes(attrs, range: NSRange(location: 0, length: mutable.length))
+        result.append(mutable)
+      } else {
+        result.append(NSAttributedString(string: paraText, attributes: attrs))
+      }
+
+      if index < paragraphTexts.count - 1 {
+        result.append(NSAttributedString(string: "\n", attributes: attrs))
+      }
+    }
+
+    attributedStringCache.setObject(result, forKey: key)
+    return result
+  }
+
   private func plainText(from segments: [MessageSegment]) -> String {
     return segments.compactMap { segment in
       if case .text(let text) = segment { return text }
       return nil
     }.joined()
-  }
-
-  /// Convert markdown text to NSAttributedString for use in SelectableTextView.
-  static func markdownToNSAttributedString(_ markdown: String) -> NSAttributedString {
-    let fontSize: CGFloat = 17
-    let textColor = UIColor { trait in
-      trait.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : UIColor(white: 0.06, alpha: 1)
-    }
-    let paragraphStyle = NSMutableParagraphStyle()
-    paragraphStyle.lineSpacing = 2
-
-    let baseAttributes: [NSAttributedString.Key: Any] = [
-      .font: UIFont.systemFont(ofSize: fontSize),
-      .foregroundColor: textColor,
-      .paragraphStyle: paragraphStyle,
-    ]
-
-    // Try to parse markdown into NSAttributedString
-    if let attrStr = try? NSAttributedString(
-      markdown: markdown,
-      options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-    ) {
-      let mutable = NSMutableAttributedString(attributedString: attrStr)
-      mutable.addAttributes(baseAttributes, range: NSRange(location: 0, length: mutable.length))
-      return mutable
-    }
-
-    return NSAttributedString(string: markdown, attributes: baseAttributes)
   }
 
   @ViewBuilder
@@ -942,7 +1001,7 @@ struct MessageBubbleView: View {
             .clipShape(RoundedRectangle(cornerRadius: chatThumbCornerRadius, style: .continuous))
             .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
             .contentShape(Rectangle())
-            .onTapGesture { fullScreenImage = uiImage }
+            .onTapGesture { fullScreenImage = ChatImageCacheManager.shared.fullImage(fileURL: url) ?? uiImage }
         } else {
           AsyncImage(url: url) { phase in
             switch phase {

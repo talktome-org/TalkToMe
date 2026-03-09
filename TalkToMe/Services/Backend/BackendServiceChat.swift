@@ -39,7 +39,8 @@ extension BackendService {
         voiceAgent: String? = nil,
         ghostName: String? = nil,
         deleteBefore: UUID? = nil,
-        customInstructions: String? = nil
+        customInstructions: String? = nil,
+        quotedReply: String? = nil
     ) -> AsyncStream<StreamEvent> {
         var request = URLRequest(url: baseURL
             .appendingPathComponent("chat")
@@ -61,7 +62,8 @@ extension BackendService {
             voice_agent: (voiceAgent?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : voiceAgent,
             ghost_name: (ghostName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : ghostName,
             delete_before: deleteBefore,
-            custom_instructions: (customInstructions?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : customInstructions
+            custom_instructions: (customInstructions?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : customInstructions,
+            quoted_reply: (quotedReply?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) ? nil : quotedReply
         )
         request.httpBody = try? jsonEncoder.encode(payload)
         return SSEService.shared.stream(request: request)
@@ -314,6 +316,7 @@ private struct ChatRequestBody: Codable {
     let ghost_name: String?
     let delete_before: UUID?
     let custom_instructions: String?
+    let quoted_reply: String?
 }
 
 private struct MessagesResponseBody: Codable {

@@ -338,9 +338,9 @@ struct SidebarView: View {
         x: 0,
         y: isActive ? 4 : 2
       )
+      .contentShape(shape)
     }
     .buttonStyle(.plain)
-    .contentShape(shape)
     .contextMenu {
       Button("Rename", systemImage: "pencil") {
         renameTargetId = session.id
@@ -559,15 +559,23 @@ struct SidebarView: View {
     return !trimmed.isEmpty && trimmed.uppercased() != "NULL"
   }
 
+  private static let isoFormatterFractional: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f
+  }()
+
+  private static let isoFormatterBasic: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime]
+    return f
+  }()
+
   private func parseISO8601Date(_ iso: String?) -> Date? {
     guard let raw = iso?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
       return nil
     }
-    let iso1 = ISO8601DateFormatter()
-    iso1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    let iso2 = ISO8601DateFormatter()
-    iso2.formatOptions = [.withInternetDateTime]
-    return iso1.date(from: raw) ?? iso2.date(from: raw)
+    return Self.isoFormatterFractional.date(from: raw) ?? Self.isoFormatterBasic.date(from: raw)
   }
 }
 

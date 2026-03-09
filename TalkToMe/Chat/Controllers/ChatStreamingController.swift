@@ -124,12 +124,13 @@ final class ChatStreamingController {
 
         let trimmedMessage = (overrideText ?? delegate.inputText).trimmingCharacters(in: .whitespacesAndNewlines)
         let attachmentsToSend = delegate.pendingAttachments
+        print("[VoiceAgent] sendMessage called — voiceAgent=\(activeVoiceAgentName ?? "nil") msgLen=\(trimmedMessage.count) isStreaming=\(isStreaming) isRegen=\(isRegeneration) override=\(overrideText != nil)")
         guard !(trimmedMessage.isEmpty && attachmentsToSend.isEmpty) else {
-            if activeVoiceAgentName != nil { print("[VoiceAgent] sendMessage — empty message & no attachments, returning") }
+            print("[VoiceAgent] sendMessage — empty message & no attachments, returning (voiceAgent=\(activeVoiceAgentName ?? "nil"))")
             return
         }
         guard !isStreaming else {
-            if activeVoiceAgentName != nil { print("[VoiceAgent] sendMessage — already streaming, returning") }
+            print("[VoiceAgent] sendMessage — BLOCKED: already streaming (voiceAgent=\(activeVoiceAgentName ?? "nil"))")
             return
         }
 
@@ -305,7 +306,8 @@ final class ChatStreamingController {
                     friendUserId: friendToUse,
                     messageId: clientMessageId,
                     message: messageToSend,
-                    attachments: outboxAttachments
+                    attachments: outboxAttachments,
+                    quotedReply: quoteText
                 )
             }
             delegate.isLoading = false
@@ -781,7 +783,7 @@ final class ChatStreamingController {
                         }
                     }
                 case .done:
-                    print("[VoiceAgent] SSE .done received — voiceAgent=\(voiceAgentToSend ?? "nil") accumulatedLen=\(accumulated.count)")
+                    print("[VoiceAgent] SSE .done received — voiceAgent=\(voiceAgentToSend ?? "nil") accumulatedLen=\(accumulated.count) isVoiceMode=\(isVoiceModeMessage) currentActiveVoice=\(self.activeVoiceAgentName ?? "nil")")
                     let targetSid = streamSessionId ?? delegate.sessionId
                     if let sid = targetSid, sid != delegate.sessionId {
                         Task { @MainActor in
@@ -790,6 +792,17 @@ final class ChatStreamingController {
                             }
                             self.assistantMessageIdBySession[sid] = nil
                             if self.currentStreamingSessionId == sid { self.currentStreamingSessionId = nil }
+                        }
+                        Self.endBackgroundTask(bgTask)
+                        // Reconcile with server even when the user navigated away,
+                        // so the AI response is persisted locally for next open.
+                        if NetworkMonitor.shared.isOnline {
+                            let tokenForSync = accessToken
+                            Task.detached {
+                                if let dtos = try? await BackendService.shared.fetchMessages(sessionId: sid, accessToken: tokenForSync) {
+                                    await ChatStore.shared.reconcileMessagesWithServer(dtos, sessionId: sid)
+                                }
+                            }
                         }
                     } else {
                         let capturedRegenCount = self.pendingRegenerationCount
@@ -885,6 +898,20 @@ final class ChatStreamingController {
                                             await ChatStore.shared.setVoiceMetadataForLastUserMessage(sessionId: sid, ghostName: ghostName)
                                         }
                                     }
+                                    // Update the static cache with GRDB data (server-assigned UUIDs)
+                                    // so returning to this chat doesn't cause an ID mismatch flash.
+                                    let resolvedUserId: UUID? = await MainActor.run {
+                                        AuthService.shared.currentUser?.id
+                                            ?? UUID(uuidString: UserDefaults.standard.string(forKey: PreferenceKeys.currentUserId) ?? "")
+                                    }
+                                    if let userId = resolvedUserId {
+                                        let refreshed = await ChatStore.shared.loadMessages(sessionId: sid, currentUserId: userId)
+                                        if !refreshed.isEmpty {
+                                            await MainActor.run {
+                                                ChatMessagesViewModel.sharedMessagesCache[sid] = .init(messages: refreshed, lastLoaded: Date())
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             Task.detached {
@@ -940,7 +967,8 @@ final class ChatStreamingController {
                             friendUserId: friendToUse,
                             messageId: clientMessageId,
                             message: messageToSend,
-                            attachments: outboxAttachments
+                            attachments: outboxAttachments,
+                            quotedReply: quoteText
                         )
                     }
                 }
@@ -973,6 +1001,7 @@ final class ChatStreamingController {
             if voiceAgentToSend != nil {
                 print("[VoiceAgent] starting SSE stream — voiceAgent=\(voiceAgentToSend!) ghostName=\(ghostNameToSend ?? "nil") sessionId=\(requestSessionIdForStream?.uuidString ?? "nil") customInstructions=\(customInstructionsToSend != nil ? "yes" : "no")")
             }
+            let quotedReplyToSend = quoteText
             let task = Task.detached { [streamToken] in
                 let stream = BackendService.shared.streamChatMessage(
                     messageToSend,
@@ -986,7 +1015,8 @@ final class ChatStreamingController {
                     voiceAgent: voiceAgentToSend,
                     ghostName: ghostNameToSend,
                     deleteBefore: deleteBeforeId,
-                    customInstructions: customInstructionsToSend
+                    customInstructions: customInstructionsToSend,
+                    quotedReply: quotedReplyToSend
                 )
                 for await event in stream {
                     onEvent(event)

@@ -14,6 +14,90 @@ enum AppTab: Hashable {
   case buddy
 }
 
+// MARK: - Chat Panel (isolated to prevent drag-offset changes from re-rendering the tab bar)
+
+private struct ChatPanelView: View {
+  let sessionId: UUID?
+  let chatViewKey: UUID
+  let onDismiss: () -> Void
+
+  @State private var dragOffset: CGFloat = UIScreen.main.bounds.width
+  private let dismissThreshold: CGFloat = 100
+
+  private var viewId: String {
+    if let sid = sessionId { return "session_\(sid.uuidString)" }
+    return "new_\(chatViewKey.uuidString)"
+  }
+
+  var body: some View {
+    ChatView(
+      sessionId: sessionId,
+      onBack: { dismiss() }
+    )
+    .id(viewId)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(AppTheme.background)
+    .clipShape(RoundedRectangle(cornerRadius: 44, style: .continuous))
+    .ignoresSafeArea()
+    .offset(x: dragOffset)
+    .overlay(alignment: .leading) {
+      // Edge-swipe to dismiss so inner horizontal drags remain usable.
+      Color.clear
+        .frame(width: 24)
+        .contentShape(Rectangle())
+        .gesture(
+          DragGesture()
+            .onChanged { value in
+              // Only allow dragging to the right (positive x translation)
+              if value.translation.width > 0 {
+                dragOffset = value.translation.width
+              }
+            }
+            .onEnded { value in
+              if value.translation.width > dismissThreshold
+                || value.predictedEndTranslation.width > dismissThreshold * 2
+              {
+                // Dismiss keyboard
+                UIApplication.shared.sendAction(
+                  #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                // Dismiss with a slide-out animation
+                withAnimation(.easeOut(duration: 0.2)) {
+                  dragOffset = UIScreen.main.bounds.width
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                  onDismiss()
+                }
+              } else {
+                // Snap back
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                  dragOffset = 0
+                }
+              }
+            }
+        )
+    }
+    .onAppear {
+      // Slide in from the right
+      withAnimation(.easeOut(duration: 0.20)) {
+        dragOffset = 0
+      }
+    }
+  }
+
+  private func dismiss() {
+    UIApplication.shared.sendAction(
+      #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    withAnimation(.easeOut(duration: 0.25)) {
+      dragOffset = UIScreen.main.bounds.width
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+      onDismiss()
+    }
+  }
+}
+
+// MARK: - Main Tab View
+
 struct MainTabView: View {
   @EnvironmentObject private var sessionsViewModel: ChatSessionsViewModel
   @EnvironmentObject private var navigationViewModel: SidebarNavigationViewModel
@@ -21,8 +105,11 @@ struct MainTabView: View {
   @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var buddyVoiceName: String = ""
   @State private var selectedTab: AppTab = .home
   @State private var showChat: Bool = false
-  @State private var chatDragOffset: CGFloat = 0
-  private let dismissThreshold: CGFloat = 100
+  @State private var chatPanelId: UUID = UUID()
+  @State private var chatPanelEverShown: Bool = false
+
+  // Cached to avoid running UIGraphicsImageRenderer on every body evaluation
+  @State private var cachedBuddyImage: UIImage? = nil
 
   private struct BuddyTabConfig {
     let pointSize: CGFloat
@@ -46,10 +133,10 @@ struct MainTabView: View {
 
   private static let defaultTabConfig = BuddyTabConfig(pointSize: 24, offsetY: 3)
 
-  private var buddyTabImage: UIImage? {
-    guard let source = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: buddyVoiceName) else { return nil }
-    let key = buddyVoiceName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    let config = Self.buddyTabConfigs[key] ?? Self.defaultTabConfig
+  private static func computeBuddyTabImage(for voiceName: String) -> UIImage? {
+    guard let source = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: voiceName) else { return nil }
+    let key = voiceName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    let config = buddyTabConfigs[key] ?? defaultTabConfig
     let scale = UIScreen.main.scale
     let canvasWidth = (config.pointSize + abs(config.offsetX)) * scale
     let canvasHeight = (config.pointSize + abs(config.offsetY)) * scale
@@ -70,25 +157,13 @@ struct MainTabView: View {
     } else {
       sessionsViewModel.startNewChat()
     }
-    // Start off-screen to the right
-    chatDragOffset = UIScreen.main.bounds.width
-    showChat = true
-    // Slide in from the right
-    withAnimation(.easeOut(duration: 0.20)) {
-      chatDragOffset = 0
+    if !showChat {
+      // Fresh panel + slide-in animation only when opening from the sidebar
+      chatPanelId = UUID()
+      showChat = true
+      chatPanelEverShown = true
     }
-  }
-
-  private func dismissChat() {
-    UIApplication.shared.sendAction(
-      #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-    withAnimation(.easeOut(duration: 0.25)) {
-      chatDragOffset = UIScreen.main.bounds.width
-    }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-      showChat = false
-      chatDragOffset = 0
-    }
+    // If already showing, the inner ChatView swaps via its .id(viewId)
   }
 
   private var tabSelection: Binding<AppTab> {
@@ -132,7 +207,7 @@ struct MainTabView: View {
         Tab(value: .buddy, role: .search) {
           Color.clear
         } label: {
-          if let img = buddyTabImage {
+          if let img = cachedBuddyImage {
             Image(uiImage: img)
           } else {
             Image(systemName: "bubble.left.fill")
@@ -141,68 +216,29 @@ struct MainTabView: View {
 
       }
 
-      if showChat {
-        let viewId: String = {
-          if let sid = sessionsViewModel.activeSessionId { return "session_\(sid.uuidString)" }
-          return "new_\(sessionsViewModel.chatViewKey.uuidString)"
-        }()
-        ChatView(
+      // Keep the panel alive (offscreen) after dismiss so in-progress
+      // streams / regenerations can finish before the view model is freed.
+      if chatPanelEverShown {
+        ChatPanelView(
           sessionId: sessionsViewModel.activeSessionId,
-          onBack: {
-            dismissChat()
+          chatViewKey: sessionsViewModel.chatViewKey,
+          onDismiss: {
+            showChat = false
           }
         )
-        .id(viewId)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AppTheme.background)
-        .clipShape(RoundedRectangle(cornerRadius: 44, style: .continuous))
-        .ignoresSafeArea()
-        .offset(x: chatDragOffset)
-        .overlay(alignment: .leading) {
-          // Edge-swipe to dismiss so inner horizontal drags remain usable.
-          Color.clear
-            .frame(width: 24)
-            .contentShape(Rectangle())
-            .gesture(
-              DragGesture()
-                .onChanged { value in
-                  // Only allow dragging to the right (positive x translation)
-                  if value.translation.width > 0 {
-                    chatDragOffset = value.translation.width
-                  }
-                }
-                .onEnded { value in
-                  if value.translation.width > dismissThreshold
-                    || value.predictedEndTranslation.width > dismissThreshold * 2
-                  {
-                    // Dismiss keyboard
-                    UIApplication.shared.sendAction(
-                      #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                    // Dismiss with a slide-out animation
-                    withAnimation(.easeOut(duration: 0.2)) {
-                      chatDragOffset = UIScreen.main.bounds.width
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                      showChat = false
-                      chatDragOffset = 0
-                    }
-                  } else {
-                    // Snap back
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                      chatDragOffset = 0
-                    }
-                  }
-                }
-            )
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .openChatSession)) { note in
-          if let sid = note.userInfo?["sessionId"] as? UUID {
-            selectedTab = .chat
-            openChat(sessionId: sid)
-          }
-        }
-        .zIndex(1)
+        .id(chatPanelId)
+        .zIndex(showChat ? 1 : -1)
+        .allowsHitTesting(showChat)
       }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .openChatSession)) { note in
+      if let sid = note.userInfo?["sessionId"] as? UUID {
+        selectedTab = .chat
+        openChat(sessionId: sid)
+      }
+    }
+    .onChange(of: buddyVoiceName, initial: true) { _, _ in
+      cachedBuddyImage = Self.computeBuddyTabImage(for: buddyVoiceName)
     }
   }
 }

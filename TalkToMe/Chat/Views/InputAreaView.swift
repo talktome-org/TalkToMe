@@ -360,6 +360,7 @@ struct InputAreaView: View {
         .foregroundColor(.primary)
         .contentTransition(.symbolEffect(.replace))
         .frame(width: 44, height: 44)
+        .contentShape(Circle())
     }
     .buttonStyle(.plain)
     .glassEffect(.regular.interactive(), in: Circle())
@@ -386,6 +387,7 @@ struct InputAreaView: View {
               .foregroundColor(isSpeakMicMuted ? .red : .primary)
               .contentTransition(.symbolEffect(.replace))
               .frame(width: 44, height: 44)
+              .contentShape(Circle())
           }
           .buttonStyle(.plain)
           .glassEffect(.regular.interactive(), in: Circle())
@@ -407,6 +409,7 @@ struct InputAreaView: View {
             .frame(height: 28)
             .padding(.horizontal, 12)
             .frame(height: 46)
+            .contentShape(Capsule())
             .background {
               Capsule()
                 .glassEffect(.regular.interactive(), in: Capsule())
