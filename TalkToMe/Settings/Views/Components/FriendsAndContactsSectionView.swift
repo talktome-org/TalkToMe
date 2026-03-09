@@ -6,6 +6,12 @@ struct FriendsAndContactsSectionView: View {
 
     @State private var codeToAdd: String = ""
     @State private var searchText: String = ""
+    @State private var searchScope: SearchScope = .friends
+
+    enum SearchScope: String, CaseIterable {
+        case friends = "Friends"
+        case contacts = "Contacts"
+    }
     @State private var showInviteMessageComposer: Bool = false
     @State private var inviteRecipients: [String] = []
     @State private var showShareSheet: Bool = false
@@ -23,6 +29,12 @@ struct FriendsAndContactsSectionView: View {
     private var inviteMessage: String {
         let code = friendsViewModel.myCode ?? "----"
         return "Hey, I'm using TalkToMe to chat with friends - join us here! Download it from TestFlight: https://testflight.apple.com/join/BRdUfYmv and add me to your friends list with the code: \(code)."
+    }
+
+    private var filteredFriends: [FriendSummary] {
+        guard !searchText.isEmpty else { return friendsViewModel.friends }
+        let query = searchText.lowercased()
+        return friendsViewModel.friends.filter { $0.fullName.lowercased().contains(query) }
     }
 
     private var filteredContacts: [ContactRow] {
@@ -50,7 +62,12 @@ struct FriendsAndContactsSectionView: View {
                 friendsSection
                 contactsSection
             } else {
-                contactsSection
+                switch searchScope {
+                case .friends:
+                    searchFriendsSection
+                case .contacts:
+                    contactsSection
+                }
             }
         }
         .listSectionSpacing(.compact)
@@ -60,6 +77,11 @@ struct FriendsAndContactsSectionView: View {
         .background(AppTheme.background)
         .scrollDismissesKeyboard(.immediately)
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search")
+        .searchScopes($searchScope, activation: .onSearchPresentation) {
+            ForEach(SearchScope.allCases, id: \.self) { scope in
+                Text(scope.rawValue).tag(scope)
+            }
+        }
         .navigationTitle("Contacts")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
@@ -267,6 +289,64 @@ struct FriendsAndContactsSectionView: View {
         if !friendsViewModel.friends.isEmpty {
             Section(header: Text("Friends")) {
                 ForEach(friendsViewModel.friends) { friend in
+                    HStack(spacing: 14) {
+                        ZStack(alignment: .bottomTrailing) {
+                            SidebarAvatarView(avatarURL: friend.avatarURL, name: friend.fullName)
+                                .frame(width: 44, height: 44)
+                                .clipShape(Circle())
+
+                            Circle()
+                                .fill(friend.isOnline ? Color.green : Color.gray)
+                                .frame(width: 12, height: 12)
+                                .overlay(Circle().strokeBorder(Color(.systemBackground), lineWidth: 2))
+                                .offset(x: 2, y: 2)
+                        }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(friend.fullName)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+
+                            if let presence = friend.presenceText {
+                                Text(presence)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(friend.isOnline ? .green : .gray)
+                                    .lineLimit(1)
+                            } else if let voice = friend.voiceName, !voice.isEmpty {
+                                Text(voice)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                            }
+                        }
+
+                        Spacer()
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var searchFriendsSection: some View {
+        Section(header: Text("Friends")) {
+            if friendsViewModel.isLoadingFriends {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("Loading friends...")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                }
+            } else if filteredFriends.isEmpty {
+                Text(searchText.isEmpty ? "No friends yet" : "No friends matching \"\(searchText)\"")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+            } else {
+                ForEach(filteredFriends) { friend in
                     HStack(spacing: 14) {
                         ZStack(alignment: .bottomTrailing) {
                             SidebarAvatarView(avatarURL: friend.avatarURL, name: friend.fullName)

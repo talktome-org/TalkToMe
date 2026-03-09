@@ -26,7 +26,19 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
     /// When true, mic audio is NOT sent to Deepgram (preventing echo
     /// transcription during TTS) but mic levels still update for
     /// energy-based barge-in detection.
-    var isEchoGated: Bool = false
+    ///
+    /// While echo-gated, Deepgram KeepAlive messages are sent periodically
+    /// to prevent the server from closing the connection due to inactivity.
+    var isEchoGated: Bool = false {
+        didSet {
+            guard isEchoGated != oldValue else { return }
+            if isEchoGated {
+                startEchoGateKeepAlive()
+            } else {
+                stopEchoGateKeepAlive()
+            }
+        }
+    }
 
     private let urlSession: URLSession
     private var wsTask: URLSessionWebSocketTask?
@@ -47,6 +59,7 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
     private var currentUtteranceFinalParts: [String] = []
     private var keepAliveTask: Task<Void, Never>?
     private let keepAliveIntervalSeconds: TimeInterval = 10.0
+    private var echoGateKeepAliveTask: Task<Void, Never>?
 
     init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
@@ -54,6 +67,7 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
 
     @MainActor
     func connect(config: Config = .init()) async {
+        print("[VoiceAgent][STT] connect() called — currentlyConnected=\(isConnected) isRecording=\(isRecording) endpointing=\(config.endpointingMs)")
         self.config = config
         self.lastError = nil
         self.isUserSpeaking = false
@@ -68,6 +82,7 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
 
         guard let token = await AuthService.shared.getAccessToken() else {
             self.lastError = "Not authenticated."
+            print("[VoiceAgent][STT] connect() FAILED — no auth token")
             return
         }
 
@@ -77,10 +92,12 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             self.receiveLoop()
             self.startKeepAlive()
             self.flushBufferedAudioIfPossible()
+            print("[VoiceAgent][STT] connect() SUCCEEDED — wsTask=\(wsTask != nil)")
         } catch {
             let msg = "STT connection failed: \(error.localizedDescription)"
             self.lastError = msg
             self.isConnected = false
+            print("[VoiceAgent][STT] connect() FAILED — \(error)")
         }
     }
 
@@ -92,7 +109,8 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
                 guard !Task.isCancelled else { break }
                 guard let self, self.isConnected, let task = self.wsTask else { break }
                 task.sendPing { error in
-                    if error != nil {
+                    if let error {
+                        print("[VoiceAgent][STT] keepAlive ping FAILED: \(error) — setting isConnected=false")
                         Task { @MainActor in
                             self.isConnected = false
                         }
@@ -107,11 +125,32 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         keepAliveTask = nil
     }
 
+    /// Sends Deepgram `KeepAlive` messages every 8s while echo-gated
+    /// to prevent the server from timing out the connection (~12s inactivity limit).
+    private func startEchoGateKeepAlive() {
+        echoGateKeepAliveTask?.cancel()
+        echoGateKeepAliveTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 8_000_000_000) // 8 seconds
+                guard !Task.isCancelled else { break }
+                guard let self, self.isConnected, self.isEchoGated else { break }
+                print("[VoiceAgent][STT] sending KeepAlive (echo-gated)")
+                self.sendJSONEvent(["type": "KeepAlive"])
+            }
+        }
+    }
+
+    private func stopEchoGateKeepAlive() {
+        echoGateKeepAliveTask?.cancel()
+        echoGateKeepAliveTask = nil
+    }
+
     @MainActor
     func disconnect() {
         print("[VoiceAgent][STT] disconnect() called — isConnected=\(isConnected) isRecording=\(isRecording)")
         SharedAudioEngine.shared.removeInputTap()
         stopKeepAlive()
+        stopEchoGateKeepAlive()
         isConnected = false
         isRecording = false
         isPaused = false
@@ -232,13 +271,17 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             Task { @MainActor in
                 switch result {
                 case .failure(let err):
-                    print("[VoiceAgent][STT] receiveLoop failure: \(err) isRecording=\(self.isRecording)")
+                    print("[VoiceAgent][STT] receiveLoop FAILURE: \(err) isConnected=\(self.isConnected) isRecording=\(self.isRecording) wsTask=\(self.wsTask != nil)")
                     let existing = (self.lastError ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                     if existing.isEmpty {
                         self.lastError = err.localizedDescription
                     }
+                    let wasRecording = self.isRecording
                     self.isConnected = false
                     self.isUserSpeaking = false
+                    if wasRecording {
+                        print("[VoiceAgent][STT] WARNING: WebSocket died while recording — audio is being captured but NOT transcribed!")
+                    }
                 case .success(let msg):
                     self.handle(message: msg)
                     if self.isConnected {
@@ -319,6 +362,7 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             isUserSpeaking = false
             let utterance = currentUtteranceFinalParts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             if !utterance.isEmpty {
+                print("[VoiceAgent][STT] speechFinal — utterance: \"\(utterance.prefix(80))\" isConnected=\(isConnected)")
                 lastFinalUtterance = utterance
             }
             currentUtteranceFinalParts = []
@@ -392,17 +436,25 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
 
     // MARK: - Audio sending
 
+    /// Tracks dropped audio chunks for periodic warning logs.
+    private var droppedAudioChunks: Int = 0
+
     private func sendAudio(_ data: Data) {
         wsSendQueue.async { [weak self] in
             guard let self else { return }
             guard !data.isEmpty else { return }
 
             if let task = self.wsTask {
+                self.droppedAudioChunks = 0
                 task.send(.data(data)) { _ in }
                 return
             }
 
             guard self.isRecording else { return }
+            self.droppedAudioChunks += 1
+            if self.droppedAudioChunks == 1 || self.droppedAudioChunks % 50 == 0 {
+                print("[VoiceAgent][STT] WARNING: no wsTask — buffering audio (dropped=\(self.droppedAudioChunks) isRecording=\(self.isRecording) isConnected=\(self.isConnected))")
+            }
             self.bufferAudioLocked(data)
         }
     }

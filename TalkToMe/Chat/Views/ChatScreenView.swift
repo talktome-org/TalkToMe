@@ -11,6 +11,7 @@ struct ChatScreenView: View {
 
   @State private var toastMessage: String? = nil
   @State private var toastWorkItem: DispatchWorkItem? = nil
+  @State private var lastSpeakToggleTime: Date = .distantPast
   private var inputAreaHeight: CGFloat {
     chatViewModel.pendingAttachments.isEmpty ? 68 : 220
   }
@@ -52,6 +53,10 @@ struct ChatScreenView: View {
             showDictationToast()
             return
           }
+          // Debounce to prevent accidental double-taps during waveform↔xmark transition
+          let now = Date()
+          guard now.timeIntervalSince(lastSpeakToggleTime) > 0.8 else { return }
+          lastSpeakToggleTime = now
           if chatViewModel.isSpeakModeActive {
             chatViewModel.voiceController.stopSpeakMode()
           } else {
@@ -121,6 +126,7 @@ struct ChatScreenView: View {
         speakModePhase: chatViewModel.voiceController.speakModePhase,
         size: 150
       )
+      .contentShape(Circle())
     }
     .buttonStyle(.plain)
     .frame(maxWidth: .infinity)

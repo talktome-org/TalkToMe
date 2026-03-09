@@ -77,25 +77,25 @@ final class ReplyTextView: UITextView {
         if action == #selector(replyAction(_:)) {
             return selectedRange.length > 0
         }
-        // Allow standard actions (copy, select all, etc.)
-        return super.canPerformAction(action, withSender: sender)
+        if action == #selector(select(_:)) || action == #selector(selectAll(_:)) {
+            return super.canPerformAction(action, withSender: sender)
+        }
+        return false
     }
 
     override func buildMenu(with builder: any UIMenuBuilder) {
-        super.buildMenu(with: builder)
+        // Remove standard menus
+        builder.remove(menu: .standardEdit)
+        builder.remove(menu: .share)
+        builder.remove(menu: .lookup)
+        builder.remove(menu: .learn)
 
         let replyAction = UIAction(title: replyMenuTitle, image: UIImage(systemName: "arrowshape.turn.up.left")) { [weak self] _ in
             self?.replyAction(nil)
         }
 
         let replyMenu = UIMenu(title: "", options: .displayInline, children: [replyAction])
-
-        // Insert at the beginning so it appears prominently
-        if builder.menu(for: .standardEdit) != nil {
-            builder.insertSibling(replyMenu, beforeMenu: .standardEdit)
-        } else {
-            builder.insertChild(replyMenu, atStartOfMenu: .root)
-        }
+        builder.insertChild(replyMenu, atStartOfMenu: .root)
     }
 
     @objc private func replyAction(_ sender: Any?) {

@@ -318,10 +318,19 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
             except PermissionError:
                 pass  # Session already linked to a different friend; proceed with chat
 
-        store_as_segments = bool(chat_request.attachments)
+        quoted_reply_text = (chat_request.quoted_reply or "").strip() or None
+        store_as_segments = bool(chat_request.attachments) or bool(quoted_reply_text)
         if store_as_segments:
             segs = []
+            if quoted_reply_text:
+                segs.append({"type": "quoted_reply", "text": quoted_reply_text})
             msg = (chat_request.message or "").strip()
+            # When quoted_reply is sent separately, the message field includes
+            # a "> quote\n\n" prefix for LLM context. Strip it for storage so
+            # the text segment only contains the actual user message.
+            if quoted_reply_text and msg.startswith("> "):
+                parts = msg.split("\n\n", 1)
+                msg = parts[1].strip() if len(parts) > 1 else ""
             if msg:
                 segs.append({"type": "text", "content": msg})
             for a in chat_request.attachments or []:
@@ -369,6 +378,11 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
             # If the client reuses a message id that already exists for a different user/session, treat it as a bad request.
             raise HTTPException(status_code=400, detail="Invalid message_id")
         last_preview = (chat_request.message or "").strip()
+        # Strip the "> quote\n\n" prefix so the sidebar preview shows the
+        # actual message text, not the quoted reply.
+        if quoted_reply_text and last_preview.startswith("> "):
+            parts = last_preview.split("\n\n", 1)
+            last_preview = parts[1].strip() if len(parts) > 1 else last_preview
         if not last_preview and chat_request.attachments:
             has_image = False
             try:
@@ -485,8 +499,12 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                             continue
 
                 use_voice_agent = bool((chat_request.voice_agent or "").strip())
+                _va_raw = chat_request.voice_agent
+                print(f"[VoiceAgent] voice_agent param — raw={_va_raw!r} use_voice_agent={use_voice_agent} session={session_uuid} message_len={len((chat_request.message or '').strip())} ghost_name={chat_request.ghost_name!r}")
                 if use_voice_agent:
-                    print(f"[VoiceAgent] voice_agent mode detected — agent='{chat_request.voice_agent}' session={session_uuid} message_len={len((chat_request.message or '').strip())}")
+                    print(f"[VoiceAgent] voice_agent mode ACTIVE — agent='{chat_request.voice_agent}' model=gemini session={session_uuid}")
+                else:
+                    print(f"[VoiceAgent] voice_agent mode OFF — using openai session={session_uuid}")
 
                 # RAG: retrieve relevant book chunks from Supabase.
                 # Skip RAG for voice mode to reduce latency.
@@ -526,6 +544,8 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                         system_prompt_override = (system_prompt_override or "") + "\n\n" + ci
 
                 # Use Gemini for voice-agent mode, OpenAI otherwise.
+                _stream_start = time.time()
+                print(f"[VoiceAgent] model selection — use_gemini={use_gemini} session={session_uuid} has_rag={'yes' if rag_context_text else 'no'} has_custom_instructions={'yes' if (chat_request.custom_instructions or '').strip() else 'no'}")
                 if use_gemini:
                     # Convert chat_history to list of dicts for Gemini
                     history_for_gemini = None
@@ -752,15 +772,18 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
 
                 # Use Gemini for voice-agent mode, OpenAI otherwise.
                 reasoning_effort = _classify_reasoning_effort(chat_request.message)
-                print(f"[SSE] reasoning_effort={reasoning_effort} for message ({len((chat_request.message or '').strip())} chars)")
+                print(f"[SSE] reasoning_effort={reasoning_effort} for message ({len((chat_request.message or '').strip())} chars) voice_agent={use_voice_agent}")
                 if use_gemini:
                     _reset_stream_debug_counters()
+                    print(f"[VoiceAgent] starting Gemini stream — session={session_uuid}")
                     async with voice_chat_service.stream_response(
                         messages=input_messages,
                         previous_response_id=None,  # Gemini doesn't support response chaining
                     ) as stream:
                         async for chunk in _consume_stream(stream):
                             yield chunk
+                    _elapsed = time.time() - _stream_start
+                    print(f"[VoiceAgent] Gemini stream done — session={session_uuid} elapsed={_elapsed:.2f}s text_deltas={received_text_deltas}")
                     _log_stream_debug_counters("gemini_primary")
                 else:
                     try:
@@ -857,6 +880,8 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                 elif not final_text:
                     print(f"[SSE] WARNING: No output produced for session {session_uuid}")
 
+                _total_elapsed = time.time() - _stream_start
+                print(f"[VoiceAgent] SSE done — session={session_uuid} voice_agent={use_voice_agent} model={'gemini' if use_gemini else 'openai'} total_elapsed={_total_elapsed:.2f}s text_len={len(final_text)} segments={len(segments_list)}")
                 yield b"event: done\ndata: {}\n\n"
             except Exception as e:
                 print(f"[SSE] /chat stream error: {e}\n" + traceback.format_exc())
@@ -898,7 +923,7 @@ async def get_messages(http_request: Request, session_id: uuid.UUID, current_use
     except PermissionError:
         raise HTTPException(status_code=403, detail="Forbidden: invalid session")
 
-    rows = await list_messages_for_session(user_id=user_uuid, session_id=session_id, limit=200, offset=0)
+    rows = await list_messages_for_session(user_id=user_uuid, session_id=session_id, limit=10000, offset=0)
     return MessagesResponse(
         messages=[
             MessageDTO(

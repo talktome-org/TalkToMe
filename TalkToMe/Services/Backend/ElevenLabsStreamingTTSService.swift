@@ -187,7 +187,8 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
                 guard !Task.isCancelled else { break }
                 guard let self, self.isConnected, let task = self.wsTask else { break }
                 task.sendPing { error in
-                    if error != nil {
+                    if let error {
+                        print("[VoiceAgent][TTS] keepAlive ping FAILED: \(error) — setting isConnected=false")
                         Task { @MainActor in self.isConnected = false }
                     }
                 }
@@ -237,12 +238,14 @@ final class ElevenLabsStreamingTTSService: ObservableObject, @unchecked Sendable
             Task { @MainActor in
                 switch result {
                 case .failure(let err):
-                    print("[VoiceAgent][TTS] receiveLoop failure: \(err) finishSent=\(self.finishSent)")
+                    print("[VoiceAgent][TTS] receiveLoop FAILURE: \(err) finishSent=\(self.finishSent) isSpeaking=\(self.isSpeaking) pendingTextLen=\(self.pendingText.count)")
                     if self.finishSent {
+                        print("[VoiceAgent][TTS] receiveLoop failure after finish — expected teardown")
                         self.isConnected = false
                         self.wsTask = nil
                         return
                     }
+                    print("[VoiceAgent][TTS] WARNING: unexpected WS failure — audio may be lost!")
                     self.lastError = err.localizedDescription
                     self.isConnected = false
                     self.stopPlayback()

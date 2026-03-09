@@ -22,6 +22,7 @@ struct DiaryView: View {
   @State private var showPastCalendar: Bool = false
   @AppStorage("diary_friend_card_dismissed") private var friendCardDismissed: Bool = false
   @State private var showFriendsSection: Bool = false
+  @State private var showDescriptionEditor: Bool = false
 
   var body: some View {
     NavigationStack {
@@ -29,7 +30,9 @@ struct DiaryView: View {
         AppTheme.background.ignoresSafeArea()
 
         VStack(spacing: 0) {
-          DiaryHeroCardView(gradientColors: heroGradientColors)
+          DiaryHeroCardView(name: viewModel.diaryName, gradientColors: heroGradientColors) {
+            showDescriptionEditor = true
+          }
 
           if !friendCardDismissed {
             addFriendCard
@@ -44,6 +47,7 @@ struct DiaryView: View {
             entries: $viewModel.entries,
             todoItems: $viewModel.todoItems,
             accentColor: viewModel.diaryColor,
+            diaryDescription: viewModel.diaryDescription,
             onAddEntryForDate: { date in
               newEntrySession = NewEntrySession(initialDate: date)
             },
@@ -64,46 +68,32 @@ struct DiaryView: View {
         .padding(.bottom, 0)
         .ignoresSafeArea(edges: [.top, .bottom])
 
+        GlassFloatingActionButton(systemName: "plus") {
+          Haptics.impact(.light)
+          newEntrySession = NewEntrySession(initialDate: Date())
+        }
+        .padding(.trailing, 20)
+        .padding(.bottom, 24)
       }
       .navigationTitle("")
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .topBarLeading) {
-          Button {
-            Haptics.impact(.light)
-            newEntrySession = NewEntrySession(initialDate: Date())
-          } label: {
-            Image(systemName: "plus")
-              .font(.system(size: 17, weight: .semibold))
-              .foregroundStyle(Color(.label))
+      .toolbarVisibility(.hidden, for: .navigationBar)
+      .navigationDestination(isPresented: $showFriendsSection) {
+        FriendsAndContactsSectionView()
+      }
+      .navigationDestination(isPresented: $showDescriptionEditor) {
+        DiaryDescriptionEditorView(
+          name: viewModel.diaryName,
+          description: viewModel.diaryDescription,
+          color: viewModel.diaryColor,
+          onChange: { newName, newDescription, newColor in
+            viewModel.saveSettings(
+              name: newName,
+              description: newDescription,
+              color: newColor
+            )
           }
-        }
-
-        if #available(iOS 26.0, *) {
-          ToolbarSpacer(.fixed, placement: .topBarLeading)
-        }
-
-        ToolbarItem(placement: .topBarLeading) {
-          Button {
-            Haptics.impact(.light)
-            showDiaryEditor = true
-          } label: {
-            Image(systemName: "wand.and.stars")
-              .font(.system(size: 16, weight: .semibold))
-              .foregroundStyle(Color(.label))
-          }
-        }
-
-        ToolbarItem(placement: .topBarTrailing) {
-          Button {
-            Haptics.impact(.light)
-            showPastCalendar = true
-          } label: {
-            Image(systemName: "calendar")
-              .font(.system(size: 16, weight: .semibold))
-              .foregroundStyle(Color(.label))
-          }
-        }
+        )
       }
     }
     .sheet(isPresented: $showDiaryEditor) {
@@ -188,9 +178,6 @@ struct DiaryView: View {
     } message: {
       if let msg = deleteErrorMessage { Text(msg) }
     }
-    .navigationDestination(isPresented: $showFriendsSection) {
-      FriendsAndContactsSectionView()
-    }
   }
 
   private var addFriendCard: some View {
@@ -264,6 +251,7 @@ struct DiaryView: View {
       }
       do {
         try await DiaryService.shared.deleteEntry(userId: uid, entryId: entry.id)
+        LocalDatabase.shared.deleteDiaryEntry(id: entry.id)
         await MainActor.run {
           viewModel.entries.removeAll { $0.id == entry.id }
           if editEntrySession?.entry.id == entry.id {
@@ -318,7 +306,9 @@ private extension Color {
 
 private struct DiaryHeroCardView: View {
   @Environment(\.colorScheme) private var colorScheme
+  let name: String
   let gradientColors: [Color]
+  var onEdit: (() -> Void)?
 
   private var displayHeaderDateString: String {
     let now = Date()
@@ -334,15 +324,7 @@ private struct DiaryHeroCardView: View {
     monthFormatter.dateFormat = "MMM"
     let month = monthFormatter.string(from: now)
 
-    let suffix: String
-    switch day {
-    case 1, 21, 31: suffix = "st"
-    case 2, 22: suffix = "nd"
-    case 3, 23: suffix = "rd"
-    default: suffix = "th"
-    }
-
-    return "\(weekday), \(month) \(day)\(suffix) • \(year)"
+    return "\(weekday), \(month) \(day) • \(year)"
   }
 
   private var baseGradientColors: [Color] {
@@ -462,20 +444,47 @@ private struct DiaryHeroCardView: View {
         duration: 7.4
       )
 
-      VStack(alignment: .leading, spacing: 4) {
-        Text("My Diary")
-          .font(.system(size: 40, weight: .bold))
-          .foregroundStyle(.primary)
+      VStack(alignment: .leading, spacing: 6) {
+        HStack(spacing: 10) {
+          Image(systemName: "doc.text")
+            .font(.system(size: 30, weight: .medium))
+            .foregroundStyle(.primary)
 
-        Text(displayHeaderDateString)
-          .font(.system(size: 18, weight: .semibold))
-          .foregroundStyle(.secondary)
+          Text(name.isEmpty ? "My Diary" : name)
+            .font(.system(size: 38, weight: .bold))
+            .foregroundStyle(.primary)
+
+        }
+
+        HStack(spacing: 10) {
+          Text(displayHeaderDateString)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(.secondary)
+
+          if let onEdit {
+            Button {
+              Haptics.impact(.light)
+              onEdit()
+            } label: {
+              Text("Edit")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.primary.opacity(0.8))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background {
+                  Capsule()
+                    .fill(.ultraThinMaterial)
+                }
+            }
+            .buttonStyle(.plain)
+          }
+        }
       }
-      .padding(.leading, 28)
-      .padding(.top, 140)
+      .padding(.leading, 24)
+      .padding(.top, 100)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
-    .frame(height: 340)
+    .frame(height: 280)
     .ignoresSafeArea(edges: .top)
   }
 }
@@ -566,9 +575,12 @@ private struct DiaryTodoItem: Identifiable, Codable, Hashable {
 
 @MainActor
 private final class DiaryViewModel: ObservableObject {
-  @Published var diaryName: String = "My Diary"
+  private static let colorCacheKey = "diary_accent_color_hex"
+  private static let nameCacheKey = "diary_name_cache"
+
+  @Published var diaryName: String
   @Published var diaryDescription: String = ""
-  @Published var diaryColor: Color = AppTheme.brand
+  @Published var diaryColor: Color
   @Published var entries: [JournalEntry] = []
   @Published var todoItems: [DiaryTodoItem] = []
   @Published var isLoading: Bool = false
@@ -583,6 +595,16 @@ private final class DiaryViewModel: ObservableObject {
   }
 
   init() {
+    let cachedHex = UserDefaults.standard.string(forKey: Self.colorCacheKey)
+    diaryColor = cachedHex.flatMap { Color(hex: $0) } ?? AppTheme.brand
+    diaryName = UserDefaults.standard.string(forKey: Self.nameCacheKey) ?? "My Diary"
+    // Load entries from GRDB instantly
+    if let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) {
+      let localRows = DiaryService.shared.localEntries(userId: uid)
+      if !localRows.isEmpty {
+        entries = mapRowsToEntries(localRows)
+      }
+    }
     loadTodos()
   }
 
@@ -640,6 +662,8 @@ private final class DiaryViewModel: ObservableObject {
         diaryName = name
         diaryDescription = desc
         diaryColor = Color(hex: hex) ?? AppTheme.brand
+        UserDefaults.standard.set(hex, forKey: Self.colorCacheKey)
+        UserDefaults.standard.set(name, forKey: Self.nameCacheKey)
       }
     } catch {
       await MainActor.run { loadError = error.localizedDescription }
@@ -696,7 +720,13 @@ private final class DiaryViewModel: ObservableObject {
     guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId) else {
       return
     }
+    // Optimistic update + local cache
+    diaryName = name
+    diaryDescription = description
+    diaryColor = color
     let hex = color.hexString
+    UserDefaults.standard.set(hex, forKey: Self.colorCacheKey)
+    UserDefaults.standard.set(name, forKey: Self.nameCacheKey)
     Task {
       do {
         try await DiaryService.shared.upsertSettings(
@@ -854,6 +884,7 @@ private struct JournalSheetView: View {
   @Binding var entries: [JournalEntry]
   @Binding var todoItems: [DiaryTodoItem]
   let accentColor: Color
+  let diaryDescription: String
   let onAddEntryForDate: (Date) -> Void
   let onSelectEntry: (JournalEntry) -> Void
   let onDeleteEntry: (JournalEntry) -> Void
@@ -876,6 +907,7 @@ private struct JournalSheetView: View {
             entries: $entries,
             stats: stats,
             accentColor: accentColor,
+            diaryDescription: diaryDescription,
             selectedDay: $selectedCalendarDay,
             onAddEntryForDate: onAddEntryForDate,
             onSelectEntry: onSelectEntry
@@ -1004,6 +1036,7 @@ private struct JournalOverviewTab: View {
   @Binding var entries: [JournalEntry]
   let stats: JournalStats
   let accentColor: Color
+  let diaryDescription: String
   @Binding var selectedDay: Date?
   let onAddEntryForDate: (Date) -> Void
   let onSelectEntry: (JournalEntry) -> Void
@@ -1053,9 +1086,9 @@ private struct JournalOverviewTab: View {
     let months = monthDates
 
     ScrollView {
-      VStack(alignment: .leading, spacing: 20) {
+      VStack(alignment: .leading, spacing: 24) {
         VStack(alignment: .leading, spacing: 8) {
-          Text("Trends")
+          Text("Statistics")
             .font(.system(size: 18, weight: .bold))
             .foregroundStyle(.primary)
             .padding(.horizontal, 4)
@@ -1119,7 +1152,7 @@ private struct JournalOverviewTab: View {
 
         Spacer().frame(height: 120)
       }
-      .padding(.top, 12)
+      .padding(.top, 14)
     }
     .scrollIndicators(.hidden)
     .scrollDismissesKeyboard(.immediately)
@@ -1619,9 +1652,7 @@ private struct JournalTodoTab: View {
           reorderHintCard
         }
 
-        if todoItems.isEmpty {
-          emptyStateCard
-        } else {
+        if !todoItems.isEmpty {
           LazyVStack(spacing: 10) {
             ForEach($todoItems) { $item in
               let isActiveDrag = activeReorderItemId == item.id && isReorderDragging
@@ -1660,6 +1691,9 @@ private struct JournalTodoTab: View {
     .scrollIndicators(.hidden)
     .background(AppTheme.background)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    .onTapGesture {
+      isAddFieldFocused = false
+    }
     .onChange(of: todoItems) { _, _ in onTodoChange() }
   }
 
@@ -1736,7 +1770,7 @@ private struct JournalTodoTab: View {
     let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
 
     return HStack(spacing: 10) {
-      TextField("Add a task...", text: $newTodoTitle)
+      TextField("Tap to add a task...", text: $newTodoTitle)
         .font(.system(size: 16, weight: .regular))
         .focused($isAddFieldFocused)
         .submitLabel(.done)
@@ -2430,133 +2464,86 @@ private struct CalendarDaySheet: View {
   }
 
   var body: some View {
-    NavigationStack {
+    VStack(spacing: 0) {
+      // Header
+      VStack(alignment: .leading, spacing: 4) {
+        Text(formattedDate)
+          .font(.system(size: 22, weight: .bold))
+          .foregroundStyle(.primary)
+
+        Text("\(dayEntries.count) \(dayEntries.count == 1 ? "entry" : "entries")")
+          .font(.system(size: 14, weight: .medium))
+          .foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.horizontal, 20)
+      .padding(.top, 24)
+      .padding(.bottom, 20)
+
+      Divider()
+        .padding(.horizontal, 16)
+
+      // Content
       ScrollView {
-        VStack(alignment: .leading, spacing: 20) {
-          Text(formattedDate)
-            .font(.system(size: 22, weight: .bold))
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20)
-            .padding(.top, 8)
-
+        VStack(spacing: 10) {
           if dayEntries.isEmpty {
-            VStack(spacing: 12) {
-              Image(systemName: isFutureDay ? "calendar.badge.exclamationmark" : "book.closed")
-                .font(.system(size: 36))
-                .foregroundStyle(isFutureDay ? .orange : .secondary)
-              Text("No entries on this day")
-                .font(.system(size: 16, weight: .medium))
+            if isFutureDay {
+              Text("This date hasn\u{2019}t arrived yet.")
+                .font(.system(size: 15))
                 .foregroundStyle(.secondary)
-              Text(
-                isFutureDay
-                  ? "You can't add a note for a future date yet. Come back on this date."
-                  : "Tap the button below to add your first entry."
-              )
-                .font(.system(size: 14))
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 32)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 40)
           } else {
-            VStack(alignment: .leading, spacing: 0) {
-              Text("Entries")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 12)
-
-              ForEach(dayEntries) { entry in
-                CalendarDayEntryRow(
-                  entry: entry,
-                  accentColor: accentColor,
-                  onSelect: onSelectEntry
-                )
+            ForEach(dayEntries) { entry in
+              Button {
+                Haptics.impact(.light)
+                onSelectEntry(entry)
+              } label: {
+                JournalListRowContent(entry: entry)
               }
+              .buttonStyle(.plain)
             }
           }
-
-          Button {
-            guard !isFutureDay else { return }
-            Haptics.impact(.light)
-            onAddEntry()
-          } label: {
-            let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
-
-            HStack(spacing: 10) {
-              Image(systemName: isFutureDay ? "calendar.badge.exclamationmark" : "plus.circle.fill")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(.white.opacity(isFutureDay ? 0.78 : 0.98))
-
-              Text(isFutureDay ? "Date not reached yet" : "Add entry")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(.white.opacity(isFutureDay ? 0.84 : 1.0))
-
-              Spacer(minLength: 8)
-
-              Image(systemName: "arrow.right")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(.white.opacity(isFutureDay ? 0.65 : 0.9))
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 15)
-            .background(
-              isFutureDay
-                ? AnyShapeStyle(Color(.systemGray3))
-                : AnyShapeStyle(
-                    LinearGradient(
-                      colors: [
-                        accentColor,
-                        accentColor.blended(with: Color(red: 0.86, green: 0.80, blue: 1.00), amount: 0.35),
-                      ],
-                      startPoint: .leading,
-                      endPoint: .trailing
-                    )
-                  )
-            )
-            .clipShape(shape)
-            .overlay(
-              shape
-                .stroke(.white.opacity(isFutureDay ? 0.10 : 0.22), lineWidth: 0.8)
-            )
-          }
-          .disabled(isFutureDay)
-          .padding(.horizontal, 20)
-          .padding(.top, 8)
-          .padding(.bottom, 24)
         }
+        .padding(.horizontal, 16)
+        .padding(.top, 16)
+        .padding(.bottom, 12)
       }
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .topBarTrailing) {
-          Button("Done") {
-            Haptics.impact(.light)
-            dismiss()
+
+      // Add entry button
+      if !isFutureDay {
+        Button {
+          Haptics.impact(.light)
+          onAddEntry()
+        } label: {
+          HStack(spacing: 8) {
+            Image(systemName: "plus")
+              .font(.system(size: 15, weight: .bold))
+
+            Text("New entry")
+              .font(.system(size: 16, weight: .semibold))
           }
-          .fontWeight(.semibold)
+          .foregroundStyle(.white)
+          .frame(maxWidth: .infinity)
+          .padding(.vertical, 14)
+          .background(
+            LinearGradient(
+              colors: [
+                accentColor,
+                accentColor.blended(with: Color(red: 0.86, green: 0.80, blue: 1.00), amount: 0.35),
+              ],
+              startPoint: .leading,
+              endPoint: .trailing
+            )
+          )
+          .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
       }
     }
-  }
-}
-
-private struct CalendarDayEntryRow: View {
-  let entry: JournalEntry
-  let accentColor: Color
-  let onSelect: (JournalEntry) -> Void
-
-  var body: some View {
-    Button {
-      Haptics.impact(.light)
-      onSelect(entry)
-    } label: {
-      JournalListRowContent(entry: entry)
-    }
-    .buttonStyle(.plain)
-    .padding(.horizontal, 20)
-    .padding(.vertical, 12)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
   }
 }
 
@@ -2577,7 +2564,7 @@ private struct GlassFloatingActionButton: View {
     .background {
       if #available(iOS 26.0, *) {
         Circle()
-          .glassEffect(.clear.interactive(), in: Circle())
+          .glassEffect(.regular.interactive(), in: Circle())
       } else {
         Circle()
           .fill(Color(.secondarySystemBackground))
@@ -2606,6 +2593,154 @@ private struct NewEntrySession: Identifiable {
 private struct EditEntrySession: Identifiable {
   let id = UUID()
   let entry: JournalEntry
+}
+
+private struct DiaryDescriptionEditorView: View {
+  @State private var name: String
+  @State private var description: String
+  @State private var selectedColor: Color
+  private let descriptionMaxLength: Int = 10_000
+  let onChange: (String, String, Color) -> Void
+
+  private let fieldShape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+
+  private let accentPresets: [Color] = [
+    AppTheme.brand,
+    Color(red: 0.95, green: 0.45, blue: 0.25),
+    Color(red: 0.25, green: 0.72, blue: 0.68),
+    Color(red: 0.63, green: 0.32, blue: 0.98),
+    Color(red: 0.90, green: 0.40, blue: 0.65),
+    Color(red: 0.26, green: 0.58, blue: 1.00),
+    Color(red: 0.98, green: 0.65, blue: 0.30),
+    Color(red: 0.40, green: 0.85, blue: 0.55),
+  ]
+
+  init(name: String, description: String, color: Color, onChange: @escaping (String, String, Color) -> Void) {
+    _name = State(initialValue: name)
+    _description = State(initialValue: description)
+    _selectedColor = State(initialValue: color)
+    self.onChange = onChange
+  }
+
+  private func notifyChange() {
+    onChange(
+      name.trimmingCharacters(in: .whitespacesAndNewlines),
+      description.trimmingCharacters(in: .whitespacesAndNewlines),
+      selectedColor
+    )
+  }
+
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 24) {
+        // Name
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Name")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.secondary)
+
+          TextField("My Diary", text: $name)
+            .textContentType(.none)
+            .textInputAutocapitalization(.words)
+            .autocorrectionDisabled()
+            .font(.system(size: 17))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background { GlassCardBackground(shape: fieldShape) }
+            .clipShape(fieldShape)
+            .overlay(
+              fieldShape
+                .stroke(Color(.separator).opacity(0.25), lineWidth: 0.5)
+            )
+            .onChange(of: name) { _, _ in notifyChange() }
+        }
+
+        // Description
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Description")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.secondary)
+
+          ZStack(alignment: .topLeading) {
+            if description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+              Text("What\u{2019}s this diary about?")
+                .font(.system(size: 16))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .allowsHitTesting(false)
+            }
+
+            TextEditor(text: $description)
+              .font(.system(size: 16))
+              .frame(minHeight: 160)
+              .padding(.horizontal, 10)
+              .padding(.vertical, 6)
+              .scrollContentBackground(.hidden)
+              .onChange(of: description) { _, newValue in
+                if newValue.count > descriptionMaxLength {
+                  description = String(newValue.prefix(descriptionMaxLength))
+                }
+                notifyChange()
+              }
+          }
+          .background { GlassCardBackground(shape: fieldShape) }
+          .clipShape(fieldShape)
+          .overlay(
+            fieldShape
+              .stroke(Color(.separator).opacity(0.25), lineWidth: 0.5)
+          )
+
+          Text("\(description.count)/\(descriptionMaxLength)")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+
+        // Accent Color
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Accent Color")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.secondary)
+
+          HStack(spacing: 12) {
+            ForEach(Array(accentPresets.enumerated()), id: \.offset) { _, preset in
+              Button {
+                Haptics.impact(.light)
+                selectedColor = preset
+                notifyChange()
+              } label: {
+                Circle()
+                  .fill(preset)
+                  .frame(width: 34, height: 34)
+                  .overlay {
+                    if preset.hexString == selectedColor.hexString {
+                      Circle()
+                        .stroke(.white, lineWidth: 2.5)
+                        .frame(width: 28, height: 28)
+                    }
+                  }
+              }
+              .buttonStyle(.plain)
+            }
+          }
+          .padding(.horizontal, 14)
+          .padding(.vertical, 12)
+          .background { GlassCardBackground(shape: fieldShape) }
+          .clipShape(fieldShape)
+          .overlay(
+            fieldShape
+              .stroke(Color(.separator).opacity(0.25), lineWidth: 0.5)
+          )
+        }
+      }
+      .padding(.horizontal, 20)
+      .padding(.top, 8)
+    }
+    .background(AppTheme.background)
+    .navigationTitle("Edit Diary")
+    .navigationBarTitleDisplayMode(.inline)
+  }
 }
 
 // Replaced with a full-page editor style sheet (`NewDiaryNoteSheet`).
@@ -3626,6 +3761,44 @@ private struct DiaryNoteEditorView: View {
     .onAppear {
       if blocks.isEmpty, !didLoadBlocksFromApi {
         didLoadBlocksFromApi = true
+
+        // Try loading from local GRDB cache first (instant)
+        if let cachedRow = LocalDatabase.shared.loadDiaryEntry(id: entry.id),
+           !cachedRow.body_blocks.isEmpty {
+          let decoded = DiaryService.decodeBodyBlocks(cachedRow.body_blocks)
+          var loaded: [DiaryBlock] = []
+          for d in decoded {
+            switch d.content {
+            case .text(let s):
+              loaded.append(DiaryBlock(id: d.id, content: .text(s)))
+            case .imageURL(_, let path):
+              // Load image async later, show text blocks instantly
+              loaded.append(DiaryBlock(id: d.id, content: .image(nil, storagePath: path)))
+            }
+          }
+          if !loaded.isEmpty {
+            blocks = loaded
+            entry.body = blocks.textContent
+            // Load images in background
+            Task {
+              for (i, d) in decoded.enumerated() {
+                if case .imageURL(let url, _) = d.content {
+                  let img = await DiaryService.shared.loadImageFromURL(url)
+                  await MainActor.run {
+                    if i < blocks.count {
+                      if case .image(_, let path) = blocks[i].content {
+                        blocks[i] = DiaryBlock(id: d.id, content: .image(img, storagePath: path))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            return
+          }
+        }
+
+        // Fallback: fetch from API
         isLoadingBlocksFromApi = true
         guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId)
         else {
@@ -4681,6 +4854,41 @@ private struct EditDiaryNoteSheet: View {
     .onAppear {
       if blocks.isEmpty, !didLoadBlocksFromApi {
         didLoadBlocksFromApi = true
+
+        // Try loading from local GRDB cache first (instant)
+        if let cachedRow = LocalDatabase.shared.loadDiaryEntry(id: entry.id),
+           !cachedRow.body_blocks.isEmpty {
+          let decoded = DiaryService.decodeBodyBlocks(cachedRow.body_blocks)
+          var loaded: [DiaryBlock] = []
+          for d in decoded {
+            switch d.content {
+            case .text(let s):
+              loaded.append(DiaryBlock(id: d.id, content: .text(s)))
+            case .imageURL(_, let path):
+              loaded.append(DiaryBlock(id: d.id, content: .image(nil, storagePath: path)))
+            }
+          }
+          if !loaded.isEmpty {
+            blocks = loaded
+            Task {
+              for (i, d) in decoded.enumerated() {
+                if case .imageURL(let url, _) = d.content {
+                  let img = await DiaryService.shared.loadImageFromURL(url)
+                  await MainActor.run {
+                    if i < blocks.count {
+                      if case .image(_, let path) = blocks[i].content {
+                        blocks[i] = DiaryBlock(id: d.id, content: .image(img, storagePath: path))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            return
+          }
+        }
+
+        // Fallback: fetch from API
         isLoadingBlocksFromApi = true
         guard let userId = AuthService.shared.currentUserId, let uid = UUID(uuidString: userId)
         else {

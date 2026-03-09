@@ -90,6 +90,7 @@ final class DiaryService {
       )
     }
     await memoryCache.storeEntries(for: userId, rows: rows)
+    LocalDatabase.shared.replaceDiaryEntries(rows, userId: userId)
     return rows
   }
 
@@ -99,6 +100,10 @@ final class DiaryService {
 
   func cachedEntries(userId: UUID) async -> [DiaryEntryRow]? {
     await memoryCache.entries(for: userId)
+  }
+
+  func localEntries(userId: UUID) -> [DiaryEntryRow] {
+    LocalDatabase.shared.loadDiaryEntries(userId: userId)
   }
 
   func preloadDiaryData(userId: UUID) async {

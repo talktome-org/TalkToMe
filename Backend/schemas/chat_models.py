@@ -31,6 +31,7 @@ class ChatRequest(BaseModel):
     ghost_name: Optional[str] = None
     delete_before: Optional[UUID] = None
     custom_instructions: Optional[str] = None
+    quoted_reply: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

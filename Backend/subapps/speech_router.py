@@ -368,9 +368,11 @@ async def elevenlabs_tts_stream(websocket: WebSocket):
     }
 
     import logging
+    import time as _time
     logger = logging.getLogger("speech.tts")
+    _tts_start = _time.time()
 
-    logger.info(f"[TTS] Connecting to ElevenLabs: model={model_id} voice={voice_id} format={output_format}")
+    logger.info(f"[TTS] Connecting to ElevenLabs: model={model_id} voice={voice_id} voice_name={voice_name} format={output_format}")
 
     try:
         async with _ws_connect_with_headers(
@@ -478,12 +480,12 @@ async def elevenlabs_tts_stream(websocket: WebSocket):
                         await back_task
                     except (asyncio.CancelledError, Exception):
                         pass
-            logger.info("[TTS] Session completed normally")
+            logger.info(f"[TTS] Session completed normally — elapsed={_time.time() - _tts_start:.1f}s")
     except WebSocketDisconnect:
-        logger.info("[TTS] Client disconnected")
+        logger.info(f"[TTS] Client disconnected — elapsed={_time.time() - _tts_start:.1f}s")
         return
     except Exception as e:
-        logger.error(f"[TTS] Stream error: {type(e).__name__}: {e}")
+        logger.error(f"[TTS] Stream error: {type(e).__name__}: {e} elapsed={_time.time() - _tts_start:.1f}s")
         try:
             await websocket.close(code=1011, reason=f"TTS stream error: {str(e)[:120]}")
         except Exception:
@@ -542,11 +544,18 @@ async def deepgram_stt_stream(websocket: WebSocket):
         f"&sample_rate={sample_rate}"
     )
 
+    import logging
+    import time as _time
+    stt_logger = logging.getLogger("speech.stt")
+    _stt_start = _time.time()
+    stt_logger.info(f"[STT] WebSocket accepted — model={model} lang={language} endpointing={endpointing} sample_rate={sample_rate}")
+
     await websocket.accept()
     # Confirm readiness to the client immediately (Deepgram may not send any message until audio arrives).
     try:
         await websocket.send_text(json.dumps({"type": "talktome.stt.ready"}))
     except Exception:
+        stt_logger.error("[STT] Failed to send ready message — closing")
         await websocket.close(code=1011, reason="Failed to initialize STT stream")
         return
 
@@ -556,15 +565,22 @@ async def deepgram_stt_stream(websocket: WebSocket):
             headers={"Authorization": f"Token {api_key}"},
             max_size=16 * 1024 * 1024,
         ) as dg_ws:
+            stt_logger.info(f"[STT] Deepgram upstream connected — elapsed={_time.time() - _stt_start:.2f}s")
+
+            _audio_frames = 0
+            _transcript_count = 0
 
             async def client_to_deepgram():
+                nonlocal _audio_frames
                 while True:
                     msg = await websocket.receive()
                     if msg.get("type") == "websocket.disconnect":
+                        stt_logger.info(f"[STT] Client disconnected — audio_frames={_audio_frames} transcripts={_transcript_count} elapsed={_time.time() - _stt_start:.1f}s")
                         break
 
                     raw_bytes = msg.get("bytes")
                     if isinstance(raw_bytes, (bytes, bytearray)) and raw_bytes:
+                        _audio_frames += 1
                         await dg_ws.send(bytes(raw_bytes))
                         continue
 
@@ -587,26 +603,40 @@ async def deepgram_stt_stream(websocket: WebSocket):
                         except Exception:
                             continue
                         if data:
+                            _audio_frames += 1
                             await dg_ws.send(data)
+                    elif t == "KeepAlive":
+                        try:
+                            await dg_ws.send(json.dumps({"type": "KeepAlive"}))
+                        except Exception:
+                            pass
                     elif t == "finalize":
-                        # Deepgram supports a control message to finalize buffered audio.
-                        # Best-effort: ignore if unsupported.
+                        stt_logger.info(f"[STT] Client sent finalize — audio_frames={_audio_frames}")
                         try:
                             await dg_ws.send(json.dumps({"type": "Finalize"}))
                         except Exception:
                             pass
                     elif t == "close":
+                        stt_logger.info("[STT] Client sent close")
                         break
 
             async def deepgram_to_client():
+                nonlocal _transcript_count
                 async for raw in dg_ws:
                     if isinstance(raw, str):
-                        await websocket.send_text(raw)
+                        _transcript_count += 1
+                        try:
+                            await websocket.send_text(raw)
+                        except Exception:
+                            stt_logger.info(f"[STT] Client gone while forwarding transcript — transcripts={_transcript_count}")
+                            return
                     elif isinstance(raw, (bytes, bytearray)):
                         try:
+                            _transcript_count += 1
                             await websocket.send_text(bytes(raw).decode("utf-8"))
                         except Exception:
                             continue
+                stt_logger.info(f"[STT] Deepgram stream ended — transcripts={_transcript_count} elapsed={_time.time() - _stt_start:.1f}s")
 
             forward_task = asyncio.create_task(client_to_deepgram())
             back_task = asyncio.create_task(deepgram_to_client())
@@ -616,10 +646,14 @@ async def deepgram_stt_stream(websocket: WebSocket):
             for t in done:
                 exc = t.exception()
                 if exc:
+                    stt_logger.error(f"[STT] Task error: {type(exc).__name__}: {exc}")
                     raise exc
+            stt_logger.info(f"[STT] Session ended normally — audio_frames={_audio_frames} transcripts={_transcript_count} elapsed={_time.time() - _stt_start:.1f}s")
     except WebSocketDisconnect:
+        stt_logger.info(f"[STT] Client disconnected — elapsed={_time.time() - _stt_start:.1f}s")
         return
     except Exception as e:
+        stt_logger.error(f"[STT] Stream error: {type(e).__name__}: {e} elapsed={_time.time() - _stt_start:.1f}s")
         try:
             await websocket.close(code=1011, reason=f"STT stream error: {str(e)[:120]}")
         except Exception:

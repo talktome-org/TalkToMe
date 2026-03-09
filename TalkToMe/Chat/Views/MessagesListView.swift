@@ -119,6 +119,7 @@ struct MessagesListView: View {
     }
 
     var body: some View {
+        ScrollViewReader { scrollProxy in
         ScrollView {
             if messages.isEmpty && chatViewModel.sessionId == nil {
                 chatEmptyState
@@ -240,6 +241,8 @@ struct MessagesListView: View {
                             if !isContentReady { isContentReady = true }
                         }
                     }
+                }, onBackgroundTap: {
+                    onBackgroundTap()
                 })
             )
         }
@@ -268,10 +271,6 @@ struct MessagesListView: View {
                 let targetOffset = messageY - sv.adjustedContentInset.top
                 enforcedOffsetY = targetOffset
             }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            onBackgroundTap()
         }
         .scrollBounceBehavior(.always)
         .scrollIndicators(.visible)
@@ -353,6 +352,14 @@ struct MessagesListView: View {
                     sv.layoutIfNeeded()
                     scrollToTopUIKit(sv, messageY: messageY)
                 }
+            } else {
+                // Position unknown — LazyVStack hasn't rendered the message yet.
+                // Use SwiftUI's scrollTo to force it to render, then the 0.35s
+                // fallback will do precise UIKit positioning with enforcement.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    pendingScrollTargetId = nil
+                    scrollProxy.scrollTo(id, anchor: .top)
+                }
             }
 
             // Re-scroll after layout settles (keyboard + input area height changes)
@@ -361,12 +368,20 @@ struct MessagesListView: View {
                 guard let sv = underlyingScrollView else { return }
                 sv.layoutIfNeeded()
                 if let messageY = messagePositions[id] {
-                    let targetOffset = messageY - sv.adjustedContentInset.top
-                    enforcedOffsetY = targetOffset
-                    sv.setContentOffset(CGPoint(x: 0, y: targetOffset), animated: true)
+                    // Shrink padding to the correct size before animating so
+                    // photo/attachment messages don't show excess empty space.
+                    let naturalContentHeight = sv.contentSize.height - scrollToTopPadding
+                    let contentBelowMessage = naturalContentHeight - messageY
+                    let stableVisibleHeight = UIScreen.main.bounds.height - sv.adjustedContentInset.top
+                    let correctPadding = max(0, stableVisibleHeight - contentBelowMessage)
+                    scrollToTopPadding = correctPadding
+                    sv.layoutIfNeeded()
+
+                    scrollToTopUIKit(sv, messageY: messageY)
                 }
             }
         }
+        } // ScrollViewReader
     }
 
     @AppStorage(PreferenceKeys.buddyExplicitlyChosen) private var buddyExplicitlyChosen: Bool = false
@@ -545,6 +560,7 @@ private struct ScrollButtonStyle: ButtonStyle {
 private struct ScrollViewBottomProximityObserver: UIViewRepresentable {
     let onChange: (UIScrollView) -> Void
     let onAttach: (UIScrollView) -> Void
+    var onBackgroundTap: (() -> Void)? = nil
 
     func makeUIView(context: Context) -> UIView {
         let view = UIView(frame: .zero)
@@ -559,7 +575,8 @@ private struct ScrollViewBottomProximityObserver: UIViewRepresentable {
             context.coordinator.attach(
                 to: scrollView,
                 onChange: onChange,
-                onAttach: onAttach
+                onAttach: onAttach,
+                onBackgroundTap: onBackgroundTap
             )
         }
     }
@@ -568,22 +585,34 @@ private struct ScrollViewBottomProximityObserver: UIViewRepresentable {
         Coordinator()
     }
 
-    final class Coordinator {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         private weak var scrollView: UIScrollView?
         private var contentOffsetObs: NSKeyValueObservation?
         private var contentSizeObs: NSKeyValueObservation?
         private var insetObs: NSKeyValueObservation?
         private var boundsObs: NSKeyValueObservation?
+        var onBackgroundTap: (() -> Void)?
 
         func attach(
             to scrollView: UIScrollView,
             onChange: @escaping (UIScrollView) -> Void,
-            onAttach: @escaping (UIScrollView) -> Void
+            onAttach: @escaping (UIScrollView) -> Void,
+            onBackgroundTap: (() -> Void)?
         ) {
+            self.onBackgroundTap = onBackgroundTap
+
             if self.scrollView === scrollView { return }
 
             self.scrollView = scrollView
             onAttach(scrollView)
+
+            // Add a UIKit tap gesture with cancelsTouchesInView = false so child
+            // views (e.g. SelectableTextView / UITextView) still receive touches
+            // for text selection while the keyboard is dismissed on background tap.
+            let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+            tap.cancelsTouchesInView = false
+            tap.delegate = self
+            scrollView.addGestureRecognizer(tap)
 
             contentOffsetObs?.invalidate()
             contentSizeObs?.invalidate()
@@ -602,6 +631,31 @@ private struct ScrollViewBottomProximityObserver: UIViewRepresentable {
             boundsObs = scrollView.observe(\.bounds, options: [.initial, .new]) { sv, _ in
                 onChange(sv)
             }
+        }
+
+        @objc private func handleTap() {
+            onBackgroundTap?()
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldReceive touch: UITouch
+        ) -> Bool {
+            // Don't fire the keyboard-dismiss tap when touching a UITextView,
+            // so text selection gestures can proceed uninterrupted.
+            var view = touch.view
+            while let v = view {
+                if v is UITextView { return false }
+                view = v.superview
+            }
+            return true
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+        ) -> Bool {
+            true
         }
 
         deinit {

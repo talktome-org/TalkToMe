@@ -170,7 +170,7 @@ struct ElevenLabsVoiceSuggestionsView: View {
     /// Per-buddy start offsets so the first visible frame isn't a blank/awkward pose.
     static let ghostStartTimes: [String: Double] = [
         "jay": 0.2,
-        "hex": 0.1,
+        "hex": 0.4,
         "snow": 0.3
     ]
 

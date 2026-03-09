@@ -12,7 +12,6 @@ import UserNotifications
 
 private enum HomeFeature: Int, CaseIterable, Identifiable {
   case chat
-  case diary
   case voiceMode
   case capturePhoto
   case customize
@@ -22,7 +21,6 @@ private enum HomeFeature: Int, CaseIterable, Identifiable {
   var title: String {
     switch self {
     case .chat: return "Someone Who Gets You"
-    case .diary: return "Think Out Loud"
     case .voiceMode: return "Talk, Don\u{2019}t Type"
     case .capturePhoto: return "Snap It, Keep It"
     case .customize: return "Make It Yours"
@@ -32,22 +30,19 @@ private enum HomeFeature: Int, CaseIterable, Identifiable {
   var subtitle: String {
     switch self {
     case .chat:
-      return "Not a chatbot. A buddy who remembers last Tuesday, knows your humor, and actually listens."
-    case .diary:
-      return "Dump your thoughts, track your mood, notice patterns. Your buddy helps you make sense of it all."
+      return "A buddy who remembers, listens, and actually gets you."
     case .voiceMode:
-      return "Have a real conversation using your voice. Your buddy speaks back \u{2014} each one sounds different."
+      return "Talk out loud — your buddy talks back."
     case .capturePhoto:
-      return "Pair photos with your entries. A sunset, a meal, a random Tuesday \u{2014} worth remembering."
+      return "Snap a photo and pair it with your entries."
     case .customize:
-      return "Wallpapers, themes, and colors \u{2014} design your perfect chat space."
+      return "Pick colors, themes, and wallpapers you love."
     }
   }
 
   var actionLabel: String {
     switch self {
     case .chat: return "Start Chat"
-    case .diary: return "Open Diary"
     case .voiceMode: return "Try Voice Mode"
     case .capturePhoto: return "New Entry"
     case .customize: return "Customize"
@@ -57,10 +52,18 @@ private enum HomeFeature: Int, CaseIterable, Identifiable {
   var iconName: String {
     switch self {
     case .chat: return "bubble.left.and.bubble.right.fill"
-    case .diary: return "book.fill"
     case .voiceMode: return "waveform"
     case .capturePhoto: return "camera.fill"
     case .customize: return "paintpalette.fill"
+    }
+  }
+
+  var imageName: String {
+    switch self {
+    case .chat: return "HomeChat"
+    case .voiceMode: return "HomeVoice"
+    case .capturePhoto: return "HomePhoto"
+    case .customize: return "HomeCustomize"
     }
   }
 
@@ -68,8 +71,6 @@ private enum HomeFeature: Int, CaseIterable, Identifiable {
     switch self {
     case .chat:
       return [Color(red: 0.38, green: 0.30, blue: 0.92), Color(red: 0.58, green: 0.40, blue: 1.00)]
-    case .diary:
-      return [Color(red: 0.25, green: 0.72, blue: 0.68), Color(red: 0.40, green: 0.85, blue: 0.55)]
     case .voiceMode:
       return [Color(red: 0.95, green: 0.45, blue: 0.25), Color(red: 0.98, green: 0.65, blue: 0.30)]
     case .capturePhoto:
@@ -92,23 +93,23 @@ private enum GetStartedStep: Int, CaseIterable, Identifiable {
 
   func title(buddyName: String) -> String {
     switch self {
-    case .sayHi: return "Say Hi to \(buddyName)"
-    case .connectFriend: return "Connect with a Friend"
-    case .writeDiary: return "Write Your First Entry"
-    case .customizeBuddy: return "Customize \(buddyName)"
+    case .sayHi: return "Break the Ice"
+    case .connectFriend: return "Bring a Friend"
+    case .writeDiary: return "Your First Entry"
+    case .customizeBuddy: return "Make It Yours"
     }
   }
 
   func subtitleView(buddyName: String) -> Text {
     switch self {
     case .sayHi:
-      return Text("Start your first chat and ") + Text("get to know \(buddyName)").bold()
+      return Text("Start your first chat and ") + Text("get to know your buddy").bold()
     case .connectFriend:
       return Text("Share your friend code to pair up, ") + Text("at no extra cost").bold()
     case .writeDiary:
-      return Text("Start a daily diary — ") + Text("\(buddyName) will help you reflect").bold()
+      return Text("Start a daily diary — ") + Text("your buddy will help you reflect").bold()
     case .customizeBuddy:
-      return Text("Pick a voice and personality — ") + Text("make \(buddyName) uniquely yours").bold()
+      return Text("Pick a voice and personality — ") + Text("make them uniquely yours").bold()
     }
   }
 
@@ -118,6 +119,15 @@ private enum GetStartedStep: Int, CaseIterable, Identifiable {
     case .connectFriend: return "person.2.fill"
     case .writeDiary: return "book.fill"
     case .customizeBuddy: return "wand.and.stars"
+    }
+  }
+
+  var imageName: String {
+    switch self {
+    case .sayHi: return "GetStartedSayHi"
+    case .connectFriend: return "GetStartedConnect"
+    case .writeDiary: return "GetStartedDiary"
+    case .customizeBuddy: return "GetStartedCustomize"
     }
   }
 
@@ -147,26 +157,9 @@ private struct GetStartedStepCardView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       ZStack {
-        LinearGradient(
-          colors: step.gradientColors,
-          startPoint: .topLeading,
-          endPoint: .bottomTrailing
-        )
-
-        Circle()
-          .fill(.white.opacity(0.1))
-          .frame(width: 60, height: 60)
-          .offset(x: -40, y: -15)
-
-        Circle()
-          .fill(.white.opacity(0.08))
-          .frame(width: 40, height: 40)
-          .offset(x: 50, y: 15)
-
-        Image(systemName: step.iconName)
-          .font(.system(size: 24, weight: .medium))
-          .foregroundStyle(.white)
-          .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
+        Image(step.imageName)
+          .resizable()
+          .aspectRatio(contentMode: .fill)
 
         VStack {
           HStack {
@@ -184,8 +177,9 @@ private struct GetStartedStepCardView: View {
         .padding(8)
       }
       .frame(height: 76)
+      .clipped()
 
-      VStack(alignment: .leading, spacing: 2) {
+      VStack(alignment: .leading, spacing: 4) {
         Text(step.title(buddyName: buddyName))
           .font(.system(size: 13, weight: .semibold))
           .foregroundStyle(Color(.label))
@@ -600,69 +594,49 @@ private struct HomeFeatureCardView: View {
   let feature: HomeFeature
 
   var body: some View {
-    ZStack(alignment: .bottomLeading) {
-      // Full gradient background
-      LinearGradient(
-        colors: feature.gradientColors,
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-      )
+    ZStack {
+      Image(feature.imageName)
+        .resizable()
+        .aspectRatio(contentMode: .fill)
 
-      // Decorative shapes
-      Circle()
-        .fill(.white.opacity(0.08))
-        .frame(width: 180, height: 180)
-        .offset(x: -60, y: -50)
-
-      Circle()
-        .fill(.white.opacity(0.06))
-        .frame(width: 120, height: 120)
-        .offset(x: 200, y: 40)
-
-      // Large background icon (watermark style, right-aligned)
       VStack {
+        // Double chevron circle — top right
         HStack {
           Spacer()
-          Image(systemName: feature.iconName)
-            .font(.system(size: 72, weight: .thin))
-            .foregroundStyle(.white.opacity(0.15))
-            .rotationEffect(.degrees(-8))
+          Image(systemName: "chevron.right.2")
+            .font(.system(size: 14, weight: .bold))
+            .foregroundStyle(.white)
+            .offset(x: 1)
+            .padding(10)
+            .background {
+              Circle()
+                .fill(.ultraThinMaterial)
+                .environment(\.colorScheme, .dark)
+            }
         }
-        Spacer()
-      }
-      .padding(.top, 16)
-      .padding(.trailing, 20)
-
-      // Content overlay
-      VStack(alignment: .leading, spacing: 8) {
-        // Small icon + label row
-        HStack(spacing: 8) {
-          Image(systemName: feature.iconName)
-            .font(.system(size: 15, weight: .semibold))
-          Text(feature.actionLabel)
-            .font(.system(size: 13, weight: .semibold))
-        }
-        .foregroundStyle(.white.opacity(0.8))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(.white.opacity(0.15))
-        .clipShape(Capsule())
 
         Spacer()
 
-        // Title
-        Text(feature.title)
-          .font(.system(size: 24, weight: .bold))
-          .foregroundStyle(.white)
-
-        // Subtitle
-        Text(feature.subtitle)
-          .font(.system(size: 14, weight: .medium))
-          .foregroundStyle(.white.opacity(0.8))
-          .lineLimit(3)
-          .fixedSize(horizontal: false, vertical: true)
+        // Title + overview in glass pill — bottom left
+        VStack(alignment: .leading, spacing: 3) {
+          Text(feature.title)
+            .font(.system(size: 16, weight: .bold))
+            .foregroundStyle(.white)
+          Text(feature.subtitle)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(.white.opacity(0.85))
+            .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background {
+          RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .environment(\.colorScheme, .dark)
+        }
       }
-      .padding(18)
+      .padding(10)
     }
     .frame(height: 210)
     .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -1336,8 +1310,6 @@ struct HomeView: View {
     switch feature {
     case .chat:
       onStartNewChat()
-    case .diary:
-      selectedTab = .diary
     case .voiceMode:
       sessionsVM.shouldStartInVoiceMode = true
       onStartNewChat()
