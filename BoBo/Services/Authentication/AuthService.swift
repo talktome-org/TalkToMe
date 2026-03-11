@@ -39,33 +39,13 @@ class AuthService: ObservableObject {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    /// `true` when `Secrets.plist` could not be loaded or is missing required keys.
-    /// The app will stay on the auth screen instead of crashing.
-    private(set) var isMissingConfiguration = false
-
     private init() {
         guard let supabaseURL = AuthService.getInfoPlistValue(for: "SUPABASE_URL") as? String,
-              let supabaseKey = AuthService.getInfoPlistValue(for: "SUPABASE_PUBLISHABLE_KEY") as? String,
-              let parsedURL = URL(string: supabaseURL) else {
-            print("[AuthService] ⚠️ Missing Supabase configuration in Secrets.plist – running in unconfigured mode")
-            // Provide dummy values so the object can finish initialising without crashing.
-            self.redirectURL = URL(string: "supabase-missing://auth/callback")!
-            self.client = SupabaseClient(
-                supabaseURL: URL(string: "https://placeholder.supabase.co")!,
-                supabaseKey: "missing",
-                options: SupabaseClientOptions(
-                    auth: .init(
-                        storage: KeychainLocalStorage(),
-                        redirectToURL: self.redirectURL
-                    )
-                )
-            )
-            self.isMissingConfiguration = true
-            self.isCheckingAuth = false
-            return
+              let supabaseKey = AuthService.getInfoPlistValue(for: "SUPABASE_PUBLISHABLE_KEY") as? String else {
+            fatalError("Missing Supabase configuration in Secrets.plist")
         }
 
-        let projectRef = parsedURL.host?.components(separatedBy: ".").first ?? ""
+        let projectRef = URL(string: supabaseURL)?.host?.components(separatedBy: ".").first ?? ""
         let scheme = "supabase-\(projectRef)"
         guard let redirectURL = URL(string: "\(scheme)://auth/callback") else {
             fatalError("Failed to construct redirect URL for Supabase OAuth")
@@ -73,7 +53,7 @@ class AuthService: ObservableObject {
         self.redirectURL = redirectURL
 
         client = SupabaseClient(
-            supabaseURL: parsedURL,
+            supabaseURL: URL(string: supabaseURL)!,
             supabaseKey: supabaseKey,
             options: SupabaseClientOptions(
                 auth: .init(
