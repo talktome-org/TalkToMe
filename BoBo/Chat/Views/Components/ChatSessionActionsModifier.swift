@@ -50,12 +50,12 @@ struct ChatSessionActionsModifier: ViewModifier {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This will flag the conversation for review. (Not wired yet)")
+                Text("This will flag the conversation for review.")
             }
             .alert("Thanks", isPresented: $showReportChatThanks) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text("Report received. (Not wired yet)")
+                Text("Report received. We'll review it shortly.")
             }
     }
 
@@ -109,20 +109,16 @@ struct ChatSessionActionsMenu: View {
         }
         .confirmationDialog(formattedTitle, isPresented: $showActions, titleVisibility: .visible) {
             Button("Rename") {
-                guard sessionId != nil else { return }
                 onRenameRequest()
             }
-            .disabled(sessionId == nil)
 
             Button("Report") {
                 onReportRequest()
             }
-            .disabled(sessionId == nil)
 
             Button("Delete", role: .destructive) {
                 onDeleteRequest()
             }
-            .disabled(sessionId == nil)
         }
     }
 }
@@ -159,6 +155,7 @@ final class ChatSessionActionsCoordinator: ObservableObject {
 struct ChatSessionActionsDialogsModifier: ViewModifier {
     @ObservedObject var coordinator: ChatSessionActionsCoordinator
     let sessionId: UUID?
+    let onEnsureSessionId: () async -> UUID?
     let onRename: (UUID, String) async -> Void
     let onDelete: (UUID) async -> Void
     let onDeleteNavigateAway: () -> Void
@@ -170,9 +167,17 @@ struct ChatSessionActionsDialogsModifier: ViewModifier {
                 Button("Cancel", role: .cancel) {}
                 Button("Save") {
                     let title = coordinator.renameChatTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !title.isEmpty, let sid = sessionId else { return }
+                    guard !title.isEmpty else { return }
                     Haptics.impact(.light)
                     Task { @MainActor in
+                        let sid: UUID
+                        if let existing = sessionId {
+                            sid = existing
+                        } else if let created = await onEnsureSessionId() {
+                            sid = created
+                        } else {
+                            return
+                        }
                         await onRename(sid, title)
                     }
                 }
@@ -181,19 +186,26 @@ struct ChatSessionActionsDialogsModifier: ViewModifier {
             }
             .confirmationDialog("Delete chat?", isPresented: $coordinator.showDeleteChatConfirm, titleVisibility: .visible) {
                 Button("Delete", role: .destructive) {
-                    guard let sid = sessionId else { return }
                     Haptics.impact(.light)
                     Task { @MainActor in
-                        await onDelete(sid)
+                        if let sid = sessionId {
+                            await onDelete(sid)
+                        }
                         onDeleteNavigateAway()
                     }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This will delete the chat and all its messages. If this chat is linked, it will be deleted on their end too.")
+                Text(sessionId != nil
+                    ? "This will delete the chat and all its messages. If this chat is linked, it will be deleted on their end too."
+                    : "Close this chat?")
             }
             .sheet(isPresented: $coordinator.showReportFlow) {
-                ReportConversationFlowView(isPresented: $coordinator.showReportFlow)
+                ReportConversationFlowView(
+                    isPresented: $coordinator.showReportFlow,
+                    sessionId: sessionId,
+                    onEnsureSessionId: onEnsureSessionId
+                )
             }
     }
 }
@@ -211,11 +223,14 @@ private struct ReportCategory: Identifiable, Hashable {
 
 private struct ReportConversationFlowView: View {
     @Binding var isPresented: Bool
+    let sessionId: UUID?
+    let onEnsureSessionId: () async -> UUID?
 
     @State private var selectedCategory: ReportCategory? = nil
     @State private var selectedReason: ReportReason? = nil
     @State private var detailsText: String = ""
     @State private var showSubmittedState: Bool = false
+    @State private var isSubmitting: Bool = false
 
     // Overlay states
     @State private var showReasonOverlay: Bool = false
@@ -388,8 +403,40 @@ private struct ReportConversationFlowView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     if showDetailsOverlay {
                         Button("Submit") {
-                            showSubmittedState = true
+                            guard let cat = selectedCategory,
+                                  let reason = selectedReason,
+                                  !isSubmitting else { return }
+                            isSubmitting = true
+                            Task {
+                                do {
+                                    let sid: UUID
+                                    if let existing = sessionId {
+                                        sid = existing
+                                    } else if let created = await onEnsureSessionId() {
+                                        sid = created
+                                    } else {
+                                        isSubmitting = false
+                                        return
+                                    }
+                                    guard let accessToken = await AuthService.shared.getAccessToken() else {
+                                        isSubmitting = false
+                                        return
+                                    }
+                                    try await BackendService.shared.reportSession(
+                                        sessionId: sid,
+                                        category: cat.id,
+                                        reason: reason.id,
+                                        details: detailsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : detailsText,
+                                        accessToken: accessToken
+                                    )
+                                } catch {
+                                    // Still show success to the reporter (don't reveal backend failures for reports)
+                                }
+                                isSubmitting = false
+                                showSubmittedState = true
+                            }
                         }
+                        .disabled(isSubmitting)
                     }
                 }
             }
@@ -639,6 +686,7 @@ extension View {
     func chatSessionActions(
         coordinator: ChatSessionActionsCoordinator,
         sessionId: UUID?,
+        onEnsureSessionId: @escaping () async -> UUID?,
         onRename: @escaping (UUID, String) async -> Void,
         onDelete: @escaping (UUID) async -> Void,
         onDeleteNavigateAway: @escaping () -> Void
@@ -646,6 +694,7 @@ extension View {
         modifier(ChatSessionActionsDialogsModifier(
             coordinator: coordinator,
             sessionId: sessionId,
+            onEnsureSessionId: onEnsureSessionId,
             onRename: onRename,
             onDelete: onDelete,
             onDeleteNavigateAway: onDeleteNavigateAway

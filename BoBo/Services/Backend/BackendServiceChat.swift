@@ -168,6 +168,30 @@ extension BackendService {
         }
     }
 
+    func reportSession(sessionId: UUID, category: String, reason: String, details: String?, accessToken: String) async throws {
+        let url = baseURL
+            .appendingPathComponent("chat")
+            .appendingPathComponent("sessions")
+            .appendingPathComponent(sessionId.uuidString)
+            .appendingPathComponent("report")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        struct Body: Codable { let category: String; let reason: String; let details: String? }
+        request.httpBody = try jsonEncoder.encode(Body(
+            category: category,
+            reason: reason,
+            details: details?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : details
+        ))
+
+        let (data, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let serverMessage = decodeSimpleDetail(from: data) ?? String(data: data, encoding: .utf8) ?? "Unknown server error"
+            throw NSError(domain: "Backend", code: (response as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: serverMessage])
+        }
+    }
+
     func deleteSession(sessionId: UUID, accessToken: String) async throws {
         func makeRequest(at base: URL) -> URLRequest {
             let url = base

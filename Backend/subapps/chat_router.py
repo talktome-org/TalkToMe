@@ -30,6 +30,7 @@ from Backend.crud.chat.chat_crud import (
 from Backend.crud.chat.chat_session_crud import (
     assert_session_owned_by_user,
     create_session,
+    create_session_report,
     delete_session,
     get_session_by_id,
     list_sessions_for_user,
@@ -1004,6 +1005,37 @@ async def rename_session(session_id: uuid.UUID, payload: dict, current_user: dic
         return {"success": True}
     except PermissionError:
         raise HTTPException(status_code=403, detail="Forbidden: invalid session")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sessions/{session_id}/report")
+async def report_session_route(session_id: uuid.UUID, payload: dict, current_user: dict = Depends(get_current_user)):
+    try:
+        user_uuid = uuid.UUID(current_user.get("sub"))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid user ID in token")
+
+    category = payload.get("category")
+    reason = payload.get("reason")
+    details = payload.get("details")
+
+    if not category or not isinstance(category, str):
+        raise HTTPException(status_code=400, detail="category is required")
+    if not reason or not isinstance(reason, str):
+        raise HTTPException(status_code=400, detail="reason is required")
+    if details is not None and not isinstance(details, str):
+        raise HTTPException(status_code=400, detail="details must be a string or null")
+
+    try:
+        await create_session_report(
+            session_id=session_id,
+            reporter_user_id=user_uuid,
+            category=category,
+            reason=reason,
+            details=details,
+        )
+        return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

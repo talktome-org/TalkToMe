@@ -106,6 +106,9 @@ struct ChatView: View {
         .chatSessionActions(
             coordinator: sessionActions,
             sessionId: activeSessionIdForActions,
+            onEnsureSessionId: { [viewModel] in
+                await viewModel.ensureSessionId()
+            },
             onRename: { sessionId, title in
                 await sessionsViewModel.renameSession(sessionId, to: title)
             },
