@@ -7,7 +7,7 @@ from starlette.concurrency import run_in_threadpool
 from sqlalchemy import delete, select, update
 
 from ...database import SessionLocal
-from ...models.chat.chat_models import UserChatMessage, UserChatSession
+from ...models.chat.chat_models import SessionReport, UserChatMessage, UserChatSession
 
 SESSIONS_TABLE = "user_chat_sessions"
 
@@ -343,3 +343,34 @@ async def delete_session(*, user_id: uuid.UUID, session_id: uuid.UUID) -> None:
             db.close()
 
     await run_in_threadpool(_delete)
+
+
+async def create_session_report(
+    *,
+    session_id: uuid.UUID,
+    reporter_user_id: uuid.UUID,
+    category: str,
+    reason: str,
+    details: Optional[str] = None,
+) -> dict:
+    def _insert():
+        db = SessionLocal()
+        try:
+            report = SessionReport(
+                session_id=session_id,
+                reporter_user_id=reporter_user_id,
+                category=category,
+                reason=reason,
+                details=details,
+            )
+            db.add(report)
+            db.commit()
+            db.refresh(report)
+            return _to_dict(report)
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    return await run_in_threadpool(_insert)
