@@ -198,6 +198,12 @@ final class LocalDatabase {
             }
         }
 
+        migrator.registerMigration("messages_add_was_stopped") { db in
+            try db.alter(table: "messages") { t in
+                t.add(column: "was_stopped", .boolean).notNull().defaults(to: false)
+            }
+        }
+
         migrator.registerMigration("create_diary_entries") { db in
             try db.create(table: "diary_entries", ifNotExists: true) { t in
                 t.column("id", .text).primaryKey()

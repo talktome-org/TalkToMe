@@ -353,6 +353,8 @@ final class ChatVoiceModeController: ObservableObject {
     }
 
     func startSpeakMode() {
+        guard !isSpeakModeActive else { return }
+        isSpeakModeActive = true
         speakSessionSeq += 1
         turnSeq = 0
         speakSessionStartTime = Date()
@@ -385,7 +387,6 @@ final class ChatVoiceModeController: ObservableObject {
         speakModeVoiceId = storedVoiceId
         streamingController?.activeVoiceAgentName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : name
 
-        isSpeakModeActive = true
         isSpeakComposerLocked = false
         pendingSpeakAutoSendTask?.cancel()
         pendingSpeakAutoSendTask = nil

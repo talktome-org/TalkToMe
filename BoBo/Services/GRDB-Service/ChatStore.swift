@@ -22,6 +22,7 @@ struct ChatMessageRecord: Codable, FetchableRecord, PersistableRecord {
     var ghost_name: String?
     var thinking_summary: String?
     var is_voice_mode: Bool
+    var was_stopped: Bool
 }
 
 struct ChatAttachmentRecord: Codable, FetchableRecord, PersistableRecord {
@@ -494,6 +495,34 @@ final class ChatStore {
         } catch {}
     }
 
+    /// Persists a stopped assistant message to GRDB so it survives reconciliation.
+    func persistStoppedMessage(messageId: UUID, sessionId: UUID, userId: UUID, content: String, isVoiceMode: Bool, ghostName: String?) async {
+        let now = isoFormatter.string(from: Date())
+        do {
+            try await dbQueue.write { db in
+                // Ensure session row exists
+                try db.execute(
+                    sql: "INSERT OR IGNORE INTO sessions (id, title, last_message_at, last_message_content) VALUES (?, NULL, NULL, NULL)",
+                    arguments: [sessionId.uuidString]
+                )
+                let rec = ChatMessageRecord(
+                    id: messageId.uuidString,
+                    session_id: sessionId.uuidString,
+                    user_id: userId.uuidString,
+                    role: "assistant",
+                    content: content,
+                    created_at: now,
+                    regeneration_count: 0,
+                    ghost_name: ghostName,
+                    thinking_summary: nil,
+                    is_voice_mode: isVoiceMode,
+                    was_stopped: true
+                )
+                try rec.save(db)
+            }
+        } catch {}
+    }
+
     func loadMessages(sessionId: UUID, currentUserId: UUID) async -> [ChatMessage] {
         let sid = sessionId.uuidString
         do {
@@ -550,6 +579,7 @@ final class ChatStore {
                 if let gn = r.ghost_name { msg.ghostName = gn }
                 if let ts = r.thinking_summary, !ts.isEmpty { msg.thinkingSummary = ts }
                 if r.is_voice_mode { msg.isFromVoiceMode = true }
+                if r.was_stopped { msg.wasStopped = true }
                 return msg
             }
         } catch {
@@ -581,6 +611,14 @@ final class ChatStore {
 
                 var collectedRelpaths: [String] = []
                 for mid in orphanIds {
+                    // Preserve stopped messages (local-only, user cancelled generation)
+                    let isStopped = try Bool.fetchOne(
+                        db,
+                        sql: "SELECT was_stopped FROM messages WHERE id = ?",
+                        arguments: [mid]
+                    ) ?? false
+                    if isStopped { continue }
+
                     // Preserve messages with pending outbox items
                     let pendingCount = try Int.fetchOne(
                         db,
@@ -735,7 +773,8 @@ final class ChatStore {
                         regeneration_count: existing?.regeneration_count ?? 0,
                         ghost_name: resolvedGhostName,
                         thinking_summary: existing?.thinking_summary,
-                        is_voice_mode: resolvedVoiceMode
+                        is_voice_mode: resolvedVoiceMode,
+                        was_stopped: existing?.was_stopped ?? false
                     )
                     try rec.save(db)
                 }

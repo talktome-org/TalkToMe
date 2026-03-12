@@ -831,31 +831,56 @@ private struct NotificationsView: View {
             .padding(.bottom, 8)
           }
 
+          if groupedNotifications.isEmpty && apns.isPushEnabled {
+            VStack(spacing: 14) {
+              if !searchText.isEmpty {
+                Image(systemName: "magnifyingglass")
+                  .font(.system(size: 56))
+                  .foregroundStyle(Color(.tertiaryLabel))
+                Text("No results for \"\(searchText)\"")
+                  .font(.system(size: 15, weight: .medium))
+                  .foregroundStyle(Color(.secondaryLabel))
+              } else {
+                ZStack(alignment: .topTrailing) {
+                  RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(.secondarySystemFill))
+                    .frame(width: 60, height: 60)
+                    .overlay(
+                      Image(systemName: "bell.fill")
+                        .font(.system(size: 26))
+                        .foregroundStyle(Color(.label))
+                    )
+
+                  Circle()
+                    .fill(Color.green)
+                    .frame(width: 18, height: 18)
+                    .overlay(
+                      Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                    )
+                    .offset(x: 4, y: -4)
+                }
+                .padding(.top, 8)
+
+                Text("All Caught Up")
+                  .font(.system(size: 19, weight: .bold))
+                  .foregroundStyle(Color(.label))
+
+                Text("No notifications right now. We\u{2019}ll let you know when something comes in.")
+                  .font(.system(size: 14))
+                  .foregroundStyle(Color(.secondaryLabel))
+                  .multilineTextAlignment(.center)
+                  .padding(.horizontal, 16)
+              }
+            }
+            .frame(maxWidth: .infinity)
+          }
+
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .padding(.bottom, 24)
-      }
-
-      if groupedNotifications.isEmpty && apns.isPushEnabled {
-        VStack(spacing: 12) {
-          if !searchText.isEmpty {
-            Image(systemName: "magnifyingglass")
-              .font(.system(size: 56))
-              .foregroundStyle(Color(.tertiaryLabel))
-            Text("No results for \"\(searchText)\"")
-              .font(.system(size: 15, weight: .medium))
-              .foregroundStyle(Color(.secondaryLabel))
-          } else {
-            Image(systemName: "bell.slash")
-              .font(.system(size: 56))
-              .foregroundStyle(Color(.tertiaryLabel))
-            Text("No notifications yet")
-              .font(.system(size: 15, weight: .medium))
-              .foregroundStyle(Color(.secondaryLabel))
-          }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
     .navigationTitle("Notifications")

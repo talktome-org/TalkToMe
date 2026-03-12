@@ -97,7 +97,6 @@ struct ChatView: View {
                         sessionId: activeSessionIdForActions,
                         currentTitle: activeSessionTitleForActions,
                         onRenameRequest: { sessionActions.requestRename(currentTitle: activeSessionTitleForActions) },
-                        onArchiveRequest: { sessionActions.requestArchive() },
                         onDeleteRequest: { sessionActions.requestDelete() },
                         onReportRequest: { sessionActions.requestReport() }
                     )

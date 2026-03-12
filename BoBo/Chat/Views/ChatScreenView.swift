@@ -4,7 +4,7 @@ struct ChatScreenView: View {
 
   @ObservedObject var chatViewModel: ChatViewModel
 
-  @AppStorage(PreferenceKeys.dictationEnabled) private var dictationEnabled: Bool = false
+  @AppStorage(PreferenceKeys.dictationEnabled) private var dictationEnabled: Bool = true
 
   let onSend: () -> Void
   let isInputFocused: FocusState<Bool>.Binding

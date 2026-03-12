@@ -23,6 +23,7 @@ struct ChatMessage: Identifiable {
     var regenerationCount: Int
     var ghostName: String?
     var thinkingSummary: String?
+    var wasStopped: Bool = false
 
     static func text(_ text: String, isFromUser: Bool, timestamp: Date = Date(), isFromVoiceMode: Bool = false) -> ChatMessage {
         return ChatMessage(

@@ -442,6 +442,8 @@ struct MessageBubbleView: View {
     guard !message.isToolLoading else { return false }
     // Don't show for messages generated during voice mode
     guard !message.isFromVoiceMode else { return false }
+    // Always show for stopped messages (so user can regenerate)
+    if message.wasStopped { return true }
     // Don't show while this message is still streaming (check if it's the last message and loading)
     if chatViewModel.isLoading {
       let lastAssistantMessage = chatViewModel.messages.last { !$0.isFromUser }
@@ -533,7 +535,7 @@ struct MessageBubbleView: View {
             chatViewModel.replyQuoteText = selectedText
           }
         )
-      } else if shouldShowThinkingIndicator || hasRenderableAssistantContent {
+      } else if shouldShowThinkingIndicator || hasRenderableAssistantContent || message.wasStopped {
         let hasTextContent = shouldShowThinkingIndicator || message.isToolLoading
           || message.segments.contains(where: {
             if case .text(let t) = $0 { return !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -542,7 +544,20 @@ struct MessageBubbleView: View {
         let partnerSegments = message.segments.filter { isPartnerSegment($0) }
 
         VStack(alignment: .leading, spacing: 8) {
-          if hasTextContent {
+          if message.wasStopped && !hasTextContent {
+            VStack(alignment: .leading, spacing: 8) {
+              Text("Generation stopped")
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary)
+                .italic()
+                .padding(.horizontal, 4)
+                .padding(.vertical, 4)
+            }
+            .padding(12)
+            .background(AppTheme.talkToMeBubbleAI)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .foregroundColor(AppTheme.textPrimary)
+          } else if hasTextContent {
             VStack(alignment: .leading, spacing: 8) {
               if shouldShowThinkingIndicator {
                 if let thinkingText = activeStreamingThinkingText {
@@ -598,25 +613,6 @@ struct MessageBubbleView: View {
                   .padding(.top, 2)
                 }
 
-                if shouldShowAssistantActions || isActivelyStreamingMessage {
-                  AssistantMessageActionsView(
-                    messageText: plainText(from: message.segments),
-                    regenerationCount: message.regenerationCount,
-                    onRegenerate: onRegenerate,
-                    onToast: onToast,
-                    thinkingSummary: message.thinkingSummary,
-                    onToggleThinking: {
-                      withAnimation(.easeInOut(duration: 0.2)) {
-                        isThinkingExpanded.toggle()
-                      }
-                    }
-                  )
-                  .opacity(shouldShowAssistantActions ? 1 : 0)
-                  .offset(y: shouldShowAssistantActions ? 0 : 6)
-                  .allowsHitTesting(shouldShowAssistantActions)
-                  .animation(.easeOut(duration: 0.35), value: shouldShowAssistantActions)
-                }
-
                 if shouldShowVoiceRespondedLabel {
                   Text(
                     "\(voiceGhostDisplayName) responded at \(message.timestamp.formatted(date: .omitted, time: .shortened))"
@@ -632,6 +628,27 @@ struct MessageBubbleView: View {
             .background(AppTheme.talkToMeBubbleAI)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .foregroundColor(AppTheme.textPrimary)
+          }
+
+          // Action buttons — rendered outside the bubble so they show
+          // for both stopped (empty) and normal messages.
+          if shouldShowAssistantActions || isActivelyStreamingMessage {
+            AssistantMessageActionsView(
+              messageText: plainText(from: message.segments),
+              regenerationCount: message.regenerationCount,
+              onRegenerate: onRegenerate,
+              onToast: onToast,
+              thinkingSummary: message.thinkingSummary,
+              onToggleThinking: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                  isThinkingExpanded.toggle()
+                }
+              }
+            )
+            .opacity(shouldShowAssistantActions ? 1 : 0)
+            .offset(y: shouldShowAssistantActions ? 0 : 6)
+            .allowsHitTesting(shouldShowAssistantActions)
+            .animation(.easeOut(duration: 0.35), value: shouldShowAssistantActions)
           }
 
           // Partner segments rendered outside the AI bubble

@@ -40,6 +40,9 @@ final class ChatStreamingController {
     private var currentStreamingSessionId: UUID?
     private var pendingRegenerationCount: Int = 0
     private var ghostNameBySession: [UUID: String] = [:]
+    /// Session IDs created locally by `sendMessage()` during this app lifecycle.
+    /// Used to distinguish orphan local sessions from server-known sessions after restart.
+    private var locallyCreatedSessionIds: Set<UUID> = []
 
     private weak var delegate: ChatStreamingDelegate?
     private var onCacheUpdate: (() -> Void)?
@@ -152,6 +155,7 @@ final class ChatStreamingController {
         if delegate.sessionId == nil {
             let localId = UUID()
             createdLocalSessionId = localId
+            locallyCreatedSessionIds.insert(localId)
             delegate.sessionId = localId
             delegate.setChatMessagesVMSessionId(localId)
             let currentTime = ISO8601DateFormatter().string(from: Date())
@@ -378,7 +382,13 @@ final class ChatStreamingController {
 
             let localSessionIdForSend = sid
             let createdLocalSessionIdForSend = createdLocalSessionId
-            let requestSessionIdForStream: UUID? = (createdLocalSessionIdForSend != nil) ? nil : localSessionIdForSend
+            // Send nil session ID if this is a locally-created session the server
+            // has never acknowledged.  Only sessions created during this app lifecycle
+            // (tracked in locallyCreatedSessionIds) can be orphans.  Sessions loaded
+            // from DB after app restart are already server-known and safe to send as-is.
+            let isUnacknowledgedLocalSession = self.locallyCreatedSessionIds.contains(localSessionIdForSend)
+                && self.responseIdBySession[localSessionIdForSend] == nil
+            let requestSessionIdForStream: UUID? = (createdLocalSessionIdForSend != nil || isUnacknowledgedLocalSession) ? nil : localSessionIdForSend
 
             await MainActor.run {
                 self.isStreaming = true
@@ -485,14 +495,16 @@ final class ChatStreamingController {
                 guard let self = self, let delegate = delegate else { return }
                 switch event {
                 case .responseId(let rid):
-                    Task { @MainActor in
+                    Task { @MainActor [streamToken] in
+                        guard self.currentStreamToken == streamToken else { return }
                         let targetSid = streamSessionId ?? delegate.sessionId
                         if let sid = targetSid {
                             self.responseIdBySession[sid] = rid
                         }
                     }
                 case .toolStart:
-                    Task { @MainActor in
+                    Task { @MainActor [streamToken] in
+                        guard self.currentStreamToken == streamToken else { return }
                         let targetSid = streamSessionId ?? delegate.sessionId
                         guard let sid = targetSid else { return }
                         if sid == delegate.sessionId {
@@ -545,7 +557,8 @@ final class ChatStreamingController {
                 case .toolArgs:
                     break
                 case .toolDone:
-                    Task { @MainActor in
+                    Task { @MainActor [streamToken] in
+                        guard self.currentStreamToken == streamToken else { return }
                         let targetSid = streamSessionId ?? delegate.sessionId
                         guard let sid = targetSid else { return }
                         if sid == delegate.sessionId {
@@ -597,7 +610,8 @@ final class ChatStreamingController {
                     }
                 case .thinking(let text):
                     accumulatedThinking += text
-                    Task { @MainActor in
+                    Task { @MainActor [streamToken] in
+                        guard self.currentStreamToken == streamToken else { return }
                         if !self.receivedAnyAssistantOutput {
                             self.typingDelayTask?.cancel()
                             delegate.isAssistantTyping = true
@@ -605,15 +619,28 @@ final class ChatStreamingController {
                         delegate.thinkingText += text
                     }
                 case .thinkingDone:
-                    Task { @MainActor in
+                    Task { @MainActor [streamToken] in
+                        guard self.currentStreamToken == streamToken else { return }
                         delegate.thinkingTextDone = true
                     }
                 case .session(let sid):
                     streamSessionId = sid
-                    Task { @MainActor in
-                        let isRekey = createdLocalSessionIdForSend != nil
+                    Task { @MainActor [streamToken] in
+                        // Discard stale .session events from a cancelled stream.
+                        // After stopGeneration() nils currentStreamToken, this
+                        // event must not rekey sessions or change delegate state.
+                        guard self.currentStreamToken == streamToken else { return }
+
+                        let isNewlyCreatedRekey = createdLocalSessionIdForSend != nil
                             && delegate.sessionId == createdLocalSessionIdForSend
                             && sid != createdLocalSessionIdForSend
+                        // Also rekey if the local session existed but the server
+                        // didn't know about it (we sent nil session ID).
+                        let isOrphanRekey = createdLocalSessionIdForSend == nil
+                            && isUnacknowledgedLocalSession
+                            && delegate.sessionId == localSessionIdForSend
+                            && sid != localSessionIdForSend
+                        let isRekey = isNewlyCreatedRekey || isOrphanRekey
 
                         // Update session tracking state synchronously BEFORE any
                         // async work so that token/done handlers arriving during
@@ -631,7 +658,9 @@ final class ChatStreamingController {
                         }
                         self.currentStreamingSessionId = sid
 
-                        if isRekey, let local = createdLocalSessionIdForSend {
+                        let localIdToRekey = createdLocalSessionIdForSend ?? (isOrphanRekey ? localSessionIdForSend : nil)
+                        if isRekey, let local = localIdToRekey {
+                            self.locallyCreatedSessionIds.remove(local)
                             await ChatStore.shared.rekeySession(oldId: local, newId: sid)
                             if let ghostName = self.ghostNameBySession[local] {
                                 self.ghostNameBySession[sid] = ghostName
@@ -649,7 +678,8 @@ final class ChatStreamingController {
                         }
                     }
                 case .token(let token):
-                    Task { @MainActor in
+                    Task { @MainActor [streamToken] in
+                        guard self.currentStreamToken == streamToken else { return }
                         let targetSid = streamSessionId ?? delegate.sessionId
                         guard let sid = targetSid else { return }
                         if !self.receivedAnyAssistantOutput {
@@ -786,7 +816,8 @@ final class ChatStreamingController {
                     print("[VoiceAgent] SSE .done received — voiceAgent=\(voiceAgentToSend ?? "nil") accumulatedLen=\(accumulated.count) isVoiceMode=\(isVoiceModeMessage) currentActiveVoice=\(self.activeVoiceAgentName ?? "nil")")
                     let targetSid = streamSessionId ?? delegate.sessionId
                     if let sid = targetSid, sid != delegate.sessionId {
-                        Task { @MainActor in
+                        Task { @MainActor [streamToken] in
+                            guard self.currentStreamToken == streamToken else { return }
                             if let arr = delegate.getCachedMessages(for: sid) {
                                 delegate.setCachedMessages(arr, for: sid)
                             }
@@ -806,7 +837,8 @@ final class ChatStreamingController {
                         }
                     } else {
                         let capturedRegenCount = self.pendingRegenerationCount
-                        Task { @MainActor in
+                        Task { @MainActor [streamToken] in
+                            guard self.currentStreamToken == streamToken else { return }
                             // Apply regeneration count to the completed message
                             if self.pendingRegenerationCount > 0,
                                let msgId = self.currentAssistantMessageId,
@@ -923,12 +955,14 @@ final class ChatStreamingController {
                 case .error(let message):
                     print("[VoiceAgent] SSE .error received: \(message) — voiceAgent=\(voiceAgentToSend ?? "nil")")
                     if message.contains("previous_response_not_found") || (message.contains("previous_response_id") && message.contains("not found")) {
-                        Task { @MainActor in
+                        Task { @MainActor [streamToken] in
+                            guard self.currentStreamToken == streamToken else { return }
                             let sid = streamSessionId ?? localSessionIdForSend
                             self.responseIdBySession.removeValue(forKey: sid)
                         }
                     }
-                    Task { @MainActor in
+                    Task { @MainActor [streamToken] in
+                        guard self.currentStreamToken == streamToken else { return }
                         let targetSid = streamSessionId ?? delegate.sessionId
                         if let sid = targetSid, sid != delegate.sessionId {
                             var newMessages = delegate.getCachedMessages(for: sid) ?? []
@@ -1046,7 +1080,57 @@ final class ChatStreamingController {
         delegate?.thinkingText = ""
         delegate?.thinkingTextDone = false
         isStreaming = false
+
+        // Mark the assistant message as stopped so the UI can show
+        // action buttons (e.g. regenerate) even if no tokens arrived.
+        let stoppedMsgId = currentAssistantMessageId
+        if let msgId = stoppedMsgId,
+           let delegate,
+           let idx = delegate.messages.firstIndex(where: { $0.id == msgId }) {
+            delegate.messages[idx].wasStopped = true
+
+            // Persist to GRDB so the stopped message survives reconciliation
+            // and app restarts.
+            let msg = delegate.messages[idx]
+            let content = msg.segments.compactMap { seg -> String? in
+                if case .text(let t) = seg { return t }
+                return nil
+            }.joined()
+            let sid = currentStreamingSessionId ?? delegate.sessionId
+            let isVoice = msg.isFromVoiceMode
+            let ghost = msg.ghostName
+            if let sid {
+                let userId: UUID? = {
+                    if let uid = AuthService.shared.currentUser?.id { return uid }
+                    if let raw = UserDefaults.standard.string(forKey: PreferenceKeys.currentUserId),
+                       let uid = UUID(uuidString: raw) { return uid }
+                    return nil
+                }()
+                if let userId {
+                    Task {
+                        await ChatStore.shared.persistStoppedMessage(
+                            messageId: msgId,
+                            sessionId: sid,
+                            userId: userId,
+                            content: content,
+                            isVoiceMode: isVoice,
+                            ghostName: ghost
+                        )
+                    }
+                }
+            }
+        }
+
+        // Update cache so the generated text survives and action buttons
+        // (copy, regenerate, etc.) appear immediately.
+        if let sid = currentStreamingSessionId ?? delegate?.sessionId {
+            delegate?.setCachedMessages(delegate?.messages ?? [], for: sid)
+        }
+
         currentAssistantMessageId = nil
+        currentStreamingSessionId = nil
+        delegate?.streamingDidFinish()
+        onCacheUpdate?()
     }
 
     func regenerateResponse(forAssistantMessageId assistantMessageId: UUID) {

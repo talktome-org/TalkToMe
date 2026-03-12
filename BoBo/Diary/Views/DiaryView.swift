@@ -973,6 +973,7 @@ private struct JournalTabBar: View {
         }
       }
       .clipShape(Capsule(style: .continuous))
+      .contentShape(Capsule(style: .continuous))
       .overlay(
         Capsule(style: .continuous)
           .stroke(Color(.separator).opacity(isActive ? 0.0 : 0.25), lineWidth: isActive ? 0 : 0.5)
@@ -1483,16 +1484,39 @@ private struct JournalListTab: View {
         }
 
         if entries.isEmpty {
-          VStack(spacing: 10) {
+          VStack(spacing: 14) {
             Spacer().frame(height: 36)
-            Image(systemName: "book.closed")
-              .font(.system(size: 28, weight: .semibold))
-              .foregroundStyle(.secondary)
-            Text("No entries yet")
-              .font(.system(size: 16, weight: .semibold))
-            Text("Tap + to add your first entry.")
+            ZStack(alignment: .topTrailing) {
+              RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(.secondarySystemFill))
+                .frame(width: 60, height: 60)
+                .overlay(
+                  Image(systemName: "book.closed.fill")
+                    .font(.system(size: 26))
+                    .foregroundStyle(Color(.label))
+                )
+
+              Circle()
+                .fill(Color.accentColor)
+                .frame(width: 18, height: 18)
+                .overlay(
+                  Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+                )
+                .offset(x: 4, y: -4)
+            }
+            .padding(.top, 8)
+
+            Text("No Entries Yet")
+              .font(.system(size: 19, weight: .bold))
+              .foregroundStyle(Color(.label))
+
+            Text("Tap the + button below to add your first entry and start capturing your thoughts!")
               .font(.system(size: 14))
-              .foregroundStyle(.secondary)
+              .foregroundStyle(Color(.secondaryLabel))
+              .multilineTextAlignment(.center)
+              .padding(.horizontal, 16)
           }
           .frame(maxWidth: .infinity)
         } else if filteredEntries.isEmpty {
@@ -1560,9 +1584,7 @@ private struct JournalListTab: View {
 // MARK: - ToDo list tab
 
 private let diaryTodoStorageKey = "diary_todo_items"
-private let diaryDefaultTodoItems = [
-  DiaryTodoItem(title: "Plan tomorrow's top priority")
-]
+private let diaryDefaultTodoItems: [DiaryTodoItem] = []
 
 private struct JournalTodoTab: View {
   @Binding var todoItems: [DiaryTodoItem]
