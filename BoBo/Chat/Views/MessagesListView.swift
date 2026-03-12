@@ -121,11 +121,21 @@ struct MessagesListView: View {
     var body: some View {
         ScrollViewReader { scrollProxy in
         ScrollView {
-            if messages.isEmpty && chatViewModel.sessionId == nil {
-                chatEmptyState
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 120)
+            Group {
+                if messages.isEmpty && !chatViewModel.isSpeakModeActive && chatViewModel.sessionId == nil {
+                    chatEmptyState
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 180)
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
+                } else if messages.isEmpty && !chatViewModel.isSpeakModeActive && hasBuddy {
+                    buddyImageEmptyState
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 180)
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
+                }
             }
+            .animation(.easeOut(duration: 0.35), value: messages.isEmpty)
+            .animation(.easeOut(duration: 0.35), value: chatViewModel.isSpeakModeActive)
 
             LazyVStack(spacing: 18) {
                 ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
@@ -392,10 +402,58 @@ struct MessagesListView: View {
         buddyExplicitlyChosen
     }
 
+    private static let emptyStatePhrases = [
+        "Let's start chatting!",
+        "What's on your mind?",
+        "I'm all ears!",
+        "Ready when you are!",
+        "Go ahead, say anything!"
+    ]
+
+    @State private var emptyStatePhrase: String = emptyStatePhrases.randomElement()!
+
     @ViewBuilder
     private var chatEmptyState: some View {
         if !hasBuddy {
             buddyPickerEmptyState
+        } else {
+            buddyImageEmptyState
+        }
+    }
+
+    private var ghostVideoName: String? {
+        ElevenLabsVoiceSuggestionsView.ghostVideoName(for: currentBuddyName)
+    }
+
+    private var hasGhostVideo: Bool {
+        guard let name = ghostVideoName, !name.isEmpty else { return false }
+        return Bundle.main.url(forResource: name, withExtension: "mp4") != nil
+    }
+
+    @ViewBuilder
+    private var buddyImageEmptyState: some View {
+        VStack(spacing: 16) {
+            if hasGhostVideo, let videoName = ghostVideoName {
+                TransparentVideoPlayerView(
+                    videoName: videoName,
+                    videoExtension: "mp4",
+                    startTime: ElevenLabsVoiceSuggestionsView.ghostStartTimes[videoName] ?? 0
+                )
+                .frame(width: 180, height: 180)
+            } else if let uiImage = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: currentBuddyName) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 180, height: 180)
+            } else {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 80))
+                    .foregroundStyle(Color(.tertiaryLabel))
+            }
+
+            Text(emptyStatePhrase)
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(.primary)
         }
     }
 
@@ -450,7 +508,17 @@ struct MessagesListView: View {
 
     private func ghostCard(name: String) -> some View {
         Group {
-            if let uiImage = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: name) {
+            let videoName = ElevenLabsVoiceSuggestionsView.ghostVideoName(for: name)
+            let hasVideo = videoName.map { Bundle.main.url(forResource: $0, withExtension: "mp4") != nil } ?? false
+
+            if hasVideo, let videoName {
+                TransparentVideoPlayerView(
+                    videoName: videoName,
+                    videoExtension: "mp4",
+                    startTime: ElevenLabsVoiceSuggestionsView.ghostStartTimes[videoName] ?? 0
+                )
+                .frame(width: 110, height: 110)
+            } else if let uiImage = ElevenLabsVoiceSuggestionsView.ghostUIImage(for: name) {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFit()

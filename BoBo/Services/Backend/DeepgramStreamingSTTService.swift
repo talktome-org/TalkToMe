@@ -61,6 +61,13 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
     private let keepAliveIntervalSeconds: TimeInterval = 10.0
     private var echoGateKeepAliveTask: Task<Void, Never>?
 
+    /// Fires `lastFinalUtterance` if `speech_final` hasn't arrived within
+    /// this interval after the most recent `is_final` transcript part.
+    /// Helps in noisy environments where background sound prevents Deepgram's
+    /// VAD from detecting end-of-speech.
+    private var speechFinalFallbackTask: Task<Void, Never>?
+    private let speechFinalFallbackDelayNs: UInt64 = 1_500_000_000 // 1.5s
+
     init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
     }
@@ -151,6 +158,8 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
         SharedAudioEngine.shared.removeInputTap()
         stopKeepAlive()
         stopEchoGateKeepAlive()
+        speechFinalFallbackTask?.cancel()
+        speechFinalFallbackTask = nil
         isConnected = false
         isRecording = false
         isPaused = false
@@ -214,6 +223,8 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
     func stopRecording() {
         isRecording = false
         isPaused = false
+        speechFinalFallbackTask?.cancel()
+        speechFinalFallbackTask = nil
         SharedAudioEngine.shared.removeInputTap()
         flushBufferedAudioIfPossible()
         sendJSONEvent(["type": "finalize"])
@@ -349,16 +360,49 @@ final class DeepgramStreamingSTTService: ObservableObject, @unchecked Sendable {
             }
             currentInterim = ""
             updatePresentedTranscript()
+
+            // In noisy environments (e.g. cafes), Deepgram's VAD may never
+            // fire `speech_final` because background noise is mistaken for
+            // continued speech. Start a fallback timer after each `is_final`
+            // that contains real content — if `speech_final` doesn't arrive
+            // within the window we treat the accumulated parts as a complete
+            // utterance and fire it ourselves.
+            if !trimmed.isEmpty && transcriptAggregation == .perUtterance {
+                speechFinalFallbackTask?.cancel()
+                speechFinalFallbackTask = Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: self?.speechFinalFallbackDelayNs ?? 1_500_000_000)
+                    guard !Task.isCancelled else { return }
+                    guard let self else { return }
+                    let utterance = self.currentUtteranceFinalParts
+                        .joined(separator: " ")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !utterance.isEmpty else { return }
+                    print("[VoiceAgent][STT] speechFinal FALLBACK (timeout) — utterance: \"\(utterance.prefix(80))\" isConnected=\(self.isConnected)")
+                    self.isUserSpeaking = false
+                    self.lastFinalUtterance = utterance
+                    self.currentUtteranceFinalParts = []
+                    if self.transcriptAggregation == .perUtterance {
+                        self.committedParts = []
+                        self.currentInterim = ""
+                    }
+                }
+            }
         } else {
             // Ignore transient empty interim packets to prevent transcript flicker.
             if !trimmed.isEmpty {
                 currentInterim = trimmed
                 updatePresentedTranscript()
+                // User is still speaking — postpone the fallback timer so we
+                // don't fire mid-sentence.
+                speechFinalFallbackTask?.cancel()
+                speechFinalFallbackTask = nil
             }
             isUserSpeaking = !trimmed.isEmpty
         }
 
         if speechFinal == true {
+            speechFinalFallbackTask?.cancel()
+            speechFinalFallbackTask = nil
             isUserSpeaking = false
             let utterance = currentUtteranceFinalParts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             if !utterance.isEmpty {

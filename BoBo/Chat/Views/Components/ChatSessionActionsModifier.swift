@@ -83,7 +83,6 @@ struct ChatSessionActionsMenu: View {
     let sessionId: UUID?
     let currentTitle: String
     let onRenameRequest: () -> Void
-    let onArchiveRequest: () -> Void
     let onDeleteRequest: () -> Void
     let onReportRequest: () -> Void
 
@@ -120,11 +119,6 @@ struct ChatSessionActionsMenu: View {
             }
             .disabled(sessionId == nil)
 
-            Button("Archive") {
-                onArchiveRequest()
-            }
-            .disabled(sessionId == nil)
-
             Button("Delete", role: .destructive) {
                 onDeleteRequest()
             }
@@ -143,8 +137,6 @@ final class ChatSessionActionsCoordinator: ObservableObject {
     @Published var renameChatTitle: String = ""
     @Published var showDeleteChatConfirm: Bool = false
     @Published var showReportFlow: Bool = false
-    @Published var showArchiveChatConfirm: Bool = false
-    @Published var showArchiveChatThanks: Bool = false
 
     func requestRename(currentTitle: String) {
         renameChatTitle = currentTitle
@@ -159,9 +151,6 @@ final class ChatSessionActionsCoordinator: ObservableObject {
         showReportFlow = true
     }
 
-    func requestArchive() {
-        showArchiveChatConfirm = true
-    }
 }
 
 // MARK: - Session Actions Dialogs Modifier
@@ -205,19 +194,6 @@ struct ChatSessionActionsDialogsModifier: ViewModifier {
             }
             .sheet(isPresented: $coordinator.showReportFlow) {
                 ReportConversationFlowView(isPresented: $coordinator.showReportFlow)
-            }
-            .confirmationDialog("Archive chat?", isPresented: $coordinator.showArchiveChatConfirm, titleVisibility: .visible) {
-                Button("Archive") {
-                    coordinator.showArchiveChatThanks = true
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This will archive the conversation. (Not wired yet)")
-            }
-            .alert("Thanks", isPresented: $coordinator.showArchiveChatThanks) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("Archive received. (Not wired yet)")
             }
     }
 }
