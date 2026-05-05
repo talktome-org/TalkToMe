@@ -185,8 +185,7 @@ async def save_entry(payload: dict, current_user: dict = Depends(get_current_use
                 status_code=503,
                 detail=(
                     "Diary table missing (database error 42P01). "
-                    "Ensure DATABASE_URL points to your Supabase project and run migrations there: "
-                    "cd Backend && PYTHONPATH=.. ./venv/bin/python -m alembic upgrade head"
+                    "Ensure DATABASE_URL points to your Supabase project."
                 ),
             )
         raise HTTPException(status_code=500, detail=str(e))

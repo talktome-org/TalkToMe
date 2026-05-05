@@ -67,6 +67,6 @@ def start_scheduler() -> None:
 def stop_scheduler() -> None:
     global _scheduler
     if _scheduler:
-        _scheduler.shutdown(wait=False)
+        _scheduler.shutdown(wait=True)
         _scheduler = None
         logger.info("[DailyCheckin] Scheduler stopped")

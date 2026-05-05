@@ -118,13 +118,13 @@ async def list_messages_for_session(
     return await run_in_threadpool(_select)
 
 
-async def update_session_last_message(*, session_id: uuid.UUID, content: str) -> None:
+async def update_session_last_message(*, user_id: uuid.UUID, session_id: uuid.UUID, content: str) -> None:
     def _update():
         db = SessionLocal()
         try:
             db.execute(
                 update(UserChatSession)
-                .where(UserChatSession.id == session_id)
+                .where(UserChatSession.id == session_id, UserChatSession.user_id == user_id)
                 .values(last_message_content=content)
             )
             db.commit()

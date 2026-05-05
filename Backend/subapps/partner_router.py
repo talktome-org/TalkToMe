@@ -163,9 +163,9 @@ async def send_message(request: SendPartnerMessageRequest, current_user: dict = 
     payload = json.dumps({"_talktome": {"type": "partner_received", "text": message, "sender_user_id": str(user_id)}})
     await save_message(user_id=recipient_user_id, session_id=recipient_session_id, role="assistant", content=payload)
     # Keep the sidebar preview human-readable.
-    await update_session_last_message(session_id=recipient_session_id, content=message[:120])
-    await touch_session(session_id=recipient_session_id)
-    await increment_unread_count(session_id=recipient_session_id)
+    await update_session_last_message(user_id=recipient_user_id, session_id=recipient_session_id, content=message[:120])
+    await touch_session(user_id=recipient_user_id, session_id=recipient_session_id)
+    await increment_unread_count(user_id=recipient_user_id, session_id=recipient_session_id)
 
     # Resolve sender display name for push notification.
     sender_name: Optional[str] = None

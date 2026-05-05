@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -26,12 +27,15 @@ _cached_jwt_exp: float = 0.0
 
 # Persistent HTTP/2 client reused across all APNS requests.
 _apns_client: Optional[httpx.AsyncClient] = None
+_apns_client_lock = asyncio.Lock()
 
 
-def _get_apns_client() -> httpx.AsyncClient:
+async def _get_apns_client() -> httpx.AsyncClient:
     global _apns_client
     if _apns_client is None or _apns_client.is_closed:
-        _apns_client = httpx.AsyncClient(http2=True, timeout=15.0)
+        async with _apns_client_lock:
+            if _apns_client is None or _apns_client.is_closed:
+                _apns_client = httpx.AsyncClient(http2=True, timeout=15.0)
     return _apns_client
 
 
@@ -99,7 +103,7 @@ async def _post_apns(
 
     last_status = 0
     last_text = ""
-    client = _get_apns_client()
+    client = await _get_apns_client()
 
     for idx, host in enumerate(hosts_order):
         url = f"https://{host}/3/device/{device_token}"

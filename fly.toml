@@ -3,10 +3,14 @@
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'bobo'
+app = 'bobo-app'
 primary_region = 'iad'
 
 [build]
+
+[processes]
+  app = "uvicorn Backend.app:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips='*' --workers 1"
+  voiceagent = "python -m Backend.voice_agent.worker start"
 
 [http_service]
   internal_port = 8080
@@ -25,12 +29,19 @@ primary_region = 'iad'
 
 [env]
   WEB_CONCURRENCY = "1"
+  BACKEND_INTERNAL_URL = "http://bobo-app.internal:8080"
 
 [[vm]]
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
   memory_mb = 1024
+  processes = ['app']
 
-[deploy]
-  release_command = "sh -lc 'cd /app && python -m alembic -c Backend/alembic.ini upgrade head'"
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 1024
+  processes = ['voiceagent']
+

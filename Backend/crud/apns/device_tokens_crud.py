@@ -52,14 +52,15 @@ async def upsert_token(*, user_id: uuid.UUID, token: str, platform: str, bundle_
     await run_in_threadpool(_upsert)
 
 
-async def disable_token_by_value(*, token: str) -> None:
+async def disable_token_by_value(*, token: str, user_id: Optional[uuid.UUID] = None) -> None:
     def _update():
         db = SessionLocal()
         try:
+            stmt = update(DeviceToken).where(DeviceToken.token == token)
+            if user_id is not None:
+                stmt = stmt.where(DeviceToken.user_id == user_id)
             db.execute(
-                update(DeviceToken)
-                .where(DeviceToken.token == token)
-                .values(enabled=False, updated_at=datetime.now(timezone.utc).replace(tzinfo=None))
+                stmt.values(enabled=False, updated_at=datetime.now(timezone.utc).replace(tzinfo=None))
             )
             db.commit()
         finally:

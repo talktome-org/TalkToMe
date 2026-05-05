@@ -2,7 +2,7 @@
 set -e
 
 # Keep repository operations signed (commits/merges/tags) for auditability.
-echo "🔧 Conductor setup (secrets + resources + python venv)"
+echo "🔧 Conductor setup (secrets + python venv)"
 
 # -------------------------
 # Preconditions
@@ -17,11 +17,6 @@ if [ ! -f ~/.config/talktome/Secrets.plist ]; then
   exit 1
 fi
 
-if [ ! -d ~/.config/talktome/Resources ]; then
-  echo "❌ Missing ~/.config/talktome/Resources"
-  exit 1
-fi
-
 # -------------------------
 # Link secrets (symlink OK)
 # -------------------------
@@ -30,22 +25,14 @@ if [ ! -e Backend/.env ]; then
   echo "✔ Linked Backend/.env"
 fi
 
+if [ ! -e .env ]; then
+  ln -s ~/.config/talktome/backend.env .env
+  echo "✔ Linked .env"
+fi
+
 if [ ! -e BoBo/Secrets.plist ]; then
   ln -s ~/.config/talktome/Secrets.plist BoBo/Secrets.plist
   echo "✔ Linked BoBo/Secrets.plist"
-fi
-
-# -------------------------
-# Copy Resources (NO SYMLINKS)
-# -------------------------
-if [ -L BoBo/Resources ]; then
-  echo "⚠️ Removing old symlinked Resources"
-  rm BoBo/Resources
-fi
-
-if [ ! -d BoBo/Resources ]; then
-  echo "📂 Copying Resources into workspace"
-  cp -R ~/.config/talktome/Resources BoBo/
 fi
 
 # -------------------------
