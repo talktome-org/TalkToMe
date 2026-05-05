@@ -31,11 +31,29 @@ final class LiveKitVoiceService: NSObject, ObservableObject {
         }
     }
 
+    struct CommittedVoiceMessage {
+        let id: UUID?
+        let sessionId: UUID
+        let role: String
+        let content: String
+    }
+
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var isConnected: Bool = false
     @Published private(set) var micLevel: Float = 0
     @Published private(set) var speakerLevel: Float = 0
     @Published private(set) var isMuted: Bool = false
+
+    /// Live (interim or final) transcript of what the user is currently saying.
+    /// Cleared once the agent commits the turn (see `onMessageCommitted`).
+    @Published private(set) var liveUserTranscript: String = ""
+    /// Live transcript of the agent's current utterance, word-by-word as it speaks.
+    @Published private(set) var liveAgentTranscript: String = ""
+
+    /// Fired when the worker reports a turn has been persisted to the chat DB.
+    /// The receiver should insert the message into the chat and dedup against
+    /// the eventual GET /messages refresh.
+    var onMessageCommitted: ((CommittedVoiceMessage) -> Void)?
 
     private var room: Room?
     private var agentParticipant: RemoteParticipant?
@@ -43,14 +61,18 @@ final class LiveKitVoiceService: NSObject, ObservableObject {
     /// Set while `disconnect()` is running so the `RoomDelegate` callbacks
     /// don't clobber the post-teardown `.idle` phase with a stale `.error`.
     private var isTearingDown: Bool = false
+    private var localIdentity: String?
+    private var liveTranscriptSegments: [String: String] = [:]
 
     private static let customPromptMaxCharacters = 8_000
+    private static let transcriptionTopic = "lk.transcription"
+    private static let messageCommittedTopic = "bobo.message_committed"
 
     deinit {
         levelTimer?.invalidate()
     }
 
-    func connect(voiceAgent: String, ghostName: String?, customPrompt: String?) async throws {
+    func connect(voiceAgent: String, ghostName: String?, customPrompt: String?, sessionId: UUID?) async throws {
         // Allow recovery from a previous error without a manual disconnect.
         switch phase {
         case .idle, .error: break
@@ -76,6 +98,7 @@ final class LiveKitVoiceService: NSObject, ObservableObject {
             voiceAgent: voiceAgent,
             ghostName: ghostName,
             customPrompt: cappedPrompt,
+            sessionId: sessionId,
             accessToken: accessToken
         )
 
@@ -94,6 +117,8 @@ final class LiveKitVoiceService: NSObject, ObservableObject {
         do {
             try await room.connect(url: url.absoluteString, token: token.token, connectOptions: connectOptions, roomOptions: roomOptions)
             try await room.localParticipant.setMicrophone(enabled: true)
+            self.localIdentity = room.localParticipant.identity?.stringValue
+            try await registerStreamHandlers(on: room)
             isConnected = true
             phase = .listening
             startLevelPolling()
@@ -104,6 +129,82 @@ final class LiveKitVoiceService: NSObject, ObservableObject {
             levelTimer = nil
             throw error
         }
+    }
+
+    /// Wire up text-stream handlers for live transcripts and committed-message
+    /// notifications. Called once on connect; LiveKit unregisters them on
+    /// disconnect automatically.
+    private func registerStreamHandlers(on room: Room) async throws {
+        try await room.registerTextStreamHandler(for: Self.transcriptionTopic) { [weak self] reader, participantIdentity in
+            guard let self else { return }
+            let identityString = participantIdentity.stringValue
+            let info = reader.info
+            let isFinal = (info.attributes["lk.transcription_final"] ?? "false") == "true"
+            let segmentId = info.attributes["lk.segment_id"] ?? identityString
+            let text: String
+            do {
+                text = try await reader.readAll()
+            } catch {
+                return
+            }
+            await self.applyTranscriptUpdate(
+                participantIdentity: identityString,
+                segmentId: segmentId,
+                text: text,
+                isFinal: isFinal
+            )
+        }
+
+        try await room.registerTextStreamHandler(for: Self.messageCommittedTopic) { [weak self] reader, _ in
+            guard let self else { return }
+            let payload: String
+            do {
+                payload = try await reader.readAll()
+            } catch {
+                return
+            }
+            await self.handleCommittedMessage(payload: payload)
+        }
+    }
+
+    @MainActor
+    private func applyTranscriptUpdate(
+        participantIdentity: String,
+        segmentId: String,
+        text: String,
+        isFinal: Bool
+    ) {
+        let isLocal = (participantIdentity == localIdentity)
+        if isFinal {
+            liveTranscriptSegments.removeValue(forKey: segmentId)
+            if isLocal { liveUserTranscript = "" } else { liveAgentTranscript = "" }
+        } else {
+            liveTranscriptSegments[segmentId] = text
+            if isLocal {
+                liveUserTranscript = text
+            } else {
+                liveAgentTranscript = text
+            }
+        }
+    }
+
+    @MainActor
+    private func handleCommittedMessage(payload: String) {
+        guard let data = payload.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let role = obj["role"] as? String,
+              let content = obj["content"] as? String,
+              let sessionIdStr = obj["session_id"] as? String,
+              let sessionId = UUID(uuidString: sessionIdStr)
+        else { return }
+
+        let id = (obj["id"] as? String).flatMap(UUID.init(uuidString:))
+        let msg = CommittedVoiceMessage(id: id, sessionId: sessionId, role: role, content: content)
+
+        if role == "user" { liveUserTranscript = "" }
+        if role == "assistant" { liveAgentTranscript = "" }
+
+        onMessageCommitted?(msg)
     }
 
     func disconnect() async {
@@ -119,6 +220,10 @@ final class LiveKitVoiceService: NSObject, ObservableObject {
         micLevel = 0
         speakerLevel = 0
         phase = .idle
+        liveUserTranscript = ""
+        liveAgentTranscript = ""
+        liveTranscriptSegments.removeAll()
+        localIdentity = nil
 
         if let roomToTearDown {
             await roomToTearDown.disconnect()
@@ -180,7 +285,7 @@ final class LiveKitVoiceService: NSObject, ObservableObject {
 
 extension LiveKitVoiceService: RoomDelegate {
 
-    nonisolated func room(_ room: Room, didConnect isReconnect: Bool) {
+    nonisolated func roomDidConnect(_ room: Room) {
         Task { @MainActor in
             guard !self.isTearingDown else { return }
             self.isConnected = true
@@ -188,7 +293,7 @@ extension LiveKitVoiceService: RoomDelegate {
         }
     }
 
-    nonisolated func room(_ room: Room, didDisconnect error: LiveKitError?) {
+    nonisolated func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
         Task { @MainActor in
             // If we initiated the teardown, `disconnect()` already set state to .idle.
             guard !self.isTearingDown else { return }
@@ -217,20 +322,23 @@ extension LiveKitVoiceService: RoomDelegate {
         }
     }
 
-    nonisolated func room(_ room: Room, participant: RemoteParticipant, didSubscribePublication publication: RemoteTrackPublication) {
+    nonisolated func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
         // Track auto-attaches its audio to the system output via LiveKit's audio engine.
     }
 
-    nonisolated func room(_ room: Room, participant: Participant, didUpdateIsSpeaking speaking: Bool) {
+    nonisolated func room(_ room: Room, didUpdateSpeakingParticipants participants: [Participant]) {
         Task { @MainActor in
             guard !self.isTearingDown else { return }
-            // Tolerate races where speaking arrives before participantDidConnect:
-            // adopt the first non-local participant we hear from.
-            if self.agentParticipant == nil, !(participant is LocalParticipant), let remote = participant as? RemoteParticipant {
-                self.agentParticipant = remote
+            // Tolerate races where the speakers update arrives before
+            // participantDidConnect: adopt the first non-local speaker we hear from.
+            if self.agentParticipant == nil {
+                if let remote = participants.first(where: { !($0 is LocalParticipant) }) as? RemoteParticipant {
+                    self.agentParticipant = remote
+                }
             }
-            guard let agent = self.agentParticipant, participant.identity == agent.identity else { return }
-            if speaking {
+            guard let agent = self.agentParticipant else { return }
+            let agentIsSpeaking = participants.contains(where: { $0.identity == agent.identity })
+            if agentIsSpeaking {
                 self.phase = .speaking
             } else if self.isConnected {
                 self.phase = .listening

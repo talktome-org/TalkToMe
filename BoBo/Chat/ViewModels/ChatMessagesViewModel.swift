@@ -12,7 +12,7 @@ final class ChatMessagesViewModel: ObservableObject {
     @Published var isLoadingHistory: Bool = false
     @Published var sessionId: UUID?
 
-    static var sharedMessagesCache: [UUID: MessagesCacheEntry] = [:]
+    @MainActor static var sharedMessagesCache: [UUID: MessagesCacheEntry] = [:]
     private let cacheFreshnessSeconds: TimeInterval = 300
 
     init(sessionId: UUID? = nil) {

@@ -29,6 +29,9 @@ struct InputAreaView: View {
   @State private var inputAreaWidth: CGFloat = 0
   @State private var showMicSlash: Bool = false
   @State private var hideMicForStop: Bool = false
+  /// Decoded thumbnails per pending attachment so we don't re-decode UIImage(data:)
+  /// on every keystroke / SwiftUI invalidation.
+  @State private var attachmentThumbs: [UUID: UIImage] = [:]
 
   @Environment(\.colorScheme) private var colorScheme
 
@@ -214,7 +217,7 @@ struct InputAreaView: View {
                   .fill(.ultraThinMaterial)
                   .frame(width: thumbSize, height: thumbSize)
                   .overlay {
-                    if case .image(let data, _) = att.kind, let uiImage = UIImage(data: data) {
+                    if att.isImage, let uiImage = attachmentThumbs[att.id] {
                       Image(uiImage: uiImage)
                         .resizable()
                         .scaledToFill()
@@ -226,6 +229,14 @@ struct InputAreaView: View {
                         .font(.system(size: 22, weight: .semibold))
                         .foregroundColor(.secondary)
                     }
+                  }
+                  .task(id: att.id) {
+                    guard attachmentThumbs[att.id] == nil,
+                          case .image(let data, _) = att.kind else { return }
+                    let decoded = await Task.detached(priority: .userInitiated) {
+                      UIImage(data: data)
+                    }.value
+                    if let decoded { attachmentThumbs[att.id] = decoded }
                   }
 
                 Button(action: {

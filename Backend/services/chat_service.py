@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional, cast
 
 from openai import AsyncOpenAI
 
@@ -57,22 +57,22 @@ class ChatService:
     async def create_response(self, *, messages: List[dict], previous_response_id: Optional[str] = None):
         return await self.client.responses.create(
             model=self.vision_model if any(isinstance(m.get("content"), list) for m in messages) else self.model,
-            input=messages,
+            input=cast(Any, messages),
             # Ensure `previous_response_id` remains usable across subsequent calls.
             # If responses aren't stored, OpenAI may reject future requests that reference an id.
             store=True,
             text={"verbosity": "medium"},
-            reasoning={"effort": "minimal"},
+            reasoning=cast(Any, {"effort": "minimal"}),
             previous_response_id=previous_response_id,
         )
 
     def stream_response(self, *, messages: List[dict], previous_response_id: Optional[str] = None, reasoning_effort: str = "medium"):
         return self.client.responses.stream(
             model=self.vision_model if any(isinstance(m.get("content"), list) for m in messages) else self.model,
-            input=messages,
+            input=cast(Any, messages),
             store=True,
             text={"verbosity": "medium"},
-            reasoning={"effort": reasoning_effort, "summary": "auto"},
+            reasoning=cast(Any, {"effort": reasoning_effort, "summary": "auto"}),
             previous_response_id=previous_response_id,
         )
 
@@ -123,7 +123,7 @@ class ChatTitleService:
 
             resp = await self.client.responses.create(
                 model=self.model,
-                input=input_messages,
+                input=cast(Any, input_messages),
             )
 
             text = getattr(resp, "output_text", None) or "".join(

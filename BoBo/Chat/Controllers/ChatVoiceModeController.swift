@@ -11,6 +11,7 @@ protocol ChatVoiceModeDelegate: AnyObject {
     func getAccessToken() async -> String?
     func persistFriendUserId(_ friendUserId: UUID, for sessionId: UUID)
     func ensureSessionId() async -> UUID?
+    func appendVoiceMessage(_ message: ChatMessage, for sessionId: UUID)
 }
 
 enum SpeakModePhase: Equatable {
@@ -31,6 +32,13 @@ final class ChatVoiceModeController: ObservableObject {
 
     @Published var micLevel: CGFloat = 0
     @Published var speakerLevel: CGFloat = 0
+
+    /// Live (interim) transcript of the user's current utterance during speak
+    /// mode. Empty string when there's nothing to show. Cleared automatically
+    /// when the worker commits the turn (the real ChatMessage takes over).
+    @Published var liveUserTranscript: String = ""
+    /// Live transcript of the agent's current utterance, word-by-word.
+    @Published var liveAgentTranscript: String = ""
 
     /// Used by the dictation push-to-talk path (NOT speak mode). Speak mode
     /// is fully owned by `liveKitVoiceService` and goes over WebRTC to a
@@ -56,6 +64,28 @@ final class ChatVoiceModeController: ObservableObject {
         self.delegate = delegate
         self.streamingController = streamingController
         setupSubscriptions()
+
+        // Worker pushes a `bobo.message_committed` event over a LiveKit
+        // text stream as soon as it persists each voice turn to the chat
+        // DB. Inserting here gets the message into the UI ~50ms after the
+        // turn ends, well before the next GET /messages refresh would.
+        liveKitVoiceService.onMessageCommitted = { [weak self] committed in
+            guard let self else { return }
+            let segments: [MessageSegment] = committed.content.isEmpty
+                ? [.text("")]
+                : [.text(committed.content)]
+            let message = ChatMessage(
+                id: committed.id ?? UUID(),
+                segments: segments,
+                isFromUser: committed.role == "user",
+                isFromPartnerUser: false,
+                timestamp: Date(),
+                isToolLoading: false,
+                isFromVoiceMode: true,
+                regenerationCount: 0
+            )
+            self.delegate?.appendVoiceMessage(message, for: committed.sessionId)
+        }
     }
 
     private func setupSubscriptions() {
@@ -121,6 +151,14 @@ final class ChatVoiceModeController: ObservableObject {
                 self?.speakerLevel = CGFloat(level)
             }
             .store(in: &cancellables)
+
+        liveKitVoiceService.$liveUserTranscript
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$liveUserTranscript)
+
+        liveKitVoiceService.$liveAgentTranscript
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$liveAgentTranscript)
     }
 
     private static func mapLiveKitPhase(_ phase: LiveKitVoiceService.Phase) -> SpeakModePhase {
@@ -232,11 +270,16 @@ final class ChatVoiceModeController: ObservableObject {
                 self.isVoiceModeCapturing = false
             }
 
+            // Ensure we have a chat session before opening the room so the
+            // worker can persist voice turns into it.
+            let sessionId = await self.delegate?.ensureSessionId()
+
             do {
                 try await self.liveKitVoiceService.connect(
                     voiceAgent: voiceAgent,
                     ghostName: storedVoiceName.isEmpty ? nil : storedVoiceName,
-                    customPrompt: customPrompt.isEmpty ? nil : customPrompt
+                    customPrompt: customPrompt.isEmpty ? nil : customPrompt,
+                    sessionId: sessionId
                 )
             } catch {
                 self.isSpeakModeActive = false

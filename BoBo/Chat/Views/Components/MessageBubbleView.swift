@@ -229,12 +229,10 @@ struct UserMessageBubbleView: View {
                 .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
                 .contentShape(Rectangle())
                 .onTapGesture {
-                  Task {
-                    if let (data, _) = try? await URLSession.shared.data(from: url),
-                      let uiImage = UIImage(data: data)
-                    {
-                      fullScreenImage = uiImage
-                    }
+                  Task.detached(priority: .userInitiated) {
+                    guard let (data, _) = try? await URLSession.shared.data(from: url),
+                          let uiImage = UIImage(data: data) else { return }
+                    await MainActor.run { fullScreenImage = uiImage }
                   }
                 }
             case .failure:
@@ -283,12 +281,10 @@ struct UserMessageBubbleView: View {
                 .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
                 .contentShape(Rectangle())
                 .onTapGesture {
-                  Task {
-                    if let (data, _) = try? await URLSession.shared.data(from: url),
-                      let uiImage = UIImage(data: data)
-                    {
-                      fullScreenImage = uiImage
-                    }
+                  Task.detached(priority: .userInitiated) {
+                    guard let (data, _) = try? await URLSession.shared.data(from: url),
+                          let uiImage = UIImage(data: data) else { return }
+                    await MainActor.run { fullScreenImage = uiImage }
                   }
                 }
             case .failure:
@@ -1040,12 +1036,10 @@ struct MessageBubbleView: View {
                 .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
                 .contentShape(Rectangle())
                 .onTapGesture {
-                  Task {
-                    if let (data, _) = try? await URLSession.shared.data(from: url),
-                      let uiImage = UIImage(data: data)
-                    {
-                      fullScreenImage = uiImage
-                    }
+                  Task.detached(priority: .userInitiated) {
+                    guard let (data, _) = try? await URLSession.shared.data(from: url),
+                          let uiImage = UIImage(data: data) else { return }
+                    await MainActor.run { fullScreenImage = uiImage }
                   }
                 }
             case .failure:
@@ -1094,12 +1088,10 @@ struct MessageBubbleView: View {
                 .chatImageOuterBorder(cornerRadius: chatThumbCornerRadius)
                 .contentShape(Rectangle())
                 .onTapGesture {
-                  Task {
-                    if let (data, _) = try? await URLSession.shared.data(from: url),
-                      let uiImage = UIImage(data: data)
-                    {
-                      fullScreenImage = uiImage
-                    }
+                  Task.detached(priority: .userInitiated) {
+                    guard let (data, _) = try? await URLSession.shared.data(from: url),
+                          let uiImage = UIImage(data: data) else { return }
+                    await MainActor.run { fullScreenImage = uiImage }
                   }
                 }
             case .failure:

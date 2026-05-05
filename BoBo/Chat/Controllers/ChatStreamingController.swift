@@ -238,7 +238,8 @@ final class ChatStreamingController {
                 session_id: sid,
                 role: "user",
                 content: persistedContent,
-                created_at: ISO8601DateFormatter().string(from: Date())
+                created_at: ISO8601DateFormatter().string(from: Date()),
+                source: "text"
             )
             clientMessageId = dto.id
             pendingUpsertDto = dto
@@ -269,7 +270,8 @@ final class ChatStreamingController {
                 session_id: sid,
                 role: "user",
                 content: messageToSend,
-                created_at: ISO8601DateFormatter().string(from: Date())
+                created_at: ISO8601DateFormatter().string(from: Date()),
+                source: "text"
             )
             clientMessageId = dto.id
             pendingUpsertDto = dto
@@ -334,16 +336,6 @@ final class ChatStreamingController {
 
         let initialMessagesForStream = delegate.messages
         let initialAssistantPlaceholderId = self.currentAssistantMessageId
-        let chatHistoryForStream: [BackendService.ChatHistoryMessage] = initialMessagesForStream.dropLast(2).map { message in
-            let plain = message.segments.compactMap { seg -> String? in
-                if case .text(let t) = seg { return t }
-                return nil
-            }.joined()
-            return BackendService.ChatHistoryMessage(
-                role: message.isFromUser ? "user" : "assistant",
-                content: plain
-            )
-        }
 
         Task { [weak self, weak delegate] in
             guard let self = self, let delegate = delegate else { return }
@@ -442,8 +434,6 @@ final class ChatStreamingController {
                     }
                 }
             }
-
-            let chatHistory = chatHistoryForStream
 
             var accumulated = ""
             var accumulatedThinking = ""
@@ -982,7 +972,6 @@ final class ChatStreamingController {
                 let stream = BackendService.shared.streamChatMessage(
                     messageToSend,
                     sessionId: requestSessionIdForStream,
-                    chatHistory: Array(chatHistory),
                     attachments: uploaded.isEmpty ? nil : uploaded,
                     accessToken: accessToken,
                     previousResponseId: prevId,

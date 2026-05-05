@@ -17,6 +17,9 @@ struct FriendsAndContactsSectionView: View {
     @State private var showShareSheet: Bool = false
     @State private var toastMessage: String? = nil
     @State private var toastWorkItem: DispatchWorkItem? = nil
+    /// Decoded contact thumbnails by row id, populated lazily off the main thread
+    /// so we don't re-decode UIImage(data:) on every list re-render.
+    @State private var contactThumbs: [String: UIImage] = [:]
     @FocusState private var isCodeFieldFocused: Bool
     @EnvironmentObject private var contactsVM: ContactsViewModel
     @State private var shakeOffset: CGFloat = 0
@@ -462,18 +465,28 @@ struct FriendsAndContactsSectionView: View {
 
     @ViewBuilder
     private func contactAvatar(_ contact: ContactRow) -> some View {
-        if let imageData = contact.thumbnailData, let uiImage = UIImage(data: imageData) {
-            Image(uiImage: uiImage)
-                .resizable()
-                .scaledToFill()
-        } else {
-            Circle()
-                .fill(Color(.tertiarySystemFill))
-                .overlay(
-                    Text(contact.name.prefix(1).uppercased())
-                        .font(.system(size: 16, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                )
+        Group {
+            if let uiImage = contactThumbs[contact.id] {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Circle()
+                    .fill(Color(.tertiarySystemFill))
+                    .overlay(
+                        Text(contact.name.prefix(1).uppercased())
+                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    )
+            }
+        }
+        .task(id: contact.id) {
+            guard contactThumbs[contact.id] == nil,
+                  let data = contact.thumbnailData else { return }
+            let decoded = await Task.detached(priority: .userInitiated) {
+                UIImage(data: data)
+            }.value
+            if let decoded { contactThumbs[contact.id] = decoded }
         }
     }
 }

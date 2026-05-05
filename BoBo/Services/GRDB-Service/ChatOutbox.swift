@@ -169,7 +169,6 @@ final class ChatOutboxProcessor {
         let stream = BackendService.shared.streamChatMessage(
             current.message,
             sessionId: serverSid,
-            chatHistory: nil,
             attachments: uploaded.isEmpty ? nil : uploaded,
             accessToken: accessToken,
             previousResponseId: nil,

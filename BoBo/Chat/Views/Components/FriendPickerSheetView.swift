@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct FriendPickerSheetView: View {
-    @Binding var isPresented: Bool
+    @Environment(\.dismiss) private var dismiss
     let friends: [FriendSummary]
     let isLoading: Bool
     let errorMessage: String?
@@ -131,7 +131,7 @@ struct FriendPickerSheetView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") {
-                        isPresented = false
+                        dismiss()
                     }
                 }
             }

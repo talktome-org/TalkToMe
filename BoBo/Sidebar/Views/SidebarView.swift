@@ -11,6 +11,8 @@ struct SidebarView: View {
   var hideHeader: Bool = false
 
   @State private var searchText: String = ""
+  @State private var groupedSessions: [SessionSection] = []
+  @State private var filteredSessions: [ChatSession] = []
 
   private struct SessionSection: Identifiable {
     let id: String
@@ -18,25 +20,34 @@ struct SidebarView: View {
     let sessions: [ChatSession]
   }
 
-  private var filteredSessions: [ChatSession] {
-    guard !searchText.isEmpty else { return sessionsViewModel.sessions }
-    let query = searchText.lowercased()
-    return sessionsViewModel.sessions.filter { session in
-      session.title.lowercased().contains(query)
-        || (session.lastMessageContent?.lowercased().contains(query) ?? false)
-    }
-  }
-
   private var isSearching: Bool {
     !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
   }
 
-  private var groupedSessions: [SessionSection] {
-    let sessions = filteredSessions
-    guard !sessions.isEmpty else { return [] }
+  /// Recomputes filtered + grouped sessions. Cheap when nothing changed; called
+  /// from .onChange so we don't redo calendar arithmetic on every body invalidation.
+  private func recomputeSessions() {
+    let allSessions = sessionsViewModel.sessions
+    let filtered: [ChatSession]
+    if searchText.isEmpty {
+      filtered = allSessions
+    } else {
+      let query = searchText.lowercased()
+      filtered = allSessions.filter { session in
+        session.title.lowercased().contains(query)
+          || (session.lastMessageContent?.lowercased().contains(query) ?? false)
+      }
+    }
+    self.filteredSessions = filtered
+
+    guard !filtered.isEmpty else {
+      self.groupedSessions = []
+      return
+    }
 
     if isSearching {
-      return [SessionSection(id: "results", title: "Matching Chats", sessions: sessions)]
+      self.groupedSessions = [SessionSection(id: "results", title: "Matching Chats", sessions: filtered)]
+      return
     }
 
     var today: [ChatSession] = []
@@ -47,7 +58,7 @@ struct SidebarView: View {
     let calendar = Calendar.current
     let weekAgo = calendar.date(byAdding: .day, value: -7, to: Date()) ?? .distantPast
 
-    for session in sessions {
+    for session in filtered {
       guard let date = parseISO8601Date(session.lastUsedISO8601) else {
         earlier.append(session)
         continue
@@ -76,7 +87,7 @@ struct SidebarView: View {
     if !earlier.isEmpty {
       sections.append(SessionSection(id: "earlier", title: "Earlier", sessions: earlier))
     }
-    return sections
+    self.groupedSessions = sections
   }
 
   private var mascotKeys: [String] {
@@ -172,12 +183,15 @@ struct SidebarView: View {
       }
     }
     .onAppear {
+      recomputeSessions()
       Task {
         await sessionsViewModel.ensureProfilePictureCached()
         await friendsViewModel.refreshMyCode()
         try? await friendsViewModel.loadFriends()
       }
     }
+    .onChange(of: searchText, initial: false) { _, _ in recomputeSessions() }
+    .onChange(of: sessionsViewModel.sessions, initial: false) { _, _ in recomputeSessions() }
     .sheet(item: $activeSheet) { sheet in
       switch sheet {
       case .renameConversation:
@@ -582,7 +596,6 @@ struct SidebarView: View {
 // MARK: - Friends Sheet
 
 struct FriendsSheetView: View {
-  @Binding var isPresented: Bool
   @EnvironmentObject private var friendsViewModel: FriendsViewModel
 
   @State private var codeToAdd: String = ""

@@ -196,13 +196,16 @@ async def list_elevenlabs_voices(current_user: dict = Depends(get_current_user))
                     name = v.get("name")
                     if not isinstance(vid, str) or not isinstance(name, str):
                         continue
+                    preview_raw = v.get("preview_url")
+                    category_raw = v.get("category")
+                    labels_raw = v.get("labels")
                     voices.append(
                         ElevenVoice(
                             voice_id=vid,
                             name=name,
-                            preview_url=v.get("preview_url") if isinstance(v.get("preview_url"), str) else None,
-                            category=v.get("category") if isinstance(v.get("category"), str) else None,
-                            labels=v.get("labels") if isinstance(v.get("labels"), dict) else {},
+                            preview_url=preview_raw if isinstance(preview_raw, str) else None,
+                            category=category_raw if isinstance(category_raw, str) else None,
+                            labels=labels_raw if isinstance(labels_raw, dict) else {},
                         )
                     )
 

@@ -167,7 +167,46 @@ struct MessagesListView: View {
                     .animation(nil, value: outgoingSourceMessageId)
                     .padding(.top, index > 0 && (messages[index - 1].isFromUser != message.isFromUser) ? 4 : 0)
                 }
+
+                // Live (in-flight) voice transcript previews. These are ephemeral —
+                // they vanish as soon as the worker commits the turn and the real
+                // ChatMessage takes over via onMessageCommitted.
+                if chatViewModel.isSpeakModeActive {
+                    let liveUser = chatViewModel.voiceController.liveUserTranscript
+                    if !liveUser.isEmpty {
+                        HStack {
+                            Spacer(minLength: 0)
+                            Text(liveUser)
+                                .font(.system(size: 17, weight: .regular))
+                                .italic()
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 18)
+                                        .fill(.thinMaterial)
+                                )
+                                .frame(maxWidth: 320, alignment: .trailing)
+                        }
+                        .transition(.opacity)
+                    }
+                    let liveAgent = chatViewModel.voiceController.liveAgentTranscript
+                    if !liveAgent.isEmpty {
+                        HStack {
+                            Text(liveAgent)
+                                .font(.system(size: 17, weight: .regular))
+                                .italic()
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 4)
+                            Spacer(minLength: 0)
+                        }
+                        .transition(.opacity)
+                    }
+                }
             }
+            .animation(.easeInOut(duration: 0.18), value: chatViewModel.voiceController.liveUserTranscript)
+            .animation(.easeInOut(duration: 0.18), value: chatViewModel.voiceController.liveAgentTranscript)
             .padding(.top, 24)
             .padding(.horizontal)
             .padding(.bottom, 2 + scrollToTopPadding)

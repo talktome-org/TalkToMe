@@ -377,6 +377,14 @@ extension ChatViewModel: ChatVoiceModeDelegate {
     func getAccessToken() async -> String? {
         await authService.getAccessToken()
     }
+
+    func appendVoiceMessage(_ message: ChatMessage, for sessionId: UUID) {
+        // Ignore turns that arrive after the user has navigated to a different chat.
+        guard self.sessionId == sessionId else { return }
+        // Worker may publish before the optimistic GET refresh; dedup by id.
+        if messages.contains(where: { $0.id == message.id }) { return }
+        messages.append(message)
+    }
 }
 
 

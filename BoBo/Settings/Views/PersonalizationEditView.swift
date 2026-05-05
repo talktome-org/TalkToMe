@@ -458,11 +458,13 @@ struct PersonalizationEditView: View {
 
         if let emoji = emoji {
             // For emoji, create a temporary URL that we'll use until backend responds
-            newAvatarURL = "emoji://\(emoji)"
+            let avatarURL = "emoji://\(emoji)"
+            newAvatarURL = avatarURL
 
             // Generate emoji image and cache it immediately
-            if let emojiImage = generateEmojiImage(emoji: emoji) {
-                await AvatarCacheManager.shared.cacheImageImmediately(urlString: newAvatarURL!, image: UIImage(data: emojiImage)!)
+            if let emojiImage = generateEmojiImage(emoji: emoji),
+               let uiImage = UIImage(data: emojiImage) {
+                await AvatarCacheManager.shared.cacheImageImmediately(urlString: avatarURL, image: uiImage)
             }
         } else if let imageData = imageData {
             // For uploaded image, create a temporary URL

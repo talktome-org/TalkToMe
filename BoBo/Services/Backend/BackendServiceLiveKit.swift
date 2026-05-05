@@ -5,6 +5,7 @@ extension BackendService {
         let voice_agent: String
         let ghost_name: String?
         let custom_prompt: String?
+        let session_id: UUID?
     }
 
     struct LiveKitTokenResponse: Codable {
@@ -17,6 +18,7 @@ extension BackendService {
         voiceAgent: String,
         ghostName: String?,
         customPrompt: String?,
+        sessionId: UUID?,
         accessToken: String
     ) async throws -> LiveKitTokenResponse {
         let url = baseURL
@@ -31,7 +33,8 @@ extension BackendService {
             LiveKitTokenRequest(
                 voice_agent: voiceAgent,
                 ghost_name: ghostName,
-                custom_prompt: customPrompt
+                custom_prompt: customPrompt,
+                session_id: sessionId
             )
         )
 

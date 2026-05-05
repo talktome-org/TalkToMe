@@ -29,7 +29,6 @@ primary_region = 'iad'
 
 [env]
   WEB_CONCURRENCY = "1"
-  BACKEND_INTERNAL_URL = "http://bobo-app.internal:8080"
 
 [[vm]]
   memory = '1gb'

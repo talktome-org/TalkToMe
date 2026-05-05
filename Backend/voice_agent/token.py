@@ -2,15 +2,16 @@
 LiveKit access-token issuance.
 
 The token embeds an explicit agent-dispatch request with per-session metadata
-(voice agent, ghost name, custom prompt) via RoomConfiguration. The worker
-reads this from ctx.job.metadata directly — no out-of-band lookup, no shared
-state between the app and worker processes.
+(voice agent, ghost name, custom prompt, chat session id) via RoomConfiguration.
+The worker reads this from ctx.job.metadata directly — no out-of-band lookup,
+no shared state between the app and worker processes.
 """
 from __future__ import annotations
 
 import json
 import os
 import secrets
+from datetime import timedelta
 from typing import Optional
 
 from livekit import api
@@ -32,6 +33,7 @@ def mint_token(
     voice_agent: str,
     ghost_name: Optional[str] = None,
     custom_prompt: Optional[str] = None,
+    chat_session_id: Optional[str] = None,
 ) -> tuple[str, str, str]:
     """
     Mint a LiveKit access token that also dispatches the bobo voice agent
@@ -50,6 +52,7 @@ def mint_token(
             "voice_agent": voice_agent,
             "ghost_name": ghost_name,
             "custom_prompt": custom_prompt,
+            "chat_session_id": chat_session_id,
         }
     )
 
@@ -57,7 +60,7 @@ def mint_token(
         api.AccessToken(api_key, api_secret)
         .with_identity(user_id)
         .with_name(user_id)
-        .with_ttl(_TOKEN_TTL_SECONDS)
+        .with_ttl(timedelta(seconds=_TOKEN_TTL_SECONDS))
         .with_grants(
             api.VideoGrants(
                 room_join=True,
