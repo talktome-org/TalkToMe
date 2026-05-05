@@ -5,7 +5,7 @@ import MessageUI
 struct InviteContactsInlineListView: View {
     let onInvite: (String) -> Void
 
-    @StateObject private var viewModel = InviteContactsListViewModel()
+    @State private var viewModel = InviteContactsListViewModel()
 
     var body: some View {
         Group {
@@ -68,17 +68,18 @@ struct InviteContactsInlineListView: View {
     }
 }
 
+@Observable
 @MainActor
-final class InviteContactsListViewModel: ObservableObject {
+final class InviteContactsListViewModel {
     struct Row: Identifiable {
         let id: String
         let name: String
         let phone: String
     }
 
-    @Published var rows: [Row] = []
-    @Published var isLoading: Bool = false
-    @Published var errorMessage: String? = nil
+    var rows: [Row] = []
+    var isLoading: Bool = false
+    var errorMessage: String? = nil
 
     private let store = CNContactStore()
 

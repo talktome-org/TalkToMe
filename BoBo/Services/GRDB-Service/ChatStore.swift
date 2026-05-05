@@ -572,7 +572,8 @@ final class ChatStore {
                     session_id: sessionId,
                     role: r.role,
                     content: content,
-                    created_at: r.created_at
+                    created_at: r.created_at,
+                    source: r.is_voice_mode ? "voice" : "text"
                 )
                 var msg = ChatMessage(dto: dto, currentUserId: currentUserId)
                 msg.regenerationCount = r.regeneration_count

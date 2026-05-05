@@ -253,12 +253,13 @@ async def get_onboarding(current_user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=401, detail="Invalid user ID in token")
 
         row = _get_profile_fields(user_id, "full_name", "onboarding_step", "gender", "date_of_birth", "relationship_topics")
+        dob = row.get("date_of_birth")
 
         return {
             "full_name": row.get("full_name") or "",
             "onboarding_step": row.get("onboarding_step") or "none",
             "gender": row.get("gender") or "",
-            "date_of_birth": (row.get("date_of_birth").isoformat() if row.get("date_of_birth") else None),
+            "date_of_birth": dob.isoformat() if dob else None,
             "relationship_topics": row.get("relationship_topics") or [],
         }
     except HTTPException:
@@ -269,6 +270,7 @@ async def get_onboarding(current_user: dict = Depends(get_current_user)):
 
 @router.patch("/onboarding")
 async def update_onboarding(payload: dict = Body(...), current_user: dict = Depends(get_current_user)):
+    update_data: dict = {}
     try:
         try:
             user_id = uuid.UUID(current_user.get("sub"))

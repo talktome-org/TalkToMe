@@ -77,11 +77,6 @@ struct ChatScreenView: View {
         send: { onSend() },
         stop: {
           chatViewModel.streamingController.stopGeneration()
-          if chatViewModel.isSpeakModeActive {
-            Task { @MainActor in
-              chatViewModel.elevenLabsStreamingTTS.cancel()
-            }
-          }
         },
         onVoiceModeStart: {
           guard dictationEnabled else {

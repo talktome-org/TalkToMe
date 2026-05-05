@@ -267,7 +267,7 @@ final class TransparentPlayerUIView: UIView {
             self?.resumeIfNeeded()
         }
 
-        let timer = Timer(timeInterval: 0.8, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.resumeIfNeeded()
         }
         RunLoop.main.add(timer, forMode: .common)

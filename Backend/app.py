@@ -1,3 +1,7 @@
+from Backend._env import load as _load_env
+
+_load_env()
+
 import logging
 from contextlib import asynccontextmanager
 
@@ -15,6 +19,7 @@ from .subapps.client_upload_router import router as files_router
 from .subapps.friends_router import router as friends_router
 from .subapps.partner_router import router as partner_router
 from .subapps.user_profile_router import router as profile_router
+from .subapps.livekit_router import router as livekit_router
 from .services.daily_checkin_scheduler import start_scheduler, stop_scheduler
 
 
@@ -47,3 +52,4 @@ app.include_router(profile_router)
 app.include_router(notifications_router)
 app.include_router(chat_router)
 app.include_router(speech_router)
+app.include_router(livekit_router)

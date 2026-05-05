@@ -147,7 +147,7 @@ struct ChatMessage: Identifiable {
         self.isFromPartnerUser = isFromPartnerUser
         self.timestamp = timestamp
         self.isToolLoading = false
-        self.isFromVoiceMode = false
+        self.isFromVoiceMode = (dto.source == "voice")
         self.regenerationCount = 0
         self.ghostName = parsedGhostName
     }

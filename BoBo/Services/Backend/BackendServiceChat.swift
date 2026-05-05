@@ -1,11 +1,6 @@
 import Foundation
 
 extension BackendService {
-    struct ChatHistoryMessage: Codable {
-        let role: String
-        let content: String
-    }
-
     struct ChatMessageDTO: Codable {
         let id: UUID
         let user_id: UUID
@@ -13,6 +8,7 @@ extension BackendService {
         let role: String
         let content: String
         let created_at: String?
+        let source: String?
     }
 
     struct ChatSessionDTO: Codable {
@@ -30,7 +26,6 @@ extension BackendService {
     func streamChatMessage(
         _ message: String,
         sessionId: UUID?,
-        chatHistory: [ChatHistoryMessage]?,
         attachments: [ChatAttachment]? = nil,
         accessToken: String,
         previousResponseId: String? = nil,
@@ -55,7 +50,6 @@ extension BackendService {
             message: message,
             session_id: sessionId,
             message_id: messageId,
-            chat_history: chatHistory,
             previous_response_id: previousResponseId,
             attachments: attachments,
             friend_user_id: friendUserId,
@@ -332,7 +326,6 @@ private struct ChatRequestBody: Codable {
     let message: String
     let session_id: UUID?
     let message_id: UUID?
-    let chat_history: [BackendService.ChatHistoryMessage]?
     let previous_response_id: String?
     let attachments: [BackendService.ChatAttachment]?
     let friend_user_id: UUID?

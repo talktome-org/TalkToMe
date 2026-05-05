@@ -44,22 +44,18 @@ from Backend.schemas.chat_models import (
 from Backend.crud.client_uploads.uploads_crud import create_upload
 from Backend.database import SessionLocal
 from Backend.models.client_uploads.upload_model import Upload
-from Backend.services.chat_service import ChatService, ChatTitleService, VoiceChatService
+from Backend.services.chat_service import ChatService, ChatTitleService
 from Backend.services.embedding_service import EmbeddingService
 from Backend.services.file_signing_service import sign_upload_id
 from Backend.crud.books.rag_crud import search_similar_chunks
 from Backend.crud.friends.friends_crud import get_friendship_id_for_pair, list_friends_for_user
 from Backend.models.profile.profile_model import Profile
 from Backend.models.friends.friendship_model import Friendship
-from Backend.services.voice_agent_prompts import VoiceAgentPromptLibrary
-
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 chat_service = ChatService()
 chat_title_service = ChatTitleService()
-voice_chat_service = VoiceChatService()
 embedding_service = EmbeddingService()
-voice_agent_prompts = VoiceAgentPromptLibrary()
 
 RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5") or "5")
 RAG_MAX_CHARS_PER_CHUNK = int(os.getenv("RAG_MAX_CHARS_PER_CHUNK", "1200") or "1200")
@@ -395,7 +391,7 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
             except Exception:
                 has_image = False
             last_preview = "Sent a photo." if has_image else "Sent an attachment."
-        await update_session_last_message(session_id=session_uuid, content=last_preview)
+        await update_session_last_message(user_id=user_uuid, session_id=session_uuid, content=last_preview)
         user_message_count = await count_user_messages(session_id=session_uuid)
 
         if user_message_count in (1, 2):
@@ -499,22 +495,13 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                         except Exception:
                             continue
 
-                use_voice_agent = bool((chat_request.voice_agent or "").strip())
-                _va_raw = chat_request.voice_agent
-                print(f"[VoiceAgent] voice_agent param — raw={_va_raw!r} use_voice_agent={use_voice_agent} session={session_uuid} message_len={len((chat_request.message or '').strip())} ghost_name={chat_request.ghost_name!r}")
-                if use_voice_agent:
-                    print(f"[VoiceAgent] voice_agent mode ACTIVE — agent='{chat_request.voice_agent}' model=gemini session={session_uuid}")
-                else:
-                    print(f"[VoiceAgent] voice_agent mode OFF — using openai session={session_uuid}")
-
                 # RAG: retrieve relevant book chunks from Supabase.
-                # Skip RAG for voice mode to reduce latency.
                 rag_context_text: Optional[str] = None
                 try:
                     q_text = (chat_request.message or "").strip()
-                    if q_text and RAG_TOP_K > 0 and not use_voice_agent:
+                    if q_text and RAG_TOP_K > 0:
                         # Embeddings call is synchronous; run it off the event loop.
-                        q_embed = await run_in_threadpool(embedding_service.get_embedding, q_text)
+                        q_embed = await embedding_service.get_embedding(q_text)
                         rows = await search_similar_chunks(query_embedding=q_embed, limit=RAG_TOP_K)
                         rag_context_text = _format_rag_context(rows)
                 except Exception as e:
@@ -530,47 +517,14 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                         merged_context += "\n\n"
                     merged_context += rag_context_text
 
-                use_gemini = use_voice_agent
-
-                system_prompt_override = None
-                if use_gemini:
-                    # Voice-agent mode uses the selected voice agent prompt (MIRA/PAX/etc),
-                    # not the general chat_prompt.txt. Pass empty string if not found so we
-                    # don't fall back to chat_prompt.txt.
-                    system_prompt_override = voice_agent_prompts.get_prompt(chat_request.voice_agent) or ""
-
-                    # Append user-defined custom instructions for this buddy (if any).
-                    ci = (chat_request.custom_instructions or "").strip()
-                    if ci:
-                        system_prompt_override = (system_prompt_override or "") + "\n\n" + ci
-
-                # Use Gemini for voice-agent mode, OpenAI otherwise.
                 _stream_start = time.time()
-                print(f"[VoiceAgent] model selection — use_gemini={use_gemini} session={session_uuid} has_rag={'yes' if rag_context_text else 'no'} has_custom_instructions={'yes' if (chat_request.custom_instructions or '').strip() else 'no'}")
-                if use_gemini:
-                    # Convert chat_history to list of dicts for Gemini
-                    history_for_gemini = None
-                    if chat_request.chat_history:
-                        history_for_gemini = [
-                            {"role": h.role, "content": h.content}
-                            for h in chat_request.chat_history
-                        ]
-                    input_messages = voice_chat_service.build_messages(
-                        last_user_message=chat_request.message,
-                        chat_history=history_for_gemini,
-                        context_text=merged_context,
-                        image_urls=image_urls or None,
-                        file_urls=file_urls or None,
-                        system_prompt_override=system_prompt_override,
-                    )
-                else:
-                    input_messages = chat_service.build_messages(
-                        last_user_message=chat_request.message,
-                        context_text=merged_context,
-                        image_urls=image_urls or None,
-                        file_urls=file_urls or None,
-                        system_prompt_override=system_prompt_override,
-                    )
+                input_messages = chat_service.build_messages(
+                    last_user_message=chat_request.message,
+                    context_text=merged_context,
+                    image_urls=image_urls or None,
+                    file_urls=file_urls or None,
+                    system_prompt_override=None,
+                )
 
                 open_pat = re.compile(r"<partner_message(?:\s+[^>]*)?>")
                 end_marker = "</partner_message>"
@@ -771,53 +725,38 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                                 in_partner = False
                                 continue
 
-                # Use Gemini for voice-agent mode, OpenAI otherwise.
                 reasoning_effort = _classify_reasoning_effort(chat_request.message)
-                print(f"[SSE] reasoning_effort={reasoning_effort} for message ({len((chat_request.message or '').strip())} chars) voice_agent={use_voice_agent}")
-                if use_gemini:
+                try:
                     _reset_stream_debug_counters()
-                    print(f"[VoiceAgent] starting Gemini stream — session={session_uuid}")
-                    async with voice_chat_service.stream_response(
-                        messages=input_messages,
-                        previous_response_id=None,  # Gemini doesn't support response chaining
-                    ) as stream:
-                        async for chunk in _consume_stream(stream):
-                            yield chunk
-                    _elapsed = time.time() - _stream_start
-                    print(f"[VoiceAgent] Gemini stream done — session={session_uuid} elapsed={_elapsed:.2f}s text_deltas={received_text_deltas}")
-                    _log_stream_debug_counters("gemini_primary")
-                else:
                     try:
+                        async with chat_service.stream_response(
+                            messages=input_messages,
+                            previous_response_id=chat_request.previous_response_id,
+                            reasoning_effort=reasoning_effort,
+                        ) as stream:
+                            async for chunk in _consume_stream(stream):
+                                yield chunk
+                    finally:
+                        _log_stream_debug_counters("openai_primary")
+                except Exception as e:
+                    # If OpenAI rejects `previous_response_id`, retry once without it.
+                    msg = str(e)
+                    if chat_request.previous_response_id and (
+                        "previous_response_not_found" in msg
+                        or ("previous response with id" in msg and "not found" in msg)
+                    ):
+                        buffer = ""
+                        in_partner = False
+                        current_text_segment = ""
                         _reset_stream_debug_counters()
                         try:
-                            async with chat_service.stream_response(
-                                messages=input_messages,
-                                previous_response_id=chat_request.previous_response_id,
-                                reasoning_effort=reasoning_effort,
-                            ) as stream:
+                            async with chat_service.stream_response(messages=input_messages, previous_response_id=None) as stream:
                                 async for chunk in _consume_stream(stream):
                                     yield chunk
                         finally:
-                            _log_stream_debug_counters("openai_primary")
-                    except Exception as e:
-                        # If OpenAI rejects `previous_response_id`, retry once without it.
-                        msg = str(e)
-                        if chat_request.previous_response_id and (
-                            "previous_response_not_found" in msg
-                            or ("previous response with id" in msg and "not found" in msg)
-                        ):
-                            buffer = ""
-                            in_partner = False
-                            current_text_segment = ""
-                            _reset_stream_debug_counters()
-                            try:
-                                async with chat_service.stream_response(messages=input_messages, previous_response_id=None) as stream:
-                                    async for chunk in _consume_stream(stream):
-                                        yield chunk
-                            finally:
-                                _log_stream_debug_counters("openai_prev_id_retry")
-                        else:
-                            raise
+                            _log_stream_debug_counters("openai_prev_id_retry")
+                    else:
+                        raise
 
                 if buffer:
                     full_text_parts.append(buffer)
@@ -841,30 +780,18 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                     in_partner = False
                     current_text_segment = ""
                     _reset_stream_debug_counters()
-                    if use_gemini:
-                        print(f"[SSE] Empty Gemini response, retrying for session {session_uuid}")
-                        try:
-                            async with voice_chat_service.stream_response(
-                                messages=input_messages,
-                                previous_response_id=None,
-                            ) as stream:
-                                async for chunk in _consume_stream(stream):
-                                    yield chunk
-                        finally:
-                            _log_stream_debug_counters("gemini_empty_output_retry")
-                    else:
-                        prev_id = chat_request.previous_response_id
-                        print(f"[SSE] Empty response (prev_id={'yes' if prev_id else 'no'}), retrying with reasoning=low for session {session_uuid}")
-                        try:
-                            async with chat_service.stream_response(
-                                messages=input_messages,
-                                previous_response_id=None,
-                                reasoning_effort="low",
-                            ) as stream:
-                                async for chunk in _consume_stream(stream):
-                                    yield chunk
-                        finally:
-                            _log_stream_debug_counters("openai_empty_output_retry_low")
+                    prev_id = chat_request.previous_response_id
+                    print(f"[SSE] Empty response (prev_id={'yes' if prev_id else 'no'}), retrying with reasoning=low for session {session_uuid}")
+                    try:
+                        async with chat_service.stream_response(
+                            messages=input_messages,
+                            previous_response_id=None,
+                            reasoning_effort="low",
+                        ) as stream:
+                            async for chunk in _consume_stream(stream):
+                                yield chunk
+                    finally:
+                        _log_stream_debug_counters("openai_empty_output_retry_low")
                     if buffer:
                         full_text_parts.append(buffer)
                         yield f"event: token\ndata: {json.dumps(buffer)}\n\n".encode()
@@ -881,8 +808,6 @@ async def chat_message_stream(http_request: Request, chat_request: ChatRequest, 
                 elif not final_text:
                     print(f"[SSE] WARNING: No output produced for session {session_uuid}")
 
-                _total_elapsed = time.time() - _stream_start
-                print(f"[VoiceAgent] SSE done — session={session_uuid} voice_agent={use_voice_agent} model={'gemini' if use_gemini else 'openai'} total_elapsed={_total_elapsed:.2f}s text_len={len(final_text)} segments={len(segments_list)}")
                 yield b"event: done\ndata: {}\n\n"
             except Exception as e:
                 print(f"[SSE] /chat stream error: {e}\n" + traceback.format_exc())
@@ -934,6 +859,7 @@ async def get_messages(http_request: Request, session_id: uuid.UUID, current_use
                 role=r["role"],
                 content=_inject_signed_urls_into_content(base_url=base, content=r["content"]),
                 created_at=_as_iso8601(r.get("created_at")),
+                source=r.get("source") or "text",
             )
             for r in rows
         ]

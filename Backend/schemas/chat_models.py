@@ -6,11 +6,6 @@ from uuid import UUID
 from pydantic import BaseModel
 
 
-class ChatHistoryMessage(BaseModel):
-    role: str
-    content: str
-
-
 class ChatAttachment(BaseModel):
     type: str
     path: str
@@ -23,7 +18,6 @@ class ChatRequest(BaseModel):
     message: str
     session_id: Optional[UUID] = None
     message_id: Optional[UUID] = None
-    chat_history: Optional[list[ChatHistoryMessage]] = None
     previous_response_id: Optional[str] = None
     attachments: Optional[list[ChatAttachment]] = None
     friend_user_id: Optional[UUID] = None
@@ -47,6 +41,7 @@ class MessageDTO(BaseModel):
     role: str
     content: str
     created_at: Optional[str] = None
+    source: str = "text"
 
 
 class MessagesResponse(BaseModel):

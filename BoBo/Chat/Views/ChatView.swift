@@ -8,11 +8,15 @@ struct ChatView: View {
     @StateObject private var viewModel: ChatViewModel
     @StateObject private var sessionActions = ChatSessionActionsCoordinator()
 
-    @State private var showFriendPicker: Bool = false
+    private enum ActiveSheet: String, Identifiable {
+        case friendPicker
+        case addFriend
+        var id: String { rawValue }
+    }
+    @State private var activeSheet: ActiveSheet? = nil
     @State private var pendingPartnerDraftText: String? = nil
     @State private var isFriendPickerLoading: Bool = false
     @State private var friendPickerErrorMessage: String? = nil
-    @State private var showAddFriendSheet: Bool = false
     @FocusState private var isInputFocused: Bool
 
     let onBack: (() -> Void)?
@@ -123,30 +127,36 @@ struct ChatView: View {
                 }
             }
         )
-        .sheet(isPresented: $showFriendPicker) {
-            FriendPickerSheetView(
-                isPresented: $showFriendPicker,
-                friends: friendsViewModel.friends,
-                isLoading: isFriendPickerLoading,
-                errorMessage: friendPickerErrorMessage,
-                onRetry: {
-                    Task { @MainActor in
-                        await refreshFriendsForPicker()
-                    }
-                },
-                onPick: { friendId in
-                    Task { @MainActor in
-                        viewModel.selectedFriendUserId = friendId
-                        showFriendPicker = false
-                        if let draft = pendingPartnerDraftText {
-                            pendingPartnerDraftText = nil
-                            await viewModel.sendPartnerDraftToSelectedFriend(draft)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .friendPicker:
+                FriendPickerSheetView(
+                    friends: friendsViewModel.friends,
+                    isLoading: isFriendPickerLoading,
+                    errorMessage: friendPickerErrorMessage,
+                    onRetry: {
+                        Task { @MainActor in
+                            await refreshFriendsForPicker()
+                        }
+                    },
+                    onPick: { friendId in
+                        Task { @MainActor in
+                            viewModel.selectedFriendUserId = friendId
+                            activeSheet = nil
+                            if let draft = pendingPartnerDraftText {
+                                pendingPartnerDraftText = nil
+                                await viewModel.sendPartnerDraftToSelectedFriend(draft)
+                            }
                         }
                     }
-                }
-            )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            case .addFriend:
+                FriendsSheetView()
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .sendPartnerMessageFromBubble)) { note in
             let content = (note.userInfo?["content"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -162,7 +172,7 @@ struct ChatView: View {
                     return
                 }
                 pendingPartnerDraftText = content
-                showFriendPicker = true
+                activeSheet = .friendPicker
                 await refreshFriendsForPicker()
             }
         }
@@ -174,12 +184,7 @@ struct ChatView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .openAddFriendSheet)) { _ in
-            showAddFriendSheet = true
-        }
-        .sheet(isPresented: $showAddFriendSheet) {
-            FriendsSheetView(isPresented: $showAddFriendSheet)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+            activeSheet = .addFriend
         }
         .animation(nil, value: viewModel.messages.isEmpty)
     }

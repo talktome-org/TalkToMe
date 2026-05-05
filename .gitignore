@@ -43,6 +43,3 @@ __pycache__/
 # SweetPad
 buildServer.json
 .vscode/
-
-# Large video assets
-BoBo/Resources/*.mp4

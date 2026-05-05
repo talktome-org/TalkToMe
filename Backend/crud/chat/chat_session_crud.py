@@ -214,13 +214,13 @@ async def get_session_by_id(*, user_id: uuid.UUID, session_id: uuid.UUID) -> Opt
     return await run_in_threadpool(_select)
 
 
-async def touch_session(*, session_id: uuid.UUID) -> None:
+async def touch_session(*, user_id: uuid.UUID, session_id: uuid.UUID) -> None:
     def _update():
         db = SessionLocal()
         try:
             db.execute(
                 update(UserChatSession)
-                .where(UserChatSession.id == session_id)
+                .where(UserChatSession.id == session_id, UserChatSession.user_id == user_id)
                 .values(last_message_at=datetime.now(timezone.utc))
             )
             db.commit()
@@ -263,13 +263,13 @@ async def update_session_title(*, user_id: uuid.UUID, session_id: uuid.UUID, tit
     await run_in_threadpool(_update)
 
 
-async def increment_unread_count(*, session_id: uuid.UUID) -> None:
+async def increment_unread_count(*, user_id: uuid.UUID, session_id: uuid.UUID) -> None:
     def _update():
         db = SessionLocal()
         try:
             db.execute(
                 update(UserChatSession)
-                .where(UserChatSession.id == session_id)
+                .where(UserChatSession.id == session_id, UserChatSession.user_id == user_id)
                 .values(unread_count=UserChatSession.unread_count + 1)
             )
             db.commit()
@@ -331,8 +331,9 @@ async def delete_session(*, user_id: uuid.UUID, session_id: uuid.UUID) -> None:
                 if incoming and incoming[0] is not None:
                     session_ids_to_delete.append(incoming[0])
 
-            # Delete messages first (backend FK may not be ON DELETE CASCADE everywhere).
+            # Delete dependent rows first (FKs aren't ON DELETE CASCADE).
             if session_ids_to_delete:
+                db.execute(delete(SessionReport).where(SessionReport.session_id.in_(session_ids_to_delete)))
                 db.execute(delete(UserChatMessage).where(UserChatMessage.session_id.in_(session_ids_to_delete)))
                 db.execute(delete(UserChatSession).where(UserChatSession.id.in_(session_ids_to_delete)))
             db.commit()

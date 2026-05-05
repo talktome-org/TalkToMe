@@ -64,6 +64,7 @@ class UserChatMessage(Base):
         index=True,
         nullable=True,
     )
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'text'::text"))
 
 
 class SessionReport(Base):

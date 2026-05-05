@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 struct OnboardingFlowView: View {
-  @ObservedObject var viewModel: OnboardingViewModel
+  @Bindable var viewModel: OnboardingViewModel
   @AppStorage(PreferenceKeys.elevenLabsVoiceName) private var selectedVoiceName: String = ""
 
   private enum Screen: Int, CaseIterable, Identifiable {

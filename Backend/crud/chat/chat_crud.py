@@ -16,17 +16,30 @@ def _to_dict(obj) -> dict:
     return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
 
 
-async def save_message(*, user_id: uuid.UUID, session_id: uuid.UUID, role: str, content: str) -> dict:
+async def save_message(
+    *,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    role: str,
+    content: str,
+    source: str = "text",
+) -> dict:
     try:
         preview = (content or "")[:120].replace("\n", " ")
-        print(f"[DB] save_message insert role={role} session_id={session_id} user_id={user_id} preview={preview!r}")
+        print(f"[DB] save_message insert role={role} session_id={session_id} user_id={user_id} source={source} preview={preview!r}")
     except Exception:
         pass
 
     def _insert():
         db = SessionLocal()
         try:
-            msg = UserChatMessage(user_id=user_id, session_id=session_id, role=role, content=content)
+            msg = UserChatMessage(
+                user_id=user_id,
+                session_id=session_id,
+                role=role,
+                content=content,
+                source=source,
+            )
             db.add(msg)
             db.commit()
             db.refresh(msg)
@@ -118,13 +131,13 @@ async def list_messages_for_session(
     return await run_in_threadpool(_select)
 
 
-async def update_session_last_message(*, session_id: uuid.UUID, content: str) -> None:
+async def update_session_last_message(*, user_id: uuid.UUID, session_id: uuid.UUID, content: str) -> None:
     def _update():
         db = SessionLocal()
         try:
             db.execute(
                 update(UserChatSession)
-                .where(UserChatSession.id == session_id)
+                .where(UserChatSession.id == session_id, UserChatSession.user_id == user_id)
                 .values(last_message_content=content)
             )
             db.commit()

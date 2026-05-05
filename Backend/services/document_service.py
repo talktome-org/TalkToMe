@@ -40,7 +40,7 @@ class DocumentProcessor:
     def count_tokens(self, text: str) -> int:
         return len(self.encoding.encode(text))
 
-    def chunk_text(self, text: str, metadata: Dict = None) -> List[Dict]:
+    def chunk_text(self, text: str, metadata: Optional[Dict] = None) -> List[Dict]:
         """
         Chunk either by tokens (default) or by characters (use_tokenizer=False).
         """
@@ -56,7 +56,7 @@ class DocumentProcessor:
         # Fallback to token chunking if unknown mode.
         return self._chunk_by_tokens(text=text, metadata=metadata)
 
-    def _chunk_by_tokens(self, *, text: str, metadata: Dict = None) -> List[Dict]:
+    def _chunk_by_tokens(self, *, text: str, metadata: Optional[Dict] = None) -> List[Dict]:
         chunks: List[Dict] = []
         tokens = self.encoding.encode(text)
         if not tokens:
@@ -82,7 +82,7 @@ class DocumentProcessor:
 
         return chunks
 
-    def _chunk_by_chars(self, *, text: str, metadata: Dict = None) -> List[Dict]:
+    def _chunk_by_chars(self, *, text: str, metadata: Optional[Dict] = None) -> List[Dict]:
         chunks: List[Dict] = []
         start = 0
         idx = 0
@@ -103,13 +103,13 @@ class DocumentProcessor:
                 break
         return chunks
 
-    def _chunk_by_recursive(self, *, text: str, metadata: Dict = None) -> List[Dict]:
+    def _chunk_by_recursive(self, *, text: str, metadata: Optional[Dict] = None) -> List[Dict]:
         """
         Use LangChain's RecursiveCharacterTextSplitter to create semantically cleaner chunks.
         This avoids tokenizer overhead and handles long lines better than naive splitting.
         """
         try:
-            from langchain_text_splitters import RecursiveCharacterTextSplitter
+            from langchain_text_splitters import RecursiveCharacterTextSplitter  # pyright: ignore[reportMissingImports]
         except Exception:
             # If langchain_text_splitters isn't available, fall back to chars.
             return self._chunk_by_chars(text=text, metadata=metadata)

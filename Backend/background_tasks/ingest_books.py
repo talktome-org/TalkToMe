@@ -185,7 +185,7 @@ async def ingest_books(
                             if len(batch_rows) >= batch_size:
                                 batch_idx += 1
                                 print(f"Embedding batch {batch_idx} ({len(batch_texts)} chunks)...")
-                                embeddings = embedder.get_embeddings_batch(batch_texts, batch_size=batch_size)
+                                embeddings = await embedder.get_embeddings_batch(batch_texts, batch_size=batch_size)
                                 for r, e in zip(batch_rows, embeddings):
                                     out_f.write(json.dumps({**r, "embedding": e, "embedding_model": embedding_model}, ensure_ascii=False) + "\n")
                                 embedded_total += len(batch_rows)
@@ -194,7 +194,7 @@ async def ingest_books(
                         if batch_rows:
                             batch_idx += 1
                             print(f"Embedding final batch {batch_idx} ({len(batch_texts)} chunks)...")
-                            embeddings = embedder.get_embeddings_batch(batch_texts, batch_size=batch_size)
+                            embeddings = await embedder.get_embeddings_batch(batch_texts, batch_size=batch_size)
                             for r, e in zip(batch_rows, embeddings):
                                 out_f.write(json.dumps({**r, "embedding": e, "embedding_model": embedding_model}, ensure_ascii=False) + "\n")
                             embedded_total += len(batch_rows)

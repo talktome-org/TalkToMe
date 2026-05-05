@@ -11,6 +11,7 @@ protocol ChatVoiceModeDelegate: AnyObject {
     func getAccessToken() async -> String?
     func persistFriendUserId(_ friendUserId: UUID, for sessionId: UUID)
     func ensureSessionId() async -> UUID?
+    func appendVoiceMessage(_ message: ChatMessage, for sessionId: UUID)
 }
 
 enum SpeakModePhase: Equatable {
@@ -32,9 +33,18 @@ final class ChatVoiceModeController: ObservableObject {
     @Published var micLevel: CGFloat = 0
     @Published var speakerLevel: CGFloat = 0
 
+    /// Live (interim) transcript of the user's current utterance during speak
+    /// mode. Empty string when there's nothing to show. Cleared automatically
+    /// when the worker commits the turn (the real ChatMessage takes over).
+    @Published var liveUserTranscript: String = ""
+    /// Live transcript of the agent's current utterance, word-by-word.
+    @Published var liveAgentTranscript: String = ""
+
+    /// Used by the dictation push-to-talk path (NOT speak mode). Speak mode
+    /// is fully owned by `liveKitVoiceService` and goes over WebRTC to a
+    /// LiveKit Agents worker.
     let dictationSTTService = DeepgramStreamingSTTService()
-    let speakSTTService = DeepgramStreamingSTTService()
-    let elevenLabsStreamingTTS = ElevenLabsStreamingTTSService()
+    let liveKitVoiceService = LiveKitVoiceService()
 
     private var isVoiceModeCapturing: Bool = false
     private var textBeforeRecording: String = ""
@@ -44,45 +54,38 @@ final class ChatVoiceModeController: ObservableObject {
 
     private weak var delegate: ChatVoiceModeDelegate?
     private weak var streamingController: ChatStreamingController?
-    private var isStreamingCheck: () -> Bool = { false }
-
-    private var pendingSpeakAutoSendTask: Task<Void, Never>?
-    private var isSpeakComposerLocked: Bool = false
-    private var bargeinEnergyCount: Int = 0
-    private var speakModeVoiceName: String?
-    private var speakModeVoiceId: String?
-
-    /// Incremented each time speak mode is activated. Helps correlate logs across turns.
-    private var speakSessionSeq: Int = 0
-    /// Incremented for each utterance within a speak session.
-    private var turnSeq: Int = 0
-    /// Timestamp when the current speak session started.
-    private var speakSessionStartTime: Date?
-
-    private func voiceLog(_ msg: String) {
-        let elapsed: String
-        if let start = speakSessionStartTime {
-            elapsed = String(format: "%.1fs", Date().timeIntervalSince(start))
-        } else {
-            elapsed = "-"
-        }
-        print("[VoiceAgent][S\(speakSessionSeq)/T\(turnSeq) +\(elapsed)] \(msg)")
-    }
-
-    var capturedVoiceId: String? { speakModeVoiceId }
-    var capturedVoiceName: String? { speakModeVoiceName }
 
     init() {}
 
     func configure(
         delegate: ChatVoiceModeDelegate,
-        streamingController: ChatStreamingController,
-        isStreamingCheck: @escaping () -> Bool
+        streamingController: ChatStreamingController
     ) {
         self.delegate = delegate
         self.streamingController = streamingController
-        self.isStreamingCheck = isStreamingCheck
         setupSubscriptions()
+
+        // Worker pushes a `bobo.message_committed` event over a LiveKit
+        // text stream as soon as it persists each voice turn to the chat
+        // DB. Inserting here gets the message into the UI ~50ms after the
+        // turn ends, well before the next GET /messages refresh would.
+        liveKitVoiceService.onMessageCommitted = { [weak self] committed in
+            guard let self else { return }
+            let segments: [MessageSegment] = committed.content.isEmpty
+                ? [.text("")]
+                : [.text(committed.content)]
+            let message = ChatMessage(
+                id: committed.id ?? UUID(),
+                segments: segments,
+                isFromUser: committed.role == "user",
+                isFromPartnerUser: false,
+                timestamp: Date(),
+                isToolLoading: false,
+                isFromVoiceMode: true,
+                regenerationCount: 0
+            )
+            self.delegate?.appendVoiceMessage(message, for: committed.sessionId)
+        }
     }
 
     private func setupSubscriptions() {
@@ -124,157 +127,47 @@ final class ChatVoiceModeController: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Speak mode: lastFinalUtterance triggers sending a message.
-        // During TTS, mic audio is echo-gated (not sent to Deepgram).
-        // Energy-based barge-in lifts the gate when real speech is detected,
-        // so any transcript arriving here is genuine user speech.
-        speakSTTService.$lastFinalUtterance
-            .compactMap { $0 }
+        // Mirror LiveKit room state onto our published phase / levels so the
+        // existing UI bindings keep working.
+        liveKitVoiceService.$phase
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] transcript in
-                guard let self else { return }
-                guard self.isSpeakModeActive else {
-                    self.voiceLog("lastFinalUtterance received but speak mode INACTIVE — ignoring transcript: \"\(transcript.prefix(60))\"")
-                    return
-                }
-                let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { return }
-
-                self.turnSeq += 1
-                self.voiceLog("lastFinalUtterance: \"\(trimmed.prefix(80))\" — isStreaming=\(isStreamingCheck()) ttsIsSpeaking=\(elevenLabsStreamingTTS.isSpeaking) isLoading=\(delegate?.isLoading ?? false) sttConn=\(speakSTTService.isConnected)")
-
-                isSpeakComposerLocked = true
-
-                // If the assistant is currently answering, stop it (barge-in).
-                if isStreamingCheck() || elevenLabsStreamingTTS.isSpeaking || (delegate?.isLoading == true) {
-                    self.voiceLog("BARGE-IN: stopping generation & TTS — isStreaming=\(isStreamingCheck()) ttsSpeaking=\(elevenLabsStreamingTTS.isSpeaking) loading=\(delegate?.isLoading ?? false)")
-                    streamingController?.stopGeneration()
-                    elevenLabsStreamingTTS.cancel()
-                }
-
-                updatePhase(.processing)
-
-                pendingSpeakAutoSendTask?.cancel()
-                pendingSpeakAutoSendTask = Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    try? await Task.sleep(nanoseconds: 60_000_000) // 60ms
-                    guard self.isSpeakModeActive else {
-                        self.voiceLog("ABORT auto-send — speak mode became inactive during 60ms delay")
-                        return
-                    }
-                    let voiceAgent = self.streamingController?.activeVoiceAgentName
-                    self.voiceLog("auto-sending message: \"\(trimmed.prefix(80))\" voiceAgent=\(voiceAgent ?? "nil") sttConn=\(self.speakSTTService.isConnected) ttsConn=\(self.elevenLabsStreamingTTS.isConnected)")
-                    self.streamingController?.sendMessage(overrideText: trimmed)
-                    self.isSpeakComposerLocked = false
-                }
-            }
-            .store(in: &cancellables)
-
-        speakSTTService.$isUserSpeaking
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] speaking in
+            .sink { [weak self] livekitPhase in
                 guard let self else { return }
                 guard self.isSpeakModeActive else { return }
-                if speaking {
-                    self.updatePhase(.listening)
-                }
+                self.speakModePhase = Self.mapLiveKitPhase(livekitPhase)
             }
             .store(in: &cancellables)
 
-        elevenLabsStreamingTTS.$isSpeaking
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] speaking in
-                guard let self else { return }
-                self.voiceLog("TTS isSpeaking=\(speaking) — active=\(self.isSpeakModeActive) phase=\(self.speakModePhase) streaming=\(self.isStreamingCheck()) sttConn=\(self.speakSTTService.isConnected) sttRec=\(self.speakSTTService.isRecording)")
-                guard self.isSpeakModeActive else { return }
-
-                if speaking {
-                    // Gate mic audio so Deepgram never receives echo.
-                    // Mic levels still update for energy-based barge-in.
-                    self.speakSTTService.isEchoGated = true
-                    self.bargeinEnergyCount = 0
-                    self.updatePhase(.answering)
-                } else {
-                    self.speakSTTService.isEchoGated = false
-                    self.bargeinEnergyCount = 0
-                    if self.speakModePhase == .answering {
-                        if !self.isStreamingCheck() {
-                            self.updatePhase(.listening)
-                        } else {
-                            self.voiceLog("TTS stopped but still streaming — staying in .answering")
-                        }
-                    }
-                }
-            }
-            .store(in: &cancellables)
-
-        speakSTTService.$spawnLevel
+        liveKitVoiceService.$micLevel
             .receive(on: DispatchQueue.main)
             .sink { [weak self] level in
-                guard let self else { return }
-                self.micLevel = level
-
-                // Energy-based barge-in: while echo gate is active (TTS playing),
-                // mic audio isn't sent to Deepgram, but spawnLevel still updates
-                // from the AEC-processed input. Real speech punches through AEC
-                // much louder than residual echo. When we detect sustained energy
-                // above threshold, lift the echo gate and cancel TTS so Deepgram
-                // picks up the user's voice.
-                guard self.speakSTTService.isEchoGated else {
-                    self.bargeinEnergyCount = 0
-                    return
-                }
-                if level > 0.25 {
-                    self.bargeinEnergyCount += 1
-                    if self.bargeinEnergyCount >= 5 {
-                        self.bargeinEnergyCount = 0
-                        self.speakSTTService.isEchoGated = false
-                        self.streamingController?.stopGeneration()
-                        self.elevenLabsStreamingTTS.cancel()
-                        self.updatePhase(.listening)
-                    }
-                } else {
-                    self.bargeinEnergyCount = 0
-                }
+                self?.micLevel = CGFloat(level)
             }
             .store(in: &cancellables)
 
-        elevenLabsStreamingTTS.$speakerLevel
+        liveKitVoiceService.$speakerLevel
             .receive(on: DispatchQueue.main)
             .sink { [weak self] level in
-                self?.speakerLevel = level
+                self?.speakerLevel = CGFloat(level)
             }
             .store(in: &cancellables)
+
+        liveKitVoiceService.$liveUserTranscript
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$liveUserTranscript)
+
+        liveKitVoiceService.$liveAgentTranscript
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$liveAgentTranscript)
     }
 
-    private func updatePhase(_ newPhase: SpeakModePhase) {
-        guard speakModePhase != newPhase else { return }
-        let oldPhase = speakModePhase
-        speakModePhase = newPhase
-        voiceLog("phase: \(oldPhase) → \(newPhase) | sttConn=\(speakSTTService.isConnected) sttRec=\(speakSTTService.isRecording) ttsConn=\(elevenLabsStreamingTTS.isConnected) ttsSpeaking=\(elevenLabsStreamingTTS.isSpeaking)")
-    }
-
-    func notifyStreamingStarted() {
-        voiceLog("notifyStreamingStarted — active=\(isSpeakModeActive) phase=\(speakModePhase) sttConn=\(speakSTTService.isConnected) ttsConn=\(elevenLabsStreamingTTS.isConnected)")
-        guard isSpeakModeActive else {
-            voiceLog("notifyStreamingStarted — SKIPPED (speak mode inactive)")
-            return
-        }
-        if speakModePhase == .processing {
-            updatePhase(.answering)
-        }
-    }
-
-    func notifyStreamingFinished() {
-        voiceLog("notifyStreamingFinished — active=\(isSpeakModeActive) phase=\(speakModePhase) ttsSpeaking=\(elevenLabsStreamingTTS.isSpeaking) ttsConn=\(elevenLabsStreamingTTS.isConnected) sttConn=\(speakSTTService.isConnected) sttRec=\(speakSTTService.isRecording)")
-        guard isSpeakModeActive else {
-            voiceLog("notifyStreamingFinished — SKIPPED (speak mode inactive)")
-            return
-        }
-        if !elevenLabsStreamingTTS.isSpeaking && speakModePhase == .answering {
-            updatePhase(.listening)
+    private static func mapLiveKitPhase(_ phase: LiveKitVoiceService.Phase) -> SpeakModePhase {
+        switch phase {
+        case .idle: return .idle
+        case .connecting: return .connecting
+        case .listening: return .listening
+        case .speaking: return .answering
+        case .error: return .idle
         }
     }
 
@@ -285,30 +178,23 @@ final class ChatVoiceModeController: ObservableObject {
         await dictationSTTService.connect()
     }
 
+    /// Kept for ChatView's preconnect warmup. With LiveKit, there is no
+    /// session to preconnect — the room is created at `startSpeakMode()`.
     func preconnectSpeakServicesIfNeeded() async {
-        guard NetworkMonitor.shared.isOnline else { return }
-        guard await delegate?.getAccessToken() != nil else { return }
-
-        if speakSTTService.isConnected == false {
-            await speakSTTService.connect(
-                config: .init(language: "multi", model: "nova-3", endpointingMs: 300, sampleRateHz: 24_000)
-            )
-        }
-
-        var storedVoiceId = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let storedVoiceName = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let resolved = VoicesCache.shared.resolvedVoiceId(storedId: storedVoiceId, storedName: storedVoiceName) {
-            storedVoiceId = resolved
-        }
-        guard !storedVoiceId.isEmpty else { return }
-        await elevenLabsStreamingTTS.preconnect(voiceId: storedVoiceId, voiceName: storedVoiceName)
+        // No-op: LiveKit rooms are short-lived and per-session. The agent is
+        // dispatched on connect; warming up an empty room would be wasteful.
     }
 
     func startVoiceModePushToTalk() {
         if isSpeakModeActive {
             stopSpeakMode()
+        }
+        // Same audio session — never run dictation while a LiveKit room
+        // is still in flight (covers the in-flight connect window too).
+        if liveKitVoiceService.isConnected {
+            Task { @MainActor [weak self] in
+                await self?.liveKitVoiceService.disconnect()
+            }
         }
 
         textBeforeRecording = (delegate?.inputText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -355,134 +241,70 @@ final class ChatVoiceModeController: ObservableObject {
     func startSpeakMode() {
         guard !isSpeakModeActive else { return }
         isSpeakModeActive = true
-        speakSessionSeq += 1
-        turnSeq = 0
-        speakSessionStartTime = Date()
-        voiceLog("startSpeakMode() — beginning session")
+        speakModePhase = .connecting
 
-        var storedVoiceId = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceId) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
         let storedVoiceName = (UserDefaults.standard.string(forKey: PreferenceKeys.elevenLabsVoiceName) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let voiceAgent = storedVoiceName.lowercased().isEmpty ? "mira" : storedVoiceName.lowercased()
 
-        // Validate / refresh stale voice ID against cached voice list
-        if let resolved = VoicesCache.shared.resolvedVoiceId(storedId: storedVoiceId, storedName: storedVoiceName) {
-            storedVoiceId = resolved
-        }
+        let customPromptKey = PreferenceKeys.buddyCustomPromptKey(voiceAgent)
+        let customPrompt = (UserDefaults.standard.string(forKey: customPromptKey) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard !storedVoiceId.isEmpty else {
-            let msg = "Voice mode is not available. Please select an ElevenLabs voice in Settings."
-            elevenLabsStreamingTTS.lastError = msg
-            speakSTTService.lastError = msg
-            isSpeakModeActive = false
-            updatePhase(.idle)
-            return
-        }
-
-        var name = storedVoiceName
-        if name.isEmpty, let cached = VoicesCache.shared.cachedVoices {
-            name = (cached.first(where: { $0.voice_id == storedVoiceId })?.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        speakModeVoiceName = name
-        speakModeVoiceId = storedVoiceId
-        streamingController?.activeVoiceAgentName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : name
-
-        isSpeakComposerLocked = false
-        pendingSpeakAutoSendTask?.cancel()
-        pendingSpeakAutoSendTask = nil
-        updatePhase(.connecting)
-        delegate?.inputText = ""
-
-        // Lock the audio session open for the duration of speak mode so that
-        // transient idle checks (e.g. between TTS turns, ghost video configure)
-        // can't deactivate it and cycle the mic.
-        SharedAudioEngine.shared.holdVoiceSession()
-
-        // Kick off audio session + engine setup on a background thread so the
-        // main thread isn't blocked (~200-500 ms for voice processing init).
-        // installMicTap() will sync-wait for this to finish before installing
-        // the tap, so the mic is ready as soon as the engine is.
-        SharedAudioEngine.shared.ensureRunningAsync()
+        // Cancel any in-flight chat SSE stream before voice takes over —
+        // otherwise tokens keep mutating the chat while LiveKit drives audio.
+        streamingController?.stopGeneration()
 
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard NetworkMonitor.shared.isOnline else {
                 self.isSpeakModeActive = false
-                self.updatePhase(.idle)
+                self.speakModePhase = .idle
                 return
             }
 
+            // Stop dictation if it was running — same audio session.
             if self.dictationSTTService.isRecording || self.dictationSTTService.isConnected {
                 self.dictationSTTService.stopRecording()
                 self.dictationSTTService.disconnect()
                 self.isVoiceModeCapturing = false
             }
 
-            self.speakSTTService.transcriptAggregation = .perUtterance
-            self.speakSTTService.startRecording()
+            // Ensure we have a chat session before opening the room so the
+            // worker can persist voice turns into it.
+            let sessionId = await self.delegate?.ensureSessionId()
 
-            // Connect STT and preconnect TTS in parallel.
-            // Phase stays .connecting (gray waveform) until both are ready.
-            let voiceIdForTTS = storedVoiceId
-            let voiceNameForTTS = name
-            async let sttConnect: Void = {
-                if self.speakSTTService.isConnected == false {
-                    await self.speakSTTService.connect(
-                        config: .init(language: "multi", model: "nova-3", endpointingMs: 300, sampleRateHz: 24_000)
-                    )
-                }
-            }()
-            async let ttsPreconnect: Void = self.elevenLabsStreamingTTS.preconnect(voiceId: voiceIdForTTS, voiceName: voiceNameForTTS)
-
-            _ = await (sttConnect, ttsPreconnect)
-
-            self.voiceLog("parallel connect done — sttConn=\(self.speakSTTService.isConnected) sttErr=\(self.speakSTTService.lastError ?? "nil") ttsConn=\(self.elevenLabsStreamingTTS.isConnected) ttsErr=\(self.elevenLabsStreamingTTS.lastError ?? "nil") stillActive=\(self.isSpeakModeActive)")
-            guard self.isSpeakModeActive else {
-                self.voiceLog("speak mode deactivated during connect — aborting")
-                return
+            do {
+                try await self.liveKitVoiceService.connect(
+                    voiceAgent: voiceAgent,
+                    ghostName: storedVoiceName.isEmpty ? nil : storedVoiceName,
+                    customPrompt: customPrompt.isEmpty ? nil : customPrompt,
+                    sessionId: sessionId
+                )
+            } catch {
+                self.isSpeakModeActive = false
+                self.speakModePhase = .idle
             }
-            if self.speakSTTService.isConnected {
-                self.speakSTTService.lastError = nil
-            } else {
-                self.voiceLog("WARNING: STT failed to connect — voice input will not work!")
-            }
-            self.updatePhase(.listening)
         }
     }
 
     func toggleSpeakMicMute() {
         guard isSpeakModeActive else { return }
         isSpeakMicMuted.toggle()
-        if isSpeakMicMuted {
-            speakSTTService.pauseCapture()
-        } else {
-            speakSTTService.resumeCapture()
+        Task { @MainActor [weak self] in
+            await self?.liveKitVoiceService.setMuted(self?.isSpeakMicMuted ?? false)
         }
     }
 
     func stopSpeakMode() {
-        voiceLog("stopSpeakMode() called — phase=\(speakModePhase) ttsIsSpeaking=\(elevenLabsStreamingTTS.isSpeaking) ttsConn=\(elevenLabsStreamingTTS.isConnected) sttConn=\(speakSTTService.isConnected) sttRec=\(speakSTTService.isRecording) isStreaming=\(isStreamingCheck()) voiceAgent=\(streamingController?.activeVoiceAgentName ?? "nil")")
-        // Capture a stack trace to identify who is calling stopSpeakMode
-        Thread.callStackSymbols.prefix(10).forEach { voiceLog("stopSpeakMode caller: \($0)") }
+        guard isSpeakModeActive else { return }
         isSpeakModeActive = false
         isSpeakMicMuted = false
-        isSpeakComposerLocked = false
-        pendingSpeakAutoSendTask?.cancel()
-        pendingSpeakAutoSendTask = nil
-        updatePhase(.idle)
+        speakModePhase = .idle
 
-        streamingController?.activeVoiceAgentName = nil
-        streamingController?.stopGeneration()
-        elevenLabsStreamingTTS.cancel()
-
-        speakModeVoiceName = nil
-        speakModeVoiceId = nil
-
-        speakSTTService.stopRecording()
-        speakSTTService.disconnect()
-
-        // Tear down the shared audio engine
-        SharedAudioEngine.shared.stop()
+        Task { @MainActor [weak self] in
+            await self?.liveKitVoiceService.disconnect()
+        }
     }
 
     func sendComposerMessage() {

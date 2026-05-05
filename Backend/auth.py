@@ -28,8 +28,8 @@ class SupabaseAuth:
     def _get_signing_key(self, token: str):
         try:
             return self.jwk_client.get_signing_key_from_jwt(token).key
-        except Exception as e:
-            raise HTTPException(status_code = 401, detail = f"Unable to fetch signing key: {str(e)}")
+        except Exception:
+            raise HTTPException(status_code = 401, detail = "Invalid or expired token")
 
     def verify_jwt(self, token: str) -> dict:
         try:
@@ -78,6 +78,6 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         return auth.verify_jwt(credentials.credentials)
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Invalid or expired token: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
