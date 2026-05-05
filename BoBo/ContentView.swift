@@ -13,7 +13,7 @@ struct ContentView: View {
     @EnvironmentObject private var navigationViewModel: SidebarNavigationViewModel
     @EnvironmentObject private var friendsVM: FriendsViewModel
 
-    @StateObject private var onboardingVM = OnboardingViewModel()
+    @State private var onboardingVM = OnboardingViewModel()
     @State private var onboardingLoaded = false
     @State private var onboardingLoadTask: Task<Void, Never>? = nil
 

@@ -1,18 +1,20 @@
 import Foundation
+import Observation
 import SwiftUI
 import Supabase
 
-final class OnboardingViewModel: ObservableObject {
+@Observable
+final class OnboardingViewModel {
     enum Step: String { case none, asked_name, completed }
 
-    @Published var isLoading: Bool = false
-    @Published var fullName: String = ""
-    @Published var gender: String = ""
+    var isLoading: Bool = false
+    var fullName: String = ""
+    var gender: String = ""
     /// Calendar date (no time component)
-    @Published var dateOfBirth: Date? = nil
-    @Published var relationshipTopics: Set<String> = []
-    @Published var step: Step = .none
-    @Published var errorMessage: String? = nil
+    var dateOfBirth: Date? = nil
+    var relationshipTopics: Set<String> = []
+    var step: Step = .none
+    var errorMessage: String? = nil
 
     init() {}
 
